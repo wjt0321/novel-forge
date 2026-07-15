@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Novel Forge runtime data and generated assets
+data/
+library/
+experiments/
+work/*/
+
+# Keep the workspace root README
+!work/README.md
