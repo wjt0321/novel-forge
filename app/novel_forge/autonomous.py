@@ -628,6 +628,7 @@ class AutonomousWritingService:
             proofread_rules = {
                 "question-mark-mismatch",
                 "quote-consistency",
+                "quote-duplication",
                 "common-error",
             }
             prose_rules = {

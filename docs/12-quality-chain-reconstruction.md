@@ -7,7 +7,7 @@
 `check-acceptance` 输出拆为五个维度：
 
 - `workflow_coverage`：是否具备 plan、revision、>=5000 中文汉字、研究闭环、承诺闭环、独立编辑轮次。
-- `proofread_status`：基础校对层（`question-mark-mismatch`、`quote-consistency`、`common-error`）是否 clean。
+- `proofread_status`：基础校对层（`question-mark-mismatch`、`quote-consistency`、`quote-duplication`、`common-error`）是否 clean。
 - `prose_edit_status`：语言编辑层（`rhythm-monotony`、`mechanical-triplet`、`explanatory-punchline`）是否 clean。
 - `independent_editorial_status`：当前 revision 是否存在有效独立编辑 memo（`ready_for_editor_decision` 且无 blocking issues）。
 - `publication_eligibility`：始终为 `False`；系统不自动公开发布。
@@ -21,10 +21,11 @@
 | 规则码 | 说明 |
 |--------|------|
 | `rhythm-monotony` | 连续多个段落均为 ≤2 句短段，节奏可能过于均匀 |
-| `mechanical-triplet` | 连续三句以上同构短句或清单化名词独句 |
-| `explanatory-punchline` | 结论性独词句或解释性收尾 |
-| `question-mark-mismatch` | 疑问语气词后用句号 |
+| `mechanical-triplet` | 连续三句以上同构短句，或段落开头的清单化名词独句；排除带引号的普通动词短句 |
+| `explanatory-punchline` | 孤立于连续叙事的结论性短句（单句段，或两句段末尾的短结论）；不标长段落内的普通短句 |
+| `question-mark-mismatch` | 疑问语气词（吗/呢/吧/句末么）后用句号；排除“什么/怎么/这么/那么/多么/要么”等词内的“么” |
 | `quote-consistency` | 对话引号不成对 |
+| `quote-duplication` | 连续双引号（\"\"…\"\"），多为 patch/转义错误；排除 code block 与 JSON 转义 |
 | `common-error` | 常见错字/搭配/病句（可维护规则列表） |
 
 这些规则只标位置、不自动改正文，也不阻断 approval；但它们会进入 `proofread_status` / `prose_edit_status`，从而影响 `autonomous_acceptance_complete`。
@@ -81,12 +82,13 @@ PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:\my-novel --confir
 
 约束：
 
-- `evidence` 必须在当前 revision 中**唯一**匹配。
+- `evidence` 必须在当前 revision 中**唯一**匹配；如果替换带引号的对话，evidence 必须包含原有引号，否则会产生嵌套引号。
 - 多项 patch 的 `evidence` 区间不得重叠。
 - `replacement` 不能为空。
 - 补丁文件必须是 library 外的绝对路径、有效 UTF-8。
 - 已批准章节需要 `--reopen-reason`；patch 成功后章节状态变为 `revised`。
 - patch 通过 `write_revision` 写审计并生成新 revision，旧 revision 文件保持不变。
+- patch 返回 JSON 包含 `before_count` / `after_count`（CJK 字数）。patch 结果必须 >=5000 CJK 字，否则默认被拒绝；可使用 `--allow-below-minimum` 仅用于探索性草稿。
 
 Patch 适合局部校对修复；修复后仍需重新 lint、review 和独立编辑审稿。
 

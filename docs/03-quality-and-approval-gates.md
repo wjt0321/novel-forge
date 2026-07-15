@@ -13,10 +13,11 @@
 | `word-count-tic` | advisory | 具体字数表述，如“这五个字” |
 | `colon-density` | advisory | 冒号总数与每千字密度 |
 | `rhythm-monotony` | advisory | 连续多个段落均为短段（≤2 句），节奏可能过于均匀 |
-| `mechanical-triplet` | advisory | 连续三句以上同构短句或清单化名词独句 |
-| `explanatory-punchline` | advisory | 结论性独词句或解释性收尾 |
-| `question-mark-mismatch` | advisory | 疑问语气词后用句号 |
+| `mechanical-triplet` | advisory | 连续三句以上同构短句，或段落开头的清单化名词独句；排除普通动词短句 |
+| `explanatory-punchline` | advisory | 孤立于连续叙事的结论性短句（单句段，或两句段末尾的短结论）；不标长段落内的普通短句 |
+| `question-mark-mismatch` | advisory | 疑问语气词（吗/呢/吧/句末么）后用句号；排除“什么/怎么/这么/那么/多么/要么”等词内的“么” |
 | `quote-consistency` | advisory | 对话引号不成对 |
+| `quote-duplication` | advisory | 连续双引号（\"\"…\"\"），多为 patch/转义错误 |
 | `common-error` | advisory | 常见错字、搭配或病句 |
 
 lint 不自动修改正文；执行后章节状态进入 `linted`，blocking 会阻止 `approve-chapter`。advisory 规则不阻断 approval，但会计入 `proofread_status` / `prose_edit_status`，从而影响 `check-acceptance` 的分层结果。每个新 revision 必须重新 lint。

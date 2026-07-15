@@ -18,6 +18,7 @@ from app.novel_forge.export import (
     now_iso,
 )
 from app.novel_forge.lint import _count_cjk_chars, lint_file
+from app.novel_forge.project_templates import ProjectTemplateError, init_book_project
 from app.novel_forge.models import (
     AuditEvent,
     Book,
@@ -536,6 +537,19 @@ class NovelForgeService:
 
         return Book.model_validate(dict(row))
 
+    def init_novel_project(
+        self, slug: str, title: str, genre: str
+    ) -> dict[str, Any]:
+        """Create the new recommended `books/<slug>/` project layout.
+
+        This is a filesystem-only operation and does not require or touch the
+        SQLite-backed `library/` workflow. Existing files are never overwritten.
+        """
+        try:
+            return init_book_project(self.root, slug, title, genre)
+        except ProjectTemplateError as exc:
+            raise NovelForgeError(str(exc)) from exc
+
     def get_book(self, slug: str) -> Book:
         with self._conn() as conn:
             row = BookRepository.get_by_slug(conn, slug)
@@ -697,6 +711,7 @@ class NovelForgeService:
         from_file = Path(from_file)
         if not from_file.exists():
             raise NovelForgeError(f"Source file not found: {from_file}")
+        self._require_formal_revision_length(from_file)
 
         with self._conn() as conn:
             book = BookRepository.get_by_slug(conn, slug)
@@ -770,7 +785,8 @@ class NovelForgeService:
         patch_file: Path,
         note: str | None = None,
         reopen_reason: str | None = None,
-    ) -> Chapter:
+        allow_below_minimum: bool = False,
+    ) -> dict[str, Any]:
         """Apply a JSON patch to the current revision and write a new revision.
 
         The patch file must contain a JSON array of objects with:
@@ -783,6 +799,11 @@ class NovelForgeService:
         Patches are applied in reverse position order so earlier replacements
         do not shift the positions of later ones. The original revision file is
         never modified; a new immutable revision file is created.
+
+        Short-story hard floor: the patched result must contain at least 5000
+        CJK Han characters unless ``allow_below_minimum`` is explicitly set.
+        This prevents local patches from silently shrinking a completed short
+        story below the formal minimum.
         """
         patch_file = Path(patch_file)
         if not patch_file.exists():
@@ -900,6 +921,16 @@ class NovelForgeService:
                 patched_text[:pos] + replacement + patched_text[pos + len(evidence) :]
             )
 
+        before_count = _count_cjk_chars(current_text)
+        after_count = _count_cjk_chars(patched_text)
+        MINIMUM_CJK = 5000
+        if not allow_below_minimum and after_count < MINIMUM_CJK:
+            raise NovelForgeError(
+                f"Patch result has {after_count} CJK characters, below the "
+                f"minimum {MINIMUM_CJK}. Use --allow-below-minimum only for "
+                "exploratory drafts."
+            )
+
         # Write patched text to a temporary external file, then reuse write_revision.
         import tempfile
         with tempfile.NamedTemporaryFile(
@@ -910,13 +941,18 @@ class NovelForgeService:
 
         try:
             patch_note = note or f"patch from {patch_file.name}"
-            return self.write_revision(
+            chapter = self.write_revision(
                 slug,
                 number,
                 tmp_path,
                 note=patch_note,
                 reopen_reason=reopen_reason,
             )
+            return {
+                "chapter": chapter,
+                "before_count": before_count,
+                "after_count": after_count,
+            }
         finally:
             tmp_path.unlink(missing_ok=True)
 

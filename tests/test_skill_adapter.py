@@ -801,7 +801,7 @@ def test_write_revision_patch_requires_confirm_and_applies_patch(
     assert data["error"]["code"] == "confirmation_required"
     assert svc.get_chapter("test", 1).current_revision_id == rev1
 
-    # Confirmed success.
+    # Confirmed success (below-minimum allowed because this is a unit test).
     code = main(
         [
             "--root",
@@ -815,6 +815,7 @@ def test_write_revision_patch_requires_confirm_and_applies_patch(
             str(patch),
             "--note",
             "patch test",
+            "--allow-below-minimum",
         ]
     )
     assert code == 0
@@ -1071,6 +1072,7 @@ def test_write_revision_patch_requires_reopen_reason_for_approved_chapter(
             "1",
             "--patch-file",
             str(patch),
+            "--allow-below-minimum",
         ]
     )
     assert code == 0
@@ -1092,9 +1094,299 @@ def test_write_revision_patch_requires_reopen_reason_for_approved_chapter(
             str(patch),
             "--reopen-reason",
             "fix typo",
+            "--allow-below-minimum",
         ]
     )
     assert code == 0
     data = _json_output(capsys)
     assert data["ok"] is True
     assert svc.get_chapter("test", 1).current_revision_id != rev1
+
+
+def test_write_revision_patch_preserves_quote_boundaries(tmp_path: Path, capsys):
+    """Regression: evidence must include surrounding quotes to avoid ""...""."""
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+    src.write_text('她问："妈，井水是不是生气了。"\n', encoding="utf-8")
+    svc.write_revision("test", 1, src)
+
+    # Correct patch: evidence includes the existing quotes.
+    patch = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "第1段",
+                "evidence": '"妈，井水是不是生气了。"',
+                "replacement": '"妈，井水是不是生气了？"',
+                "reason": "fix question mark",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch),
+            "--allow-below-minimum",
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    rev_path = tmp_path / svc.get_current_revision("test", 1).file_path
+    text = rev_path.read_text(encoding="utf-8")
+    assert '"妈，井水是不是生气了？"' in text
+    assert '""妈' not in text
+    assert '妈""' not in text
+
+
+def test_write_revision_patch_reports_before_after_counts(tmp_path: Path, capsys):
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+    src.write_text("她走进房间。桌上有一封信。\n", encoding="utf-8")
+    svc.write_revision("test", 1, src)
+
+    patch = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "第1段",
+                "evidence": "桌上有一封信",
+                "replacement": "桌上摆着一封未拆的信",
+                "reason": "add detail",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch),
+            "--allow-below-minimum",
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    assert "before_count" in data["data"]
+    assert "after_count" in data["data"]
+    assert data["data"]["before_count"] == 11
+    assert data["data"]["after_count"] == 15
+
+
+def test_write_revision_patch_blocks_dropping_below_minimum(tmp_path: Path, capsys):
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+    # 5003 CJK characters, with a unique prefix so evidence is unique.
+    body = "开头" + "中" * 5000 + "结尾。\n"
+    src.write_text(body, encoding="utf-8")
+    svc.write_revision("test", 1, src)
+    rev1 = svc.get_chapter("test", 1).current_revision_id
+
+    # Patch deletes 48 CJK characters, dropping below 5000.
+    patch = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "开头段",
+                "evidence": "开头" + "中" * 50,
+                "replacement": "开头中",
+                "reason": "shrink",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is False
+    assert "below" in data["error"]["message"].lower() or "5000" in data["error"]["message"]
+    assert svc.get_chapter("test", 1).current_revision_id == rev1
+
+
+def test_write_revision_patch_allow_below_minimum(tmp_path: Path, capsys):
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+    body = "开头" + "中" * 5000 + "结尾。\n"
+    src.write_text(body, encoding="utf-8")
+    svc.write_revision("test", 1, src)
+    rev1 = svc.get_chapter("test", 1).current_revision_id
+
+    patch = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "开头段",
+                "evidence": "开头" + "中" * 50,
+                "replacement": "开头中",
+                "reason": "shrink",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch),
+            "--allow-below-minimum",
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    assert svc.get_chapter("test", 1).current_revision_id != rev1
+    assert "before_count" in data["data"]
+    assert "after_count" in data["data"]
+
+
+def test_write_revision_patch_4999_rejected_5000_accepted(tmp_path: Path, capsys):
+    """Boundary: patch result must be >=5000 CJK unless explicitly allowed."""
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+
+    # Current 4999; patch keeps it at 4999 -> rejected.
+    body_4999 = "起" + "中" * 4997 + "止。\n"
+    src.write_text(body_4999, encoding="utf-8")
+    svc.write_revision("test", 1, src)
+    rev1 = svc.get_chapter("test", 1).current_revision_id
+
+    patch_keep_low = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "开头",
+                "evidence": "起中",
+                "replacement": "起",
+                "reason": "shrink",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch_keep_low),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is False
+    assert "5000" in data["error"]["message"]
+    assert svc.get_chapter("test", 1).current_revision_id == rev1
+
+    # Current 4999; patch raises it to exactly 5000 -> accepted.
+    patch_raise = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "开头",
+                "evidence": "起中",
+                "replacement": "起中中",
+                "reason": "expand",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch_raise),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    assert data["data"]["after_count"] == 5000
+
+
+def test_write_revision_patch_5000_to_4999_rejected(tmp_path: Path, capsys):
+    """Current >=5000 and patch drops result to 4999 must be rejected."""
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+    src = tmp_path / "c1.md"
+    body = "起" + "中" * 4998 + "止。\n"
+    src.write_text(body, encoding="utf-8")
+    svc.write_revision("test", 1, src)
+    rev1 = svc.get_chapter("test", 1).current_revision_id
+
+    patch = _write_patch(
+        tmp_path,
+        [
+            {
+                "location": "开头",
+                "evidence": "起中",
+                "replacement": "起",
+                "reason": "shrink by one",
+            }
+        ],
+    )
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "write-revision-patch",
+            "write-revision-patch",
+            "test",
+            "1",
+            "--patch-file",
+            str(patch),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is False
+    assert data["error"]["message"]
+    assert svc.get_chapter("test", 1).current_revision_id == rev1

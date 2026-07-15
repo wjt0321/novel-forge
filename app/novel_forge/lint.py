@@ -58,6 +58,10 @@ _RULES = {
         "advisory",
         "对话引号数量不成对，请检查对话标点一致性",
     ),
+    "quote-duplication": (
+        "advisory",
+        "出现连续双引号（\"\"…\"\"），通常是 patch 或转义错误，请检查引号嵌套",
+    ),
     "common-error": (
         "advisory",
         "疑似常见错字、搭配或病句，请人工复核",
@@ -80,7 +84,10 @@ _EXPLANATION_PATTERNS = [
     re.compile(r"不是结束，是"),
 ]
 
-_WORD_COUNT_RE = re.compile(r"[零一二三四五六七八九十百千万两0-9]{1,4}(?:个|枚|行)?字")
+# Genuine word-count expressions only: an explicit quantifier immediately
+# before 字, with an optional 个/枚 classifier. Excludes ordinals (第...) and
+# classifier 行 (一行字 / 第一行字).
+_WORD_COUNT_RE = re.compile(r"(?<![第])[零一二三四五六七八九十百千万两0-9]{1,4}(?:个|枚)?字")
 
 # 不是X，而是Y / 不是X，是Y within a clause.
 _NOT_IS_FLIP_RE = re.compile(
@@ -151,17 +158,72 @@ def _split_sentences(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
+def _sentence_spans(text: str) -> list[tuple[str, int, int]]:
+    """Return (sentence_text, start, end) spans split by sentence terminators.
+
+    The returned sentence_text includes the terminator when one is present. A
+    trailing fragment without a terminator is also returned so that the caller
+    can treat end-of-paragraph as a boundary.
+    """
+    spans: list[tuple[str, int, int]] = []
+    start = 0
+    for m in _SENTENCE_END_RE.finditer(text):
+        end = m.end()
+        spans.append((text[start:end].strip(), start, end))
+        start = end
+    if start < len(text):
+        spans.append((text[start:].strip(), start, len(text)))
+    return [(s, b, e) for s, b, e in spans if s]
+
+
+# Characters that make a short standalone sentence unlikely to be a
+# conclusion/explanatory punchline (pronouns, times, numbers, common verbs).
+_PUNCHLINE_EXCLUDED = set(
+    "我你他她它这那哪什"
+    "今明昨天年月日周早晚"
+    "零一二三四五六七八九十百千万两"
+    "0123456789"
+    "是有了为在把被说看走站到来去下出进过就吃做拿打读写听见想觉得要会可"
+    "的地得"
+)
+
+
+_NOUN_PHRASE_VERB_MARKERS = set(
+    # Grammatical function words that indicate a predicate structure rather
+    # than a bare noun phrase. We deliberately avoid blacklisting concrete
+    # action nouns/verbs (e.g. 翻身, 奔跑) because those frequently appear in
+    # nominal lists such as "井水。老鼠。地龙翻身。".
+    #
+    # Copulas, auxiliaries, passives/causatives, prepositions
+    "是有了为在把被让给叫使"
+    "会能可要可肯敢愿应须"
+    # Structural particles and conjunctions.
+    # Note: "地" is intentionally omitted because it frequently starts nominal
+    # phrases such as "地龙翻身" or "地上"; as a structural particle it almost
+    # never appears at the start of a short standalone phrase.
+    "的了着过"
+    "和与或但而因果如果所以虽然"
+    # Pronouns / demonstratives
+    "我你他她它这那哪"
+)
+
+
 def _is_noun_phrase_like(sentence: str) -> bool:
     """Heuristic: sentence looks like a standalone noun phrase / list item."""
     stripped = sentence.strip("\n\"'")
     if not stripped:
         return False
-    # Very short (<=12 chars) and no obvious predicate markers.
-    if len(stripped) > 12:
+    # Very short (<=8 chars) and no obvious predicate markers.
+    if len(stripped) > 8:
         return False
-    # Has verb-like characters? Then it's probably a real sentence.
-    verb_markers = set("是有了为在把被说看走站到来去下出进过就做")
-    if any(c in verb_markers for c in stripped):
+    # Drop any leading punctuation such as opening quotes so that "\"房子" is
+    # not treated as a noun phrase just because the quote hides the verb.
+    inner = stripped.lstrip("\"'「『“‘")
+    if not inner:
+        return False
+    # Has verb-like, pronoun, or copula characters? Then it's probably a real
+    # sentence rather than a list item.
+    if any(c in _NOUN_PHRASE_VERB_MARKERS for c in inner):
         return False
     return True
 
@@ -228,18 +290,22 @@ def _detect_mechanical_triplet(
             continue
         for i in range(len(sentences) - 2):
             a, b, c = sentences[i], sentences[i + 1], sentences[i + 2]
-            # Rule 1: three consecutive noun-phrase standalone items.
+            # Rule 1: three consecutive noun-phrase standalone items. Only flag
+            # when the run reaches the start of the paragraph; this keeps genuine
+            # list-like sequences ("井水。老鼠。地龙翻身。") while avoiding
+            # appositives that follow an already-complete sentence.
             if _is_noun_phrase_like(a) and _is_noun_phrase_like(b) and _is_noun_phrase_like(c):
-                findings.append(
-                    LintFinding(
-                        rule_code="mechanical-triplet",
-                        severity=severity,
-                        line_number=line_nums[0],
-                        message=message,
-                        evidence=f"{a} / {b} / {c}",
+                if i == 0 or _is_noun_phrase_like(sentences[i - 1]):
+                    findings.append(
+                        LintFinding(
+                            rule_code="mechanical-triplet",
+                            severity=severity,
+                            line_number=line_nums[0],
+                            message=message,
+                            evidence=f"{a} / {b} / {c}",
+                        )
                     )
-                )
-                break
+                    break
             # Rule 2: three consecutive sentences share the same opening prefix.
             # Use a 2-character prefix for Chinese; 4 for mixed/ASCII.
             prefix_len = 2 if re.search(r"[\u4e00-\u9fff]", a[:4]) else 4
@@ -247,24 +313,52 @@ def _detect_mechanical_triplet(
             b_prefix = b[:prefix_len]
             c_prefix = c[:prefix_len]
             if len(a_prefix) >= prefix_len and a_prefix == b_prefix == c_prefix:
-                findings.append(
-                    LintFinding(
-                        rule_code="mechanical-triplet",
-                        severity=severity,
-                        line_number=line_nums[0],
-                        message=message,
-                        evidence=f"{a} / {b} / {c}",
+                # Same-prefix runs must also reach the paragraph start to avoid
+                # flagging lists that merely append evidence after a full sentence.
+                if i == 0 or sentences[i - 1][:prefix_len] == a_prefix:
+                    findings.append(
+                        LintFinding(
+                            rule_code="mechanical-triplet",
+                            severity=severity,
+                            line_number=line_nums[0],
+                            message=message,
+                            evidence=f"{a} / {b} / {c}",
+                        )
                     )
-                )
-                break
+                    break
     return findings
+
+
+_PUNCHLINE_CORE_RE = re.compile(r"^[\u4e00-\u9fff]+$")
+
+
+def _is_explanatory_punchline_core(core: str) -> bool:
+    """Core heuristics for a short, isolated, conclusion-like sentence."""
+    if not core:
+        return False
+    # Standalone short conclusion: <=5 chars and all CJK.
+    if len(core) > 5 or not _PUNCHLINE_CORE_RE.match(core):
+        return False
+    # Exclude fragments that are clearly narrative (actions, times, pronouns).
+    if any(ch in _PUNCHLINE_EXCLUDED for ch in core):
+        return False
+    return True
 
 
 def _detect_explanatory_punchline(
     paragraphs: list[tuple[list[int], str]],
     total_cjk_chars: int,
 ) -> list[LintFinding]:
-    """Flag standalone conclusion sentences in narrative paragraphs."""
+    """Flag genuinely standalone short conclusion sentences.
+
+    We only flag short sentences that are isolated from continuous narrative:
+    - the paragraph consists of a single short sentence; or
+    - the paragraph has exactly two sentences and the final sentence is a short,
+      standalone conclusion preceded by a substantially longer sentence.
+
+    This avoids treating ordinary short sentences inside long narrative
+    paragraphs ("今天是周六", "秀兰", "她坐起来") as explanatory punchlines.
+    """
     findings: list[LintFinding] = []
     severity, message = _RULES["explanatory-punchline"]
     # Skip very short test fragments and headings.
@@ -275,24 +369,110 @@ def _detect_explanatory_punchline(
         first_line = para_text.split("\n")[0].strip()
         if first_line.startswith("#"):
             continue
-        sentences = _split_sentences(para_text)
-        for sentence in sentences:
-            stripped = sentence.strip("\n\"'")
-            # Standalone short conclusion: <=5 chars and mostly CJK.
-            if 1 <= len(stripped) <= 5 and re.match(r"^[\u4e00-\u9fff]+$", stripped):
+        sents = _sentence_spans(para_text)
+        if not sents:
+            continue
+
+        def _core(sent: str) -> str:
+            return sent.rstrip("。！？.?!").strip("\n\"'")
+
+        # Case 1: single-sentence paragraph.
+        if len(sents) == 1:
+            sent, _start, _end = sents[0]
+            core = _core(sent)
+            if _is_explanatory_punchline_core(core):
                 findings.append(
                     LintFinding(
                         rule_code="explanatory-punchline",
                         severity=severity,
                         line_number=line_nums[0],
-                        message=f"结论性独词句：「{stripped}」，建议通过动作或发现过程呈现",
-                        evidence=stripped,
+                        message=f"结论性独词句：「{core}」，建议通过动作或发现过程呈现",
+                        evidence=core,
+                    )
+                )
+            continue
+
+        # Case 2: two-sentence paragraph ending in a short standalone conclusion
+        # that follows a substantially longer sentence (clear rhythmic break).
+        if len(sents) == 2:
+            prev_sent, _prev_start, _prev_end = sents[0]
+            sent, _start, _end = sents[1]
+            prev_core = _core(prev_sent)
+            core = _core(sent)
+            if (
+                len(prev_core) >= 6
+                and _is_explanatory_punchline_core(core)
+            ):
+                findings.append(
+                    LintFinding(
+                        rule_code="explanatory-punchline",
+                        severity=severity,
+                        line_number=line_nums[0],
+                        message=f"结论性短句：「{core}」，建议通过动作或发现过程呈现",
+                        evidence=core,
                     )
                 )
     return findings
 
 
-_QUESTION_PARTICLE_RE = re.compile(r"([吗呢么吧])([。．\.]|$)")
+# Question particles followed by a full stop. 么 must be a real sentence-final
+# particle, not part of 什么/怎么/那么/多么/要么.
+_QUESTION_PARTICLE_RE = re.compile(r"(?:吗|呢|吧|(?<![什怎那多这要])么)[。．\.]")
+
+# Consecutive ASCII double quotes that are likely patch/escape artifacts.
+# We flag "" that appears in prose (surrounded by CJK or punctuation) while
+# excluding:
+#   - lines inside fenced code blocks
+#   - escaped quotes (\"\")
+#   - JSON-structural contexts ({ } : , [ ])
+_QUOTE_DUP_RE = re.compile(r'""')
+
+
+def _detect_quote_duplication(text: str) -> list[LintFinding]:
+    """Flag consecutive ASCII double quotes in prose contexts."""
+    findings: list[LintFinding] = []
+    severity, message = _RULES["quote-duplication"]
+    in_code_block = False
+    json_structural = set("{}:,[]")
+    reported_lines: set[int] = set()
+
+    for idx, line in enumerate(text.split("\n"), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        # Skip lines that look like JSON object/array wrappers.
+        if stripped in {"{", "}", "[", "]", "},", "],", "{"}:
+            continue
+
+        for m in _QUOTE_DUP_RE.finditer(line):
+            start, end = m.start(), m.end()
+            # Skip escaped quotes: \"\"
+            if start > 0 and line[start - 1] == "\\":
+                continue
+            # Skip if adjacent to JSON structural chars (e.g. "": or ,"")
+            if (
+                start > 0
+                and line[start - 1] in json_structural
+                or end < len(line)
+                and line[end] in json_structural
+            ):
+                continue
+            if idx in reported_lines:
+                continue
+            reported_lines.add(idx)
+            findings.append(
+                LintFinding(
+                    rule_code="quote-duplication",
+                    severity=severity,
+                    line_number=idx,
+                    message=message,
+                    evidence=_truncate(line, start, end),
+                )
+            )
+    return findings
 
 
 def lint_text(text: str) -> list[LintFinding]:
@@ -395,6 +575,8 @@ def lint_text(text: str) -> list[LintFinding]:
     findings.extend(_detect_rhythm_monotony(paragraphs))
     findings.extend(_detect_mechanical_triplet(paragraphs))
     findings.extend(_detect_explanatory_punchline(paragraphs, char_count))
+
+    findings.extend(_detect_quote_duplication(text))
 
     # Quote consistency (file-level heuristic).
     # For straight ASCII quotes, an odd total count is inconsistent because

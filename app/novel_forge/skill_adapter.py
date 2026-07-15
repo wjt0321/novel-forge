@@ -24,6 +24,7 @@ from app.novel_forge.service import NovelForgeError, NovelForgeService
 # an explicit `--confirm <operation-name>` guard.
 MUTATING_OPS = {
     "init-book",
+    "init-novel-project",
     "create-chapter",
     "write-revision",
     "add-finding",
@@ -125,6 +126,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init-book", help="Initialize a new book.")
     p.add_argument("slug", help="Book slug.")
     p.add_argument("--title", required=True, help="Book title.")
+
+    p = sub.add_parser(
+        "init-novel-project",
+        help="Create the recommended books/<slug>/ project layout.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--title", required=True, help="Book title.")
+    p.add_argument("--genre", required=True, help="Book genre.")
 
     p = sub.add_parser("create-chapter", help="Create a new chapter.")
     p.add_argument("slug", help="Book slug.")
@@ -425,6 +434,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default=None, help="Revision note.")
     p.add_argument(
         "--reopen-reason", default=None, help="Reason for reopening an approved chapter."
+    )
+    p.add_argument(
+        "--allow-below-minimum",
+        action="store_true",
+        help=(
+            "Allow the patched revision to remain below 5000 CJK characters. "
+            "For exploratory drafts only; formal short stories must meet 5000."
+        ),
     )
 
     # Status: book or chapter. Use positional slug and optional number.
@@ -872,6 +889,10 @@ def run(argv: list[str] | None = None) -> int:
         book = svc.init_book(slug, args.title)
         return _ok(op, {"book": _book_dict(book)}, state_changed=True)
 
+    if op == "init-novel-project":
+        result = svc.init_novel_project(slug, args.title, args.genre)
+        return _ok(op, result, state_changed=True)
+
     if op == "create-chapter":
         chapter = svc.create_chapter(slug, args.number, args.title)
         return _ok(op, {"chapter": _chapter_dict(chapter)}, state_changed=True)
@@ -898,18 +919,22 @@ def run(argv: list[str] | None = None) -> int:
     if op == "write-revision-patch":
         patch_file = _validate_patch_file(root, args.patch_file)
         before = svc.get_chapter(slug, args.number)
-        chapter = svc.write_revision_patch(
+        patch_result = svc.write_revision_patch(
             slug,
             args.number,
             patch_file,
             note=args.note,
             reopen_reason=args.reopen_reason,
+            allow_below_minimum=args.allow_below_minimum,
         )
+        chapter = patch_result["chapter"]
         return _ok(
             op,
             {
                 "chapter": _chapter_dict(chapter),
                 "current_revision_id": chapter.current_revision_id,
+                "before_count": patch_result["before_count"],
+                "after_count": patch_result["after_count"],
             },
             state_changed=(before.current_revision_id != chapter.current_revision_id),
         )

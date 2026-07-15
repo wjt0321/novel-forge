@@ -1,113 +1,99 @@
-# Novel Forge Skill Interface
+---
+name: novel-forge
+description: "当需要创建、策划、起草、修订、审阅、质检、审计或导出 Novel Forge 小说项目时使用。"
+metadata:
+  version: "2.1"
+  entrypoint: "app.novel_forge.skill_adapter"
+---
 
-## 用途
+# Novel Forge 小说创作
 
-本 Skill 用于驱动 `D:\s-black-novel`（Novel Forge）的受限 JSON adapter，完成自主研究 → 故事发动机 → 场景计划 → 分场起草 → 独立审稿 → 迭代修订的受控循环。**不得直接操作 SQLite 或 `library/` 下的 revision 文件。**
+本 Skill 用于管理 Novel Forge 小说资产。不得直接改 SQLite 数据库或不可变 revision 文件。
 
-## 硬边界
+## 路径与工作目录
 
-- 禁止直接修改 `data/novel-forge.db` 或 `library/<slug>/manuscript/revisions/` 下的任何文件。
-- 禁止让写作 Agent 自审自放行；独立编辑身份固定为 `independent_reader_editor`。
-- 禁止模仿在世作家风格；只使用文学技法卡，记录“技法”而非仿写。
-- 正文（>=5000 中文汉字）必须通过 `write-revision` 提交；禁止伪造人类最终批准。
-- 自动验收通过结果只能是 `autonomous_acceptance_complete`，不是文学/市场保证，也不是最终发布许可。
-- 自主循环最多 3 轮；到上限仍未通过必须输出 `failed_needs_human`。
+- **不要硬编码盘符或绝对根路径。** 一律从当前工作目录、调用参数，或项目根的相对结构推导路径。
+- 调用 adapter 时，以项目根为当前工作目录，并用 `--root .`：
 
-## 调用入口
-
-```bash
-PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <ABSOLUTE_ROOT> <operation> ...
+```cmd
+set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . <operation> ...
 ```
 
-`--root` 必须是绝对路径。所有 stdout 为 JSON；traceback 只应出现在未预期错误时。
+- `books/<slug>/` 是新项目的文件前台；`library/<slug>/` 是 legacy 审计工作流。
+- 不得静默混用两套工作流。需要两者共用时，先在项目说明中声明哪一处是正文唯一来源。
 
-## 常用命令
+## 选择工作流
 
-### 只读/诊断（无需 `--confirm`）
+- **新建短篇、Claude 项目内写作：** 默认 `books/<slug>/`。
+- **需要 SQLite 审计、revision 历史、Canon 或导出：** 使用 `library/<slug>/` adapter 工作流。
 
-```bash
-status <slug>
-status <slug> <chapter-number>
-check-acceptance <slug> <chapter-number> [--max-rounds 3]
-list-research <slug>
-get-story-engine <slug>
-get-chapter-plan <slug> <number>
-list-promises <slug>
-list-iterations <slug> <number>
+## 新项目工作流：`books/<slug>/`
+
+用户明确要求创建后，以项目根为 cwd 执行：
+
+```cmd
+set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . --confirm init-novel-project init-novel-project <slug> --title "<书名>" --genre "<类型>"
 ```
 
-### 变更操作（必须 `--confirm <operation>`）
+生成的核心文件：
 
-```bash
-add-research-entry <slug> --url URL --retrieved-at ISO --source-type official|academic|news|other --confidence A|B|C --claim "..." --allowed-use plot_support|background_only|fiction_seed --fiction-boundary "..." [--verification-state collected|verified|unresolved] [--verification-ref ID] [--unresolved] [--notes]
+- `CLAUDE.md`：本书宪法与进度
+- `chapters/eXX/ch-XX/正文.md`：章节唯一正文
+- `memory/`：既成事实、实体、世界规则和未来规划
+- `planning/`：故事发动机、研究边界、事件规划
+- `.claude/agents/`：`context-collector`、`consistency-guard`、`chapter-editor`
+- `tools/quality_check.py`：低成本表面质检
 
-update-research-entry <slug> <entry_id> [--verification-state collected|verified|unresolved] [--verification-ref ID]
+### 单章最简流程
 
-set-story-engine <slug> --secret "..." --desire "..." --alternative-actions a1 a2 ... --irreversible-choice "..." --immediate-cost "..." --thematic-pressure "..."
+1. **调研：** 写手自行检索与主题有关的现实素材，保留来源链接；区分已核验事实与虚构内容。不得仿写在世作家，只能使用可说明的文学技法。
+2. **故事发动机：** 在 `planning/` 写清主角欲望、阻力、不可逆选择、即时成本和一个尚未解答的承诺。
+3. **上下文：** `context-collector` 只读必要记忆、规划、研究边界和上一章结尾；不得写正文。
+4. **起草：** 一名写手只写一章，从正在发生的行动开始，不批量生成后续章节。
+5. **质检：** 从书项目根运行 `python tools\quality_check.py chapters\eXX\ch-XX\正文.md`。
+6. **独立审稿：** `chapter-editor` 最多给五条可定位的 MUST/MAY；写手不得自审自批。
+7. **一次修订：** 只改必要局部，再跑质检，并由 `consistency-guard` 核对实体、时间线、角色认知与未回收承诺。
+8. **如实交付：** 质检通过不等于文学保证、市场保证或用户最终批准。
 
-set-chapter-plan <slug> <number> --plan-file ABS.json [--status draft|approved_for_writing]
+### 不可违反的写作规则
 
-update-promise <slug> <promise_id> --status advanced|resolved|abandoned --scene-ref REF [--note]
+- 正式短篇章节必须不少于 **5000 个 CJK 汉字**；更短的文本只能标为实验片段。
+- 写手必须区分现实事实和虚构。可见线索不能直接证明未核验的历史、技术或制度性结论。
+- 禁止背景卸货、清单式对话、说话人不明、重复段落与先下结论的主题升华。
+- 避免“同一名词反复出现 → 连续下判断 → 补技术解释”的机械观察链。专业信息必须服务于人物此刻的选择、误判或行动；用一个有辨识度的物象和后续动作代替对裂缝、断面、颜色、结论的逐项复述。
+- 避免整齐对仗的短句堆叠，例如“边缘如何。断面如何。时间如何。”；句长、信息密度与叙述距离应随紧张程度变化。
+- **禁止跨段重复同一信息结论。** 同一章内，一旦已经明确交代某个事实、风险、数字、空间关系或判断，不得在后文以近义句再次讲解，例如先写“某处会整体崩塌，关键设施恰好经过那里”，后文又写“该处会崩塌，关键设施穿过那里”。后文只有在信息出现新证据、造成新后果、被角色误解/反驳，或推动新的选择时才能回收；回收必须写出新增变化，不能只换词复述。
+- **禁止无归属的排比式对白。** 连续两句以上对话必须让读者无需猜测即可判断说话者；至少通过说话人标识、动作、视线、停顿、身体反应、周围人的反应或明确的上下文承接，持续锚定人物和空间。不得把“问一句、答一句、再抛一句漂亮话”排成脱离现场的台词卡。对白的每一次交锋至少应改变人物关系、行动条件或当下风险；否则删减或改为叙述。
+- `正文.md` 中不得出现提示词、工作流标记、研究笔记或 Agent 身份。
+- 未经用户明确指示，不得覆盖既有章节；历史由 Git 保存，不新增 `正文-v2.md` 等并行正文。
+- 未经用户明确批准，不得宣称“已批准”。
 
-record-iteration <slug> <number> --writer-role ROLE --editor-verdict revision_required|ready_for_human_editor_decision --blocking-issues-file ABS.json --revision-targets t1 t2 ... --word-count N [--status running|completed|failed]
+## Legacy 审计工作流：`library/<slug>/`
 
-git-checkpoint <slug> --message "..."
+仅在确实需要审计状态、不可变 revision、Canon 或导出时使用：
+
+```cmd
+set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . <operation> ...
 ```
 
-### 第二～五里程碑与质量链重构（P0–P4）相关命令
+- 查看状态：`status <slug> [章节号]`
+- 创建：`--confirm init-book init-book <slug> --title "..."`；再执行 `--confirm create-chapter create-chapter <slug> <章节号> --title "..."`
+- 写 revision：`--confirm write-revision write-revision <slug> <章节号> --from-file <绝对草稿路径>`
+- 精确局部修订：`--confirm write-revision-patch write-revision-patch <slug> <章节号> --patch-file <绝对 JSON 路径>`
+- 质量门：`lint <slug> <章节号>`、`review <slug> <章节号>`
 
-- `init-workspace <slug>` / `refresh-workspace <slug>`：生成/刷新 `<root>/work/<slug>/` 人类可读目录入口（README/CURRENT/manuscript 镜像等）。
-- `write-revision-patch <slug> <number> --patch-file ABS.json`：对当前 revision 做精确定位替换，生成新 revision；不直接修改 library。
+严禁直接修改 `data/novel-forge.db` 或 `library/<slug>/manuscript/revisions/`。正式小说不得使用 `--allow-below-minimum`。
 
-参见 `docs/04-operations-and-backup.md`、`docs/11-autonomous-research-writing-chain.md`、`docs/12-quality-chain-reconstruction.md`。
+## Git
 
-## 输入文件规范
+Git 是 `books/` 项目的历史层。建立检查点前先运行 `git status --short`，仅 stage 当前书项目相关文件。未经用户明确要求，不得 commit、push 或同步至 Gitea/GitHub。
 
-- `--plan-file`：JSON 数组，每个元素为 scene object，必须含 `scene_ref`、`goal`、`obstacle`、`choice`、`cost`、`ending_change`，可选 `promises`。
-- `--blocking-issues-file`：JSON 数组，每个元素必须含 `location`、`evidence`、`effect`、`revision_intent`。
-- `--patch-file`：JSON 数组，每个元素必须含 `location`、`evidence`（唯一匹配）、`replacement`、`reason`。
-- 所有外部输入文件必须：绝对路径、有效 UTF-8（允许 BOM）、不在 `<root>/library/` 内。
+## 完成汇报
 
-## JSON 输出契约
+只汇报：
 
-成功：
-
-```json
-{"ok": true, "operation": "...", "state_changed": true|false, "data": {...}}
-```
-
-可预期业务失败：
-
-```json
-{"ok": false, "error": {"code": "confirmation_required|business_error|invalid_arguments|invalid_root", "message": "..."}}
-```
-
-**data 中不会包含正文全文、Voice Bible 全文、Scene Contract 全文、Editorial Memo 全文或写作包全文。** `list-research` 返回研究条目字段，但 Skill 不应把这些原始 claim 直接粘贴到公开输出。
-
-## 推荐自主循环
-
-1. **研究**：`add-research-entry` 建立 Research Ledger；B/C 级 `plot_support` 必须绑定一条 `verified` A 级 `plot_support` 佐证，否则不得作为唯一关键情节支点。
-2. **故事发动机**：`set-story-engine` 定义 secret / desire / irreversible choice / cost / thematic pressure。
-3. **章节计划**：`set-chapter-plan` 创建 4–6 场景的 plan；记录 `promises`。
-4. **写作包**：`build-drafting-packet` 生成外部 Markdown 上下文包给写作 Agent；不修改 library。
-5. **起草**：外部 Agent 按包写场景，输出独立 Markdown，再用 `write-revision` 提交。
-6. **审稿**：`lint`、`add-reader-review`、`submit-editorial-memo`。
-7. **迭代**：如未通过，`record-iteration` 记录本轮 verdict、blocking issues、revision targets；`writer_role` 不得为 `independent_reader_editor`。
-8. **局部修订**：对定位明确的校对/语言问题，可用 `write-revision-patch` 生成新 revision；仍需重新 lint/review/memo。
-9. **验收**：`check-acceptance`；通过则 `autonomous_acceptance_complete`，否则继续修订或 3 轮后 `failed_needs_human`。
-10. **检查点**：每轮/每场后 `git-checkpoint`，只 stage `library/<slug>/` 与 `docs/<slug>/`。
-11. **目录入口**：用 `init-workspace` / `refresh-workspace` 维护 `<root>/work/<slug>/` 的人类可读索引。
-
-## 已知限制
-
-- `check-acceptance` 只检查流程覆盖度与可验证语言/校对层，不评判文学性。
-- P1 lint 是表面模式匹配，可能误报，不能替代人工校对。
-- 不实现真实 LLM 调用或联网抓取；Skill 需自行调度外部模型。
-- 不实现删除；所有历史保留审计。
-
-## 参考文档
-
-- `docs/11-autonomous-research-writing-chain.md`
-- `docs/04-operations-and-backup.md`
-- `docs/07-database-migration.md`
-- `docs/12-quality-chain-reconstruction.md`
+- 项目路径与正文唯一入口
+- CJK 汉字数和质检结果
+- 独立编辑的 MUST/MAY 摘要
+- 尚存的事实或文学风险
+- 是否发生 Git 操作
