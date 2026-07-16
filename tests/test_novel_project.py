@@ -1,15 +1,25 @@
 """Tests for the new books/<slug>/ project layout."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+import app.novel_forge
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.service import NovelForgeService
 from app.novel_forge.skill_adapter import main
+
+_REPO_ROOT = Path(app.novel_forge.__file__).resolve().parents[2]
+
+
+def _tool_env() -> dict:
+    env = dict(os.environ)
+    env["NOVEL_FORGE_ROOT"] = str(_REPO_ROOT)
+    return env
 
 
 def _json_output(capsys) -> dict:
@@ -79,6 +89,7 @@ def test_generated_narrative_gate_rejects_unfilled_scene_package(tmp_path: Path)
         text=True,
         encoding="utf-8",
         check=False,
+        env=_tool_env(),
     )
     assert proc.returncode == 1
     assert "scene-package 缺少或未填写章节" in proc.stdout
@@ -181,6 +192,7 @@ def test_quality_check_script_detects_issues(tmp_path: Path):
         text=True,
         encoding="utf-8",
         check=False,
+        env=_tool_env(),
     )
     assert proc.returncode == 0, proc.stderr
     output = proc.stdout
@@ -188,7 +200,7 @@ def test_quality_check_script_detects_issues(tmp_path: Path):
     assert "quote-duplication" in output
     assert "question-mark-mismatch" in output
     assert "word-count-tic" in output
-    assert "negation-flip" in output
+    assert "not-is-flip" in output
     assert "em-dash" in output
 
 
@@ -204,6 +216,33 @@ def test_quality_check_script_clean_file(tmp_path: Path):
         text=True,
         encoding="utf-8",
         check=False,
+        env=_tool_env(),
     )
     assert proc.returncode == 0, proc.stderr
-    assert "No findings" in proc.stdout
+    # Canonical lint always appends a file-level colon-density metric for
+    # CJK text, so "clean" means: no blocking findings and no rule findings
+    # other than the metrics row.
+    assert "Blocking: 0" in proc.stdout
+    assert "em-dash" not in proc.stdout
+    assert "not-is-flip" not in proc.stdout
+
+
+def test_skill_dual_location_copies_are_identical():
+    """The skill ships in two harness scan locations; they must not drift."""
+    agents_copy = _REPO_ROOT / ".agents/skills/novel-forge/SKILL.md"
+    claude_copy = _REPO_ROOT / ".claude/skills/novel-forge/SKILL.md"
+    assert agents_copy.exists(), "missing .agents/skills/novel-forge/SKILL.md"
+    assert claude_copy.exists(), "missing .claude/skills/novel-forge/SKILL.md"
+    assert agents_copy.read_bytes() == claude_copy.read_bytes(), (
+        "SKILL.md copies drifted; edit .agents/skills/ (canonical) and re-sync .claude/skills/"
+    )
+
+
+def test_skill_frontmatter_has_required_fields():
+    import re
+
+    text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(encoding="utf-8")
+    assert text.startswith("---")
+    frontmatter = text.split("---", 2)[1]
+    assert re.search(r"^name:\s*novel-forge\s*$", frontmatter, re.MULTILINE)
+    assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)

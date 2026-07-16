@@ -1,5 +1,7 @@
 # 13 - Claude 项目内工作流（第一阶段）
 
+> **现状回填（v3.1）**：本文描述的是第一阶段（3 份 agent、单工具）。当前实现已是 7 份 agent（新增 `causal-editor`、`line-editor`、`blind-reader`、升级后的 `chapter-editor`）、双薄壳工具（`quality_check.py` + `narrative_gate.py`）、v3 规划模板（scene-package / action-draft / dialogue-ledger / chapter-state）、voice-bible 与 reviews 落盘机制，章节状态机扩展为 13 态。最新约定以 docs/15 与 `.agents/skills/novel-forge/SKILL.md` 为准。
+
 ## 目标
 
 把 Novel Forge 从“数据库门禁优先”调整为“每本小说独立项目、Claude 在项目内自主编排、正文优先”的架构。新目录 `books/<slug>/` 是面向写作者和 Claude 的推荐前台； legacy `library/` 与 SQLite 账本保持兼容，不强迁移。

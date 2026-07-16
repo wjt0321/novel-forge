@@ -28,6 +28,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("slug", help="Book slug.")
     p.add_argument("--title", required=True, help="Book title.")
 
+    # init-novel-project
+    p = sub.add_parser(
+        "init-novel-project",
+        help="Initialize a books/<slug>/ front-of-house project (no database).",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--title", required=True, help="Book title.")
+    p.add_argument("--genre", required=True, help="Book genre.")
+
     # create-chapter
     p = sub.add_parser("create-chapter", help="Create a new chapter.")
     p.add_argument("slug", help="Book slug.")
@@ -319,6 +328,15 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_init_book(svc: NovelForgeService, args: argparse.Namespace) -> int:
     book = svc.init_book(args.slug, args.title)
     print(f"Initialized book: {book.slug} ({book.title})")
+    return 0
+
+
+def cmd_init_novel_project(svc: NovelForgeService, args: argparse.Namespace) -> int:
+    result = svc.init_novel_project(args.slug, args.title, args.genre)
+    print(
+        f"Initialized novel project: {result['book_dir']} "
+        f"({len(result['created_files'])} files)"
+    )
     return 0
 
 
@@ -736,6 +754,7 @@ def cmd_git_checkpoint(svc: NovelForgeService, args: argparse.Namespace) -> int:
 
 COMMANDS = {
     "init-book": cmd_init_book,
+    "init-novel-project": cmd_init_novel_project,
     "create-chapter": cmd_create_chapter,
     "write-revision": cmd_write_revision,
     "lint-chapter": cmd_lint_chapter,

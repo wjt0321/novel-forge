@@ -66,7 +66,7 @@ draft ──write_revision──► revised ──lint──► linted ──rev
 - `write-revision` → `draft`；若当前为 `approved` 且提供 `--reopen-reason` → `revised`。
 - `lint-chapter` 必须有当前 revision；执行成功后无条件进入 `linted`（无论是否有 finding，blocking 只在审批门被拦截）。
 - `review-chapter` 只允许从 `linted`、`revised`、`reviewed` 执行，结果进入 `reviewed`。
-- `approve-chapter` 只允许从 `reviewed` 执行，且当前 revision 不得有未关闭的 blocking lint 或 S1/S2 finding。
+- `approve-chapter` 只允许从 `reviewed` 执行。前置条件的完整版本以 docs/03 为准（共六条：当前 revision、无 blocking lint、无未关闭 S1/S2 finding、无未关闭 S1/S2 Reader Review、通过的 Blind Experience Review、合格的 Editorial Memo）；本文的状态图是简化表示。
 - `rollback-chapter` 只允许在有 revision 的非 `draft` 状态执行，结果进入 `revised`；不修改历史文件，而是把目标 revision 复制为新的 revision。
 - 每个新 revision 都是一次干净的审核起点：旧 revision 的未关闭 finding 保留为审计记录，但不会阻塞新 revision 的审批。
 - 所有删除在本里程碑中不支持或采用软删除。

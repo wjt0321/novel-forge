@@ -12,3 +12,8 @@ work/*/
 
 # Keep the workspace root README
 !work/README.md
+
+# Local tooling metadata and read-only third-party reference trees
+.reasonix/
+upstream/
+

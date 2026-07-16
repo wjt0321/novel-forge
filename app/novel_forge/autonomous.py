@@ -1106,14 +1106,21 @@ class AutonomousWritingService:
     def git_checkpoint(self, slug: str, message: str) -> dict[str, Any]:
         """Create a scoped git checkpoint for the book's assets.
 
-        Only files under library/<slug>/ and docs/<slug>/ (if it exists) are
-        staged. data/ and global docs/ are never staged or committed.
+        Only files under library/<slug>/ (legacy workflow) or books/<slug>/
+        (front-of-house workflow) and docs/<slug>/ (if it exists) are staged.
+        data/ and global docs/ are never staged or committed.
         """
         import re
 
         book_dir = self.root / "library" / slug
         if not book_dir.exists():
-            raise AutonomousError(f"Book library directory not found: {book_dir}")
+            alt_dir = self.root / "books" / slug
+            if alt_dir.exists():
+                book_dir = alt_dir
+            else:
+                raise AutonomousError(
+                    f"Book directory not found under library/ or books/: {slug}"
+                )
 
         if not message or not message.strip():
             raise AutonomousError("Commit message cannot be empty.")

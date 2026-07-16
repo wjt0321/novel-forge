@@ -214,3 +214,81 @@ def test_lint_quote_duplication_ignores_json_structural():
     text = '{"a":"","b":"x"}\n\n正文段落。'
     findings = lint_text(text)
     assert not any(f.rule_code == "quote-duplication" for f in findings)
+
+
+def _pad_cjk(text: str, repeats: int = 60) -> str:
+    return text + "\n\n" + "他沿着街慢慢走，天色一点点暗下来，路灯次第亮起。" * repeats
+
+
+def test_lint_sentence_rhythm_flags_uniform_paragraph():
+    text = (
+        "他走到窗前。他拉开窗帘。他看着楼下。他转身离开。他关上房门。"
+        "他坐到桌边。他拿起杯子。他喝了一口水。"
+    )
+    findings = lint_text(text)
+    assert any(f.rule_code == "sentence-rhythm" for f in findings)
+
+
+def test_lint_sentence_rhythm_allows_varied_paragraph():
+    text = (
+        "他走到窗前，拉开窗帘，看着楼下那场已经下了整夜却没有停意思的雨。"
+        "雨不大。他想起母亲昨天傍晚在电话里说的那些话，想起她说那些话时背景里电视的声音。"
+        "他转身离开。"
+    )
+    findings = lint_text(text)
+    assert not any(f.rule_code == "sentence-rhythm" for f in findings)
+
+
+def test_lint_sentence_rhythm_skips_dialogue_heavy_paragraph():
+    text = '"走。""不走。""为什么。""没有为什么。""你走吧。""我不走。"'
+    findings = lint_text(text)
+    assert not any(f.rule_code == "sentence-rhythm" for f in findings)
+
+
+def test_lint_term_density_flags_coined_terms():
+    text = _pad_cjk(
+        "道脉震动。道脉崩裂。道脉逆流。道脉沉寂。道脉复苏。"
+        "残剑嗡鸣。残剑出鞘。残剑归鞘。残剑碎裂。残剑低吟。"
+        "九斩破空。九斩裂地。九斩断流。九斩归一。九斩无声。"
+    )
+    findings = lint_text(text)
+    assert any(f.rule_code == "term-density" for f in findings)
+
+
+def test_lint_term_density_ignores_common_words():
+    # 核(核实/核对), 法(办法), 压(压力), 脉冲 are legitimate vocabulary.
+    text = _pad_cjk(
+        "银行要核实来源，他没有办法，压力很大。"
+        "银行再次核实，他还是没有办，压力更大。"
+        "第三次核实来了，他仍然毫无办法。"
+        "脉冲信号出现了五次，低频脉冲五次。"
+    )
+    findings = lint_text(text)
+    assert not any(f.rule_code == "term-density" for f in findings)
+
+
+def test_lint_term_density_skips_short_text():
+    text = "道脉震动。道脉崩裂。道脉逆流。道脉沉寂。道脉复苏。"
+    findings = lint_text(text)
+    assert not any(f.rule_code == "term-density" for f in findings)
+
+
+def test_lint_simile_density_flags_heavy_use():
+    # ~6 similes in ~500 CJK → well above 3/1000.
+    similes = "他的声音像钝刀。夜色仿佛凝固。风好似刀子。灯光宛如流水。气氛犹如冰点。她笑得像朵花。"
+    text = _pad_cjk(similes, repeats=45)
+    findings = lint_text(text)
+    assert any(f.rule_code == "simile-density" for f in findings)
+
+
+def test_lint_simile_density_allows_restrained_use():
+    text = _pad_cjk("他笑得像朵花。", repeats=45)
+    findings = lint_text(text)
+    assert not any(f.rule_code == "simile-density" for f in findings)
+
+
+def test_lint_simile_density_ignores_non_simile_words():
+    # 想象/画像/录像/像素 are not similes and must not inflate the count.
+    text = _pad_cjk("他看着画像，想象着录像里的像素。", repeats=45)
+    findings = lint_text(text)
+    assert not any(f.rule_code == "simile-density" for f in findings)

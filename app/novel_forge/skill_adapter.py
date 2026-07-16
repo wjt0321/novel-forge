@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.novel_forge.autonomous import AutonomousError, AutonomousWritingService
+from app.novel_forge import book_project
 from app.novel_forge.models import ReviewFinding, ScenePlan
 from app.novel_forge.service import NovelForgeError, NovelForgeService
 
@@ -54,6 +55,9 @@ MUTATING_OPS = {
     "init-workspace",
     "refresh-workspace",
     "write-revision-patch",
+    "record-review",
+    "advance-state",
+    "sync-tools",
 }
 
 
@@ -482,6 +486,47 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, help="Chapter number.")
 
+    # books/<slug>/ front-of-house workflow ops (filesystem-only, no DB)
+    p = sub.add_parser(
+        "project-status",
+        help="Show books/<slug>/ project progress, chapter states and review verdicts.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, nargs="?", default=None, help="Chapter number.")
+
+    p = sub.add_parser(
+        "run-gates",
+        help="Run quality_check + narrative gate on a books/ chapter; JSON findings only.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+
+    p = sub.add_parser(
+        "record-review",
+        help="Validate and store a review file under books/<slug>/reviews/.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument("--role", required=True, help="Review role (causal-editor, line-editor, consistency-guard, blind-reader, chapter-editor).")
+    p.add_argument("--file", required=True, type=Path, help="Absolute path to the review Markdown file.")
+
+    p = sub.add_parser(
+        "advance-state",
+        help="Advance a books/ chapter's state machine position.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument("--to", required=True, help="Target state.")
+    p.add_argument("--evidence", default=None, help="Evidence pointer (file ref or command result).")
+    p.add_argument("--next-action", default=None, help="Next action note.")
+
+    p = sub.add_parser(
+        "sync-tools",
+        help="Refresh a books/ project's managed tool/agent/template files from the current templates.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--dry-run", action="store_true", help="Only report what would change.")
+
     # Status: book or chapter. Use positional slug and optional number.
     # argparse does not easily support optional positional after required ones,
     # so we parse remaining args manually in run().
@@ -491,6 +536,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _check_confirm(args: argparse.Namespace) -> bool:
     op = args.operation
     if op not in MUTATING_OPS:
+        return True
+    # A dry run never writes, so it needs no confirmation.
+    if op == "sync-tools" and getattr(args, "dry_run", False):
         return True
     if args.confirm == op:
         return True
@@ -944,6 +992,33 @@ def run(argv: list[str] | None = None) -> int:
     if op == "init-novel-project":
         result = svc.init_novel_project(slug, args.title, args.genre)
         return _ok(op, result, state_changed=True)
+
+    if op == "project-status":
+        data = book_project.project_status(root, slug, args.number)
+        return _ok(op, data)
+
+    if op == "run-gates":
+        data = book_project.run_gates(root, slug, args.number)
+        return _ok(op, data)
+
+    if op == "record-review":
+        data = book_project.record_review(root, slug, args.number, args.role, args.file)
+        return _ok(op, data, state_changed=True)
+
+    if op == "advance-state":
+        data = book_project.advance_state(
+            root,
+            slug,
+            args.number,
+            args.to,
+            evidence=args.evidence,
+            next_action=args.next_action,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "sync-tools":
+        data = book_project.sync_tools(root, slug, dry_run=args.dry_run)
+        return _ok(op, data, state_changed=not args.dry_run)
 
     if op == "create-chapter":
         chapter = svc.create_chapter(slug, args.number, args.title)

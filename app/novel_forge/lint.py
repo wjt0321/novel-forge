@@ -6,6 +6,7 @@ literary quality and never auto-edit the text.
 """
 
 import re
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,6 +66,18 @@ _RULES = {
     "common-error": (
         "advisory",
         "疑似常见错字、搭配或病句，请人工复核",
+    ),
+    "sentence-rhythm": (
+        "advisory",
+        "段内句长过于均匀（变异系数过低），建议长短句呼吸变化而非均匀短句或均匀长句",
+    ),
+    "term-density": (
+        "advisory",
+        "高频生造术语密度偏高，请确认每条术语都落到身体/动作而非解释（术语预算）",
+    ),
+    "simile-density": (
+        "advisory",
+        "比喻密度偏高，建议删去弱比喻、改找准确的词",
     ),
 }
 
@@ -481,6 +494,139 @@ def _detect_quote_duplication(text: str) -> list[LintFinding]:
     return findings
 
 
+# Dialogue span (straight or Chinese quotes) used to skip dialogue-heavy
+# paragraphs in rhythm analysis: spoken lines legitimately run short.
+_QUOTE_SPAN_RE = re.compile(r'["\u201c\u300c][^"\u201d\u300d]*["\u201d\u300d]')
+
+
+def _detect_sentence_rhythm(
+    paragraphs: list[tuple[list[int], str]],
+) -> list[LintFinding]:
+    """Flag narrative paragraphs whose sentence lengths are too uniform.
+
+    The signal is *variance*, not shortness: uniformly short sentences produce
+    the classic AI staccato, but uniformly long ones read just as mechanically.
+    Dialogue-heavy paragraphs are excluded because spoken lines are legitimately
+    short and even.
+    """
+    findings: list[LintFinding] = []
+    severity, message = _RULES["sentence-rhythm"]
+    MIN_SENTENCES = 4
+    CV_THRESHOLD = 0.20
+
+    for line_nums, para_text in paragraphs:
+        first_line = para_text.split("\n")[0].strip()
+        if first_line.startswith("#"):
+            continue
+        sentences = _split_sentences(para_text)
+        if not sentences:
+            continue
+        quote_spans = len(_QUOTE_SPAN_RE.findall(para_text))
+        if quote_spans > 0 and quote_spans / max(len(sentences), 1) > 0.35:
+            continue
+        lengths = [
+            _count_cjk_chars(s) for s in sentences if _count_cjk_chars(s) > 2
+        ]
+        if len(lengths) < MIN_SENTENCES:
+            continue
+        mean = statistics.fmean(lengths)
+        if mean <= 0:
+            continue
+        cv = statistics.pstdev(lengths) / mean
+        if cv < CV_THRESHOLD:
+            findings.append(
+                LintFinding(
+                    rule_code="sentence-rhythm",
+                    severity=severity,
+                    line_number=line_nums[0],
+                    message=(
+                        f"段内 {len(lengths)} 句句长变异系数 {cv:.2f} "
+                        f"(均值 {mean:.0f} 字)，句长过于均匀"
+                    ),
+                    evidence=para_text[:60].replace("\n", " "),
+                )
+            )
+    return findings
+
+
+# Coined-term suffixes typical of fantasy/xianxia/sci-fi neologisms
+# (道脉, 空明九斩, 残剑, 星罡 ...). Endings with common legitimate words are
+# deliberately excluded: 核(核实/核心), 流(电流/主流), 压(压力), 纹(指纹/裂纹),
+# 墟(废墟), 骸(残骸), 法(办法/想法). 脉 excludes 脉冲 via lookahead.
+_COINED_TERM_RE = re.compile(
+    r"([\u4e00-\u9fff])(?:脉(?!冲)|斩|剑|罡|炁|诀|瞳|鼎|冕)"
+)
+
+
+def _detect_term_density(text: str, char_count: int) -> list[LintFinding]:
+    """Advisory-only signal for invented-terminology density.
+
+    Counts suffix-anchored bigrams (one preceding char + suffix) so that each
+    occurrence of the same coined term lands in the same bucket regardless of
+    surrounding context. Flags when at least three distinct coined terms each
+    appear four or more times, or when their total mentions exceed twenty: at
+    that density almost every term is likely dragging an explanatory chain
+    behind it. Character names and ordinary words do not match the suffix list.
+    """
+    findings: list[LintFinding] = []
+    if char_count < 500:
+        return findings
+    counts: dict[str, int] = {}
+    for m in _COINED_TERM_RE.finditer(text):
+        term = m.group(0)
+        counts[term] = counts.get(term, 0) + 1
+    frequent = {t: c for t, c in counts.items() if c >= 4}
+    total = sum(frequent.values())
+    if len(frequent) >= 3 or total >= 20:
+        severity, message = _RULES["term-density"]
+        top = sorted(frequent.items(), key=lambda kv: -kv[1])[:5]
+        listing = "、".join(f"{t}×{c}" for t, c in top)
+        findings.append(
+            LintFinding(
+                rule_code="term-density",
+                severity=severity,
+                line_number=None,
+                message=f"检测到 {len(frequent)} 个高频生造术语，合计 {total} 次：{listing}",
+                evidence=listing,
+            )
+        )
+    return findings
+
+
+# Simile markers. 像 is excluded after characters that form non-simile words
+# (想象/画像/录像/雕像/影像/头像/塑像/摄像/像素 etc.).
+_SIMILE_RE = re.compile(r"(?<![想图画录雕影头塑摄])像|仿佛|好似|宛如|犹如")
+
+_SIMILE_DENSITY_THRESHOLD = 3.0  # per 1000 CJK
+
+
+def _detect_simile_density(text: str, char_count: int) -> list[LintFinding]:
+    """Advisory-only signal for heavy simile usage.
+
+    A simile every two or three paragraphs means the writer keeps explaining
+    one image with a second image because the first one was not accurate.
+    Threshold calibrated on the v3 trial chapters: 1.6/1000 (restrained) vs
+    3.5/1000 (clearly mechanical).
+    """
+    findings: list[LintFinding] = []
+    if char_count < 500:
+        return findings
+    count = len(_SIMILE_RE.findall(text))
+    density = count / char_count * 1000
+    if density >= _SIMILE_DENSITY_THRESHOLD:
+        severity, message = _RULES["simile-density"]
+        findings.append(
+            LintFinding(
+                rule_code="simile-density",
+                severity=severity,
+                line_number=None,
+                message=f"比喻 {count} 处，每千字约 {density:.1f} 个（阈值 {_SIMILE_DENSITY_THRESHOLD:.0f}）",
+                evidence=None,
+            )
+        )
+    return findings
+
+
 def lint_text(text: str) -> list[LintFinding]:
     """Run all prose lint rules against raw text.
 
@@ -580,6 +726,9 @@ def lint_text(text: str) -> list[LintFinding]:
     findings.extend(_detect_rhythm_monotony(paragraphs))
     findings.extend(_detect_mechanical_triplet(paragraphs))
     findings.extend(_detect_explanatory_punchline(paragraphs, char_count))
+    findings.extend(_detect_sentence_rhythm(paragraphs))
+    findings.extend(_detect_term_density(text, char_count))
+    findings.extend(_detect_simile_density(text, char_count))
 
     findings.extend(_detect_quote_duplication(text))
 
@@ -631,6 +780,47 @@ def lint_text(text: str) -> list[LintFinding]:
 
 
 def lint_file(path: Path) -> list[LintFinding]:
-    """Lint a single Markdown file."""
-    text = path.read_text(encoding="utf-8")
+    """Lint a single Markdown file (UTF-8, BOM tolerated)."""
+    text = path.read_text(encoding="utf-8-sig")
     return lint_text(text)
+
+
+def format_report(path: Path | str, findings: list[LintFinding]) -> str:
+    """Render a human-readable lint report for CLI-style tools."""
+    blocking = [f for f in findings if f.severity == "blocking"]
+    advisory = [f for f in findings if f.severity != "blocking"]
+    char_count = next(
+        (f.char_count for f in findings if f.char_count is not None), None
+    )
+    lines = [f"File: {path}"]
+    if char_count is not None:
+        lines.append(f"CJK characters: {char_count}")
+    lines.append(f"Blocking: {len(blocking)}, Advisory: {len(advisory)}")
+    if findings:
+        lines.append("Findings:")
+        for f in findings:
+            loc = f"L{f.line_number}" if f.line_number is not None else "file"
+            lines.append(f"  {loc} [{f.rule_code}] {f.severity}: {f.message}")
+    else:
+        lines.append("No findings.")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry: ``python -m app.novel_forge.lint <markdown-file>``."""
+    import sys
+
+    argv = argv if argv is not None else sys.argv[1:]
+    if len(argv) != 1:
+        print("Usage: python -m app.novel_forge.lint <markdown-file>", file=sys.stderr)
+        return 2
+    path = Path(argv[0])
+    if not path.exists():
+        print(f"File not found: {path}", file=sys.stderr)
+        return 1
+    print(format_report(path, lint_file(path)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

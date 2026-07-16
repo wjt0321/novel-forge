@@ -261,3 +261,18 @@ def test_cli_blind_commands_end_to_end_approval(tmp_path: Path):
 
     code = main(["--root", str(tmp_path), "approve-chapter", "test", "1", "--note", "ok"])
     assert code == 0
+
+
+def test_init_novel_project_creates_books_layout(tmp_path: Path):
+    code = main([
+        "--root", str(tmp_path),
+        "init-novel-project", "demo",
+        "--title", "演示书",
+        "--genre", "都市",
+    ])
+    assert code == 0
+    book_dir = tmp_path / "books" / "demo"
+    assert (book_dir / "CLAUDE.md").exists()
+    assert (book_dir / "memory/voice-bible.md").exists()
+    assert (book_dir / "tools/quality_check.py").exists()
+    assert (book_dir / ".claude/agents/blind-reader.md").exists()

@@ -1,5 +1,0 @@
-# Per-book ignore rules for books/<slug>/
-.snapshots/
-memory/context-cache/
-__pycache__/
-*.pyc
