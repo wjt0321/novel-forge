@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 7
 
 
 class UnsupportedSchemaVersionError(Exception):
@@ -441,6 +441,48 @@ CREATE INDEX IF NOT EXISTS iteration_runs_chapter
 """
 )
 
+# Current schema (v6): extends Promise Ledger with a full lifecycle
+# (planned -> planted -> partially_paid -> paid_off, plus abandoned),
+# target chapter/scene metadata for overdue/reminder logic, and nullable
+# planted_scene_ref so planned promises can exist before planting.
+V6_SCHEMA = (
+    V5_SCHEMA.replace(
+        "status TEXT NOT NULL DEFAULT 'planted' CHECK(status IN ('planted', 'advanced', 'resolved', 'abandoned')),",
+        "status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned', 'planted', 'partially_paid', 'paid_off', 'abandoned')),",
+    )
+    .replace(
+        "planted_scene_ref TEXT NOT NULL,\n    advanced_scene_ref TEXT,",
+        "planted_scene_ref TEXT,\n    target_chapter_number INTEGER,\n    target_scene_ref TEXT,\n    advanced_scene_ref TEXT,",
+    )
+)
+
+# Current schema (v7): adds the prose-only Blind Experience Gate.
+V7_SCHEMA = (
+    V6_SCHEMA
+    + """
+CREATE TABLE IF NOT EXISTS blind_experience_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    revision_id INTEGER NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+    reviewer_role TEXT NOT NULL DEFAULT 'blind_reader',
+    source_scope TEXT NOT NULL DEFAULT 'prose_only' CHECK(source_scope = 'prose_only'),
+    spatial_reconstruction TEXT NOT NULL,
+    body_position_and_contact TEXT NOT NULL,
+    action_constraints TEXT NOT NULL,
+    emotional_trajectory TEXT NOT NULL,
+    dialogue_dynamics TEXT NOT NULL,
+    memorable_images TEXT NOT NULL DEFAULT '[]',
+    knowledge_gaps TEXT NOT NULL DEFAULT '[]',
+    verdict TEXT NOT NULL CHECK(verdict IN ('experience_reconstructable', 'revision_required')),
+    blocking_issues TEXT NOT NULL DEFAULT '[]',
+    superseded_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS blind_experience_reviews_chapter_revision
+    ON blind_experience_reviews(chapter_id, revision_id);
+"""
+)
 
 def get_db_path(root: Path) -> Path:
     """Return the canonical SQLite path for a project root."""
@@ -473,6 +515,15 @@ def _backup_db(db_path: Path, target_version: int = CURRENT_SCHEMA_VERSION) -> P
         counter += 1
     shutil.copy2(db_path, backup_path)
     return backup_path
+
+
+def _restore_db_from_backup(db_path: Path, backup_path: Path) -> None:
+    """Restore the main database from a backup file.
+
+    The caller must ensure no open connections exist before calling this
+    function, especially on Windows where an open handle prevents overwrite.
+    """
+    shutil.copy2(backup_path, db_path)
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -761,11 +812,117 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """Apply idempotent v5 -> v6 migration inside an explicit transaction.
+
+    Extends the promise ledger with a full lifecycle and target metadata.
+    Legacy statuses are mapped forward: advanced -> partially_paid,
+    resolved -> paid_off.
+
+    Uses explicit transaction control because sqlite3's default isolation level
+    auto-commits DDL, which would prevent rollback if the data copy fails.
+    """
+    old_isolation = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN")
+        conn.execute("ALTER TABLE promise_ledger RENAME TO _old_promise_ledger_v5")
+        conn.execute(
+            """
+            CREATE TABLE promise_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                promise_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'planned'
+                    CHECK(status IN ('planned', 'planted', 'partially_paid', 'paid_off', 'abandoned')),
+                planted_scene_ref TEXT,
+                target_chapter_number INTEGER,
+                target_scene_ref TEXT,
+                advanced_scene_ref TEXT,
+                resolved_scene_ref TEXT,
+                abandoned_scene_ref TEXT,
+                resolution_note TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.execute("DROP INDEX IF EXISTS promise_ledger_book")
+        conn.execute("CREATE INDEX promise_ledger_book ON promise_ledger(book_id)")
+        conn.execute(
+            """
+            INSERT INTO promise_ledger
+            (id, book_id, promise_text, status, planted_scene_ref,
+             target_chapter_number, target_scene_ref,
+             advanced_scene_ref, resolved_scene_ref, abandoned_scene_ref,
+             resolution_note, created_at, updated_at)
+            SELECT id, book_id, promise_text,
+                   CASE status
+                       WHEN 'advanced' THEN 'partially_paid'
+                       WHEN 'resolved' THEN 'paid_off'
+                       ELSE status
+                   END,
+                   planted_scene_ref,
+                   NULL,
+                   NULL,
+                   advanced_scene_ref,
+                   resolved_scene_ref,
+                   abandoned_scene_ref,
+                   resolution_note,
+                   created_at,
+                   updated_at
+            FROM _old_promise_ledger_v5
+            """
+        )
+        conn.execute("DROP TABLE _old_promise_ledger_v5")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.isolation_level = old_isolation
+
+
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """Add the Blind Experience Gate ledger without modifying prose assets."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS blind_experience_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+            revision_id INTEGER NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+            reviewer_role TEXT NOT NULL DEFAULT 'blind_reader',
+            source_scope TEXT NOT NULL DEFAULT 'prose_only' CHECK(source_scope = 'prose_only'),
+            spatial_reconstruction TEXT NOT NULL,
+            body_position_and_contact TEXT NOT NULL,
+            action_constraints TEXT NOT NULL,
+            emotional_trajectory TEXT NOT NULL,
+            dialogue_dynamics TEXT NOT NULL,
+            memorable_images TEXT NOT NULL DEFAULT '[]',
+            knowledge_gaps TEXT NOT NULL DEFAULT '[]',
+            verdict TEXT NOT NULL CHECK(verdict IN ('experience_reconstructable', 'revision_required')),
+            blocking_issues TEXT NOT NULL DEFAULT '[]',
+            superseded_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS blind_experience_reviews_chapter_revision
+           ON blind_experience_reviews(chapter_id, revision_id)"""
+    )
+
+
 def init_db(root: Path) -> sqlite3.Connection:
     """Create or migrate the SQLite database to the current schema version.
 
     Returns an open connection with foreign keys enabled and row factory.
     The caller is responsible for closing the connection.
+
+    For legacy databases, a single timestamped backup is taken before the
+    migration chain. If any migration step or the final user_version bump
+    fails, the open connection is closed and the backup is copied back to the
+    canonical path before the original exception is re-raised. This keeps the
+    on-disk database at the pre-migration state even when individual steps use
+    their own transaction control.
     """
     db_path = get_db_path(root)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -773,18 +930,21 @@ def init_db(root: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
 
+    backup_path: Path | None = None
+    restored_from_backup = False
+
     try:
         version = _get_user_version(conn)
         is_fresh = not _table_exists(conn, "books")
 
         if version == 0 and is_fresh:
             # Fresh database: create current schema directly, no backup needed.
-            conn.executescript(V5_SCHEMA)
+            conn.executescript(V7_SCHEMA)
             _set_user_version(conn, CURRENT_SCHEMA_VERSION)
             conn.commit()
         elif version < CURRENT_SCHEMA_VERSION:
             # Legacy database: single backup before the full migration chain.
-            _backup_db(db_path, target_version=CURRENT_SCHEMA_VERSION)
+            backup_path = _backup_db(db_path, target_version=CURRENT_SCHEMA_VERSION)
             try:
                 if version < 2:
                     _migrate_v1_to_v2(conn)
@@ -794,16 +954,27 @@ def init_db(root: Path) -> sqlite3.Connection:
                     _migrate_v3_to_v4(conn)
                 if version < 5:
                     _migrate_v4_to_v5(conn)
+                if version < 6:
+                    _migrate_v5_to_v6(conn)
+                if version < 7:
+                    _migrate_v6_to_v7(conn)
                 _set_user_version(conn, CURRENT_SCHEMA_VERSION)
                 conn.commit()
             except Exception:
-                conn.rollback()
+                # Close the connection so Windows allows us to overwrite the
+                # database file with the pre-migration backup, then restore it
+                # and re-raise the original migration error.
+                conn.close()
+                if backup_path is not None:
+                    _restore_db_from_backup(db_path, backup_path)
+                    restored_from_backup = True
                 raise
         elif version > CURRENT_SCHEMA_VERSION:
             raise UnsupportedSchemaVersionError(version)
         # else: up to date, leave connection open for caller.
     except Exception:
-        conn.rollback()
+        if not restored_from_backup:
+            conn.rollback()
         raise
 
     return conn

@@ -159,6 +159,7 @@ class ReviewResult(BaseModel):
     reader_review_summary: ReaderReviewSummary = Field(default_factory=ReaderReviewSummary)
     reader_reviews: list[ReaderReview] = Field(default_factory=list)
     editorial_memo_status: dict[str, Any] = Field(default_factory=dict)
+    blind_experience_status: dict[str, Any] = Field(default_factory=dict)
 
 
 class EditorialMemo(BaseModel):
@@ -197,6 +198,59 @@ class EditorialMemoSummary(BaseModel):
     verdict: str | None = None
     blocking_issue_count: int = 0
     superseded_at: str | None = None
+    created_at: str | None = None
+
+
+class BlindReaderPacket(BaseModel):
+    """Metadata for a prose-only packet given to an isolated blind reader."""
+
+    file_path: str
+    absolute_path: str
+    content_hash: str
+    book_slug: str
+    chapter_number: int
+    revision_id: int
+
+
+class BlindExperienceReview(BaseModel):
+    """A blind reader's reconstruction of experience from prose alone."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    chapter_id: int
+    revision_id: int
+    reviewer_role: str
+    source_scope: str
+    spatial_reconstruction: str
+    body_position_and_contact: str
+    action_constraints: str
+    emotional_trajectory: str
+    dialogue_dynamics: str
+    memorable_images: list[dict[str, str]]
+    knowledge_gaps: list[str]
+    verdict: str
+    blocking_issues: list[dict[str, Any]]
+    superseded_at: str | None = None
+    created_at: str
+
+    @field_validator("memorable_images", "knowledge_gaps", "blocking_issues", mode="before")
+    @classmethod
+    def _parse_json_lists(cls, value):
+        if isinstance(value, str):
+            return json.loads(value or "[]")
+        return value
+
+
+class BlindExperienceSummary(BaseModel):
+    exists: bool = False
+    review_id: int | None = None
+    revision_id: int | None = None
+    verdict: str | None = None
+    passes: bool = False
+    memorable_image_count: int = 0
+    knowledge_gap_count: int = 0
+    blocking_issue_count: int = 0
     created_at: str | None = None
 
 
@@ -286,6 +340,14 @@ class ChapterPlan(BaseModel):
         return data
 
 
+class PromiseStatus(str, Enum):
+    PLANNED = "planned"
+    PLANTED = "planted"
+    PARTIALLY_PAID = "partially_paid"
+    PAID_OFF = "paid_off"
+    ABANDONED = "abandoned"
+
+
 class Promise(BaseModel):
     """A narrative promise tracked across scenes."""
 
@@ -294,8 +356,10 @@ class Promise(BaseModel):
     id: int
     book_id: int
     promise_text: str
-    status: str
-    planted_scene_ref: str
+    status: PromiseStatus
+    planted_scene_ref: str | None = None
+    target_chapter_number: int | None = None
+    target_scene_ref: str | None = None
     advanced_scene_ref: str | None = None
     resolved_scene_ref: str | None = None
     abandoned_scene_ref: str | None = None

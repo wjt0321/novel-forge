@@ -24,9 +24,9 @@ Drafting Readiness Gate 阻止在创作准备明显不足时生成 Drafting Pack
 
 若 Voice Bible 不存在，报 blocker `voice_bible_missing`。
 
-### Scene Contract v2/v3 必填段
+### Scene Contract v2/v3/v4 必填段
 
-v2 必填：
+v2/v3/v4 通用必填：
 
 - `scene_question`
 - `viewpoint_character`
@@ -40,7 +40,7 @@ v2 必填：
 - `forbidden_easy_moves`
 - `ending_pressure`
 
-v3 额外必填（仅当合同为 v3 时）：
+v3 额外必填（仅当合同为 v3/v4 时）：
 
 - `character_blindspot_or_pressure`
 - `irreversible_choice`
@@ -49,7 +49,15 @@ v3 额外必填（仅当合同为 v3 时）：
 - `scene_necessity`
 - `ending_change`
 
-若 Scene Contract 缺失或文件不可读，报 blocker。v2 合同产生 `scene_contract_legacy_v2` warning，但不阻塞已有作品。
+v4 额外必填（仅当合同为 v4 时）：
+
+- `spatial_layout_and_routes`：不能为空，不能只列尺寸/数字而无相对位置或行动关系
+- `body_state_and_contacts`：不能为空
+- `object_affordances`：至少 2 条有效列表项
+- `environmental_constraints`：不能为空，且至少包含一条因果链
+- `embodied_action_chain`：至少 3 条有效列表项，覆盖 `irreversible_choice` 或其前置动作
+
+若 Scene Contract 缺失或文件不可读，报 blocker。v2/v3 合同会产生 `scene_contract_upgrade_to_v4` warning，建议升级但不阻塞已有作品；v2 还会额外产生 `scene_contract_legacy_v2` warning。
 
 ## 占位符判定
 

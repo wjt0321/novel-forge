@@ -18,15 +18,18 @@ from typing import Any
 from app.novel_forge.db import get_db_path, init_db
 from app.novel_forge.models import (
     AcceptanceResult,
+    AuditEvent,
     ChapterPlan,
     IterationRun,
     Promise,
+    PromiseStatus,
     ResearchEntry,
     ScenePlan,
     StoryEngine,
 )
 from app.novel_forge.repository import (
     AuditRepository,
+    BlindExperienceRepository,
     BookRepository,
     ChapterPlanRepository,
     ChapterRepository,
@@ -332,17 +335,34 @@ class AutonomousWritingService:
             # auto-deleted or auto-abandoned here; use update-promise to abandon.
             for scene in scenes:
                 for promise_text in scene.promises:
+                    if not promise_text or not str(promise_text).strip():
+                        continue
                     existing = conn.execute(
                         """SELECT id, status FROM promise_ledger
                            WHERE book_id = ? AND promise_text = ?""",
                         (book["id"], promise_text),
                     ).fetchone()
                     if existing is None:
+                        # scene.promises only records where the seed is planted;
+                        # the payoff target must be set explicitly later.
                         PromiseRepository.create(
                             conn,
                             book_id=book["id"],
                             promise_text=promise_text,
+                            status="planted",
                             planted_scene_ref=scene.scene_ref,
+                            target_chapter_number=None,
+                            target_scene_ref=None,
+                        )
+                    elif existing["status"] == "planned":
+                        # A previously planned promise is now formally planted.
+                        # Do not overwrite an explicit target; only record the
+                        # planted scene.
+                        PromiseRepository.update_status(
+                            conn,
+                            existing["id"],
+                            "planted",
+                            scene_ref=scene.scene_ref,
                         )
 
             AuditRepository.add(
@@ -381,6 +401,83 @@ class AutonomousWritingService:
     # ------------------------------------------------------------------
     # Promise Ledger
     # ------------------------------------------------------------------
+    _VALID_PROMISE_TRANSITIONS: dict[PromiseStatus, set[PromiseStatus]] = {
+        PromiseStatus.PLANNED: {PromiseStatus.PLANTED, PromiseStatus.ABANDONED},
+        PromiseStatus.PLANTED: {
+            PromiseStatus.PARTIALLY_PAID,
+            PromiseStatus.ABANDONED,
+        },
+        PromiseStatus.PARTIALLY_PAID: {
+            PromiseStatus.PAID_OFF,
+            PromiseStatus.ABANDONED,
+        },
+        PromiseStatus.PAID_OFF: set(),
+        PromiseStatus.ABANDONED: set(),
+    }
+
+    def audit(self, slug: str, limit: int | None = None) -> list[AuditEvent]:
+        """Return audit events for a book."""
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            rows = AuditRepository.list(conn, book["id"], limit=limit)
+            return [AuditEvent.model_validate(dict(r)) for r in rows]
+
+    def add_promise(
+        self,
+        slug: str,
+        promise_text: str,
+        target_chapter_number: int | None = None,
+        target_scene_ref: str | None = None,
+        planted_scene_ref: str | None = None,
+    ) -> Promise:
+        if not promise_text or not str(promise_text).strip():
+            raise AutonomousError("promise_text cannot be empty.")
+        if target_chapter_number is not None and target_chapter_number < 1:
+            raise AutonomousError(
+                "target_chapter_number must be a positive integer when provided."
+            )
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            promise_id = PromiseRepository.create(
+                conn,
+                book_id=book["id"],
+                promise_text=promise_text,
+                status="planned",
+                planted_scene_ref=planted_scene_ref,
+                target_chapter_number=target_chapter_number,
+                target_scene_ref=target_scene_ref,
+            )
+            AuditRepository.add(
+                conn,
+                book_id=book["id"],
+                entity_type="promise",
+                entity_id=promise_id,
+                action="plan",
+                details=json.dumps(
+                    {
+                        "target_chapter_number": target_chapter_number,
+                        "target_scene_ref": target_scene_ref,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            row = PromiseRepository.get_by_id(conn, promise_id)
+        return Promise.model_validate(dict(row))
+
+    def get_promise(self, slug: str, promise_id: int) -> Promise:
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            row = PromiseRepository.get_by_id(conn, promise_id)
+            if row is None or row["book_id"] != book["id"]:
+                raise AutonomousError(f"Promise {promise_id} not found in book {slug}.")
+            return Promise.model_validate(dict(row))
+
     def list_promises(self, slug: str) -> list[Promise]:
         with self._conn() as conn:
             book = BookRepository.get_by_slug(conn, slug)
@@ -397,11 +494,10 @@ class AutonomousWritingService:
         scene_ref: str,
         resolution_note: str | None = None,
     ) -> Promise:
-        if status not in {"advanced", "resolved", "abandoned"}:
-            raise AutonomousError(
-                f"Invalid promise status transition: {status}. "
-                "Use advanced, resolved, or abandoned."
-            )
+        try:
+            new_status = PromiseStatus(status)
+        except ValueError as exc:
+            raise AutonomousError(f"Invalid promise status: {status}") from exc
         with self._conn() as conn:
             book = BookRepository.get_by_slug(conn, slug)
             if book is None:
@@ -409,22 +505,252 @@ class AutonomousWritingService:
             row = PromiseRepository.get_by_id(conn, promise_id)
             if row is None or row["book_id"] != book["id"]:
                 raise AutonomousError(f"Promise {promise_id} not found in book {slug}.")
+            current_status = PromiseStatus(row["status"])
+            if new_status not in self._VALID_PROMISE_TRANSITIONS[current_status]:
+                raise AutonomousError(
+                    f"Illegal promise status transition from {current_status.value} "
+                    f"to {new_status.value}."
+                )
             PromiseRepository.update_status(
-                conn, promise_id, status, scene_ref, resolution_note
+                conn, promise_id, new_status.value, scene_ref, resolution_note
+            )
+            if new_status in (PromiseStatus.PAID_OFF, PromiseStatus.ABANDONED):
+                FindingRepository.resolve_open_by_chapter_and_location(
+                    conn,
+                    chapter_id=None,
+                    location=f"promise:{promise_id}",
+                    perspective="continuity",
+                    note=f"Promise transitioned to {new_status.value}.",
+                    book_id=book["id"],
+                )
+            AuditRepository.add(
+                conn,
+                book_id=book["id"],
+                entity_type="promise",
+                entity_id=promise_id,
+                action=new_status.value,
+                details=json.dumps(
+                    {
+                        "previous_status": current_status.value,
+                        "new_status": new_status.value,
+                        "scene_ref": scene_ref,
+                        "note": resolution_note,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            row = PromiseRepository.get_by_id(conn, promise_id)
+        return Promise.model_validate(dict(row))
+
+    def set_promise_target(
+        self,
+        slug: str,
+        promise_id: int,
+        target_chapter_number: int | None = None,
+        target_scene_ref: str | None = None,
+        clear: bool = False,
+    ) -> Promise:
+        """Set or clear the payoff target for a promise.
+
+        This only updates target metadata; it never changes promise status.
+        """
+        if clear and (
+            target_chapter_number is not None or target_scene_ref is not None
+        ):
+            raise AutonomousError(
+                "cannot combine --clear with target_chapter_number or target_scene_ref."
+            )
+        if not clear and target_chapter_number is None:
+            raise AutonomousError(
+                "target_chapter_number is required when not using --clear."
+            )
+        if target_chapter_number is not None and target_chapter_number < 1:
+            raise AutonomousError(
+                "target_chapter_number must be a positive integer when provided."
+            )
+
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            row = PromiseRepository.get_by_id(conn, promise_id)
+            if row is None or row["book_id"] != book["id"]:
+                raise AutonomousError(f"Promise {promise_id} not found in book {slug}.")
+
+            previous_chapter = row["target_chapter_number"]
+            previous_scene = row["target_scene_ref"]
+            new_chapter = None if clear else target_chapter_number
+            new_scene = None if clear else target_scene_ref
+
+            PromiseRepository.update_target(
+                conn, promise_id, new_chapter, new_scene
             )
             AuditRepository.add(
                 conn,
                 book_id=book["id"],
                 entity_type="promise",
                 entity_id=promise_id,
-                action=status,
+                action="set_target",
                 details=json.dumps(
-                    {"scene_ref": scene_ref, "note": resolution_note},
+                    {
+                        "previous_target_chapter_number": previous_chapter,
+                        "previous_target_scene_ref": previous_scene,
+                        "new_target_chapter_number": new_chapter,
+                        "new_target_scene_ref": new_scene,
+                    },
                     ensure_ascii=False,
                 ),
             )
             row = PromiseRepository.get_by_id(conn, promise_id)
         return Promise.model_validate(dict(row))
+
+    def _build_promise_reminders_for_book(
+        self,
+        conn: sqlite3.Connection,
+        book_id: int,
+        current_chapter_number: int,
+    ) -> list[dict[str, Any]]:
+        """Build reminder list using an already-open connection.
+
+        This is intentionally a pure query: it never changes promise status or
+        creates findings. Callers decide whether to persist review findings.
+        """
+        rows = PromiseRepository.list_open_by_book(conn, book_id)
+        reminders: list[dict[str, Any]] = []
+        for row in rows:
+            target = row["target_chapter_number"]
+            if target is None:
+                category = "unscoped"
+            elif target < current_chapter_number:
+                category = "overdue"
+            elif target == current_chapter_number:
+                category = "must_resolve"
+            else:
+                # Future promises are not relevant to this chapter.
+                continue
+
+            if category == "must_resolve":
+                message = (
+                    f"Promise (ID {row['id']}) is scheduled for this chapter "
+                    f"and is still {row['status']}."
+                )
+            elif category == "overdue":
+                message = (
+                    f"Promise (ID {row['id']}) was scheduled for chapter {target} "
+                    f"but is still {row['status']}."
+                )
+            else:
+                message = (
+                    f"Promise (ID {row['id']}) has no target chapter and is still "
+                    f"{row['status']}."
+                )
+
+            reminders.append(
+                {
+                    "promise_id": row["id"],
+                    "promise_text": row["promise_text"],
+                    "status": row["status"],
+                    "category": category,
+                    "target_chapter_number": target,
+                    "target_scene_ref": row["target_scene_ref"],
+                    "message": message,
+                }
+            )
+        return reminders
+
+    def build_promise_reminders(
+        self, slug: str, current_chapter_number: int
+    ) -> list[dict[str, Any]]:
+        """Return read-only reminders for unfulfilled promises relevant to a chapter."""
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            return self._build_promise_reminders_for_book(
+                conn, book["id"], current_chapter_number
+            )
+
+    def add_promise_review_findings(
+        self, slug: str, number: int
+    ) -> list[int]:
+        """Create continuity review findings for overdue/must-resolve promises.
+
+        Idempotent: repeated calls will not duplicate open findings for the same
+        promise. The chapter state is never changed automatically.
+        """
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise AutonomousError(f"Book not found: {slug}")
+            chapter = ChapterRepository.get_by_book_and_number(
+                conn, book["id"], number
+            )
+            if chapter is None:
+                raise AutonomousError(f"Chapter {number} not found in book {slug}.")
+
+            reminders = self._build_promise_reminders_for_book(
+                conn, book["id"], number
+            )
+            created: list[int] = []
+            revision_id = chapter["current_revision_id"]
+            for reminder in reminders:
+                location = f"promise:{reminder['promise_id']}"
+                existing = conn.execute(
+                    """SELECT id FROM review_findings
+                       WHERE chapter_id = ?
+                         AND perspective = 'continuity'
+                         AND location = ?
+                         AND resolved = 0
+                         AND revision_id IS ?""",
+                    (chapter["id"], location, revision_id),
+                ).fetchone()
+                if existing is not None:
+                    created.append(existing["id"])
+                    continue
+
+                # Supersede any open continuity finding for this promise on an
+                # older revision of the same chapter before attaching the current
+                # one. This prevents cross-revision pile-up.
+                FindingRepository.resolve_open_by_chapter_and_location(
+                    conn,
+                    chapter_id=chapter["id"],
+                    location=location,
+                    perspective="continuity",
+                    note="Superseded by new revision finding.",
+                )
+
+                severity = "S2" if reminder["category"] == "must_resolve" else "S3"
+                issue = (
+                    f"Promise requires attention ({reminder['category']}): "
+                    f"{reminder['promise_text']}"
+                )
+                evidence = json.dumps(
+                    {
+                        "promise_id": reminder["promise_id"],
+                        "status": reminder["status"],
+                        "target_chapter_number": reminder["target_chapter_number"],
+                        "target_scene_ref": reminder["target_scene_ref"],
+                        "message": reminder["message"],
+                    },
+                    ensure_ascii=False,
+                )
+                fix = (
+                    "Resolve the promise in this chapter, or explicitly abandon it "
+                    "with a story justification."
+                )
+                finding_id = FindingRepository.add_review_finding(
+                    conn,
+                    chapter_id=chapter["id"],
+                    revision_id=revision_id,
+                    perspective="continuity",
+                    severity=severity,
+                    location=location,
+                    evidence=evidence,
+                    issue=issue,
+                    fix=fix,
+                )
+                created.append(finding_id)
+            return created
 
     # ------------------------------------------------------------------
     # Iteration Runs
@@ -585,13 +911,33 @@ class AutonomousWritingService:
                         ok = True
                 if not ok:
                     bc_without_a_ref += 1
-            open_promises = conn.execute(
-                """SELECT COUNT(*) AS cnt FROM promise_ledger
-                   WHERE book_id = ? AND status IN ('planted', 'advanced')""",
-                (book["id"],),
-            ).fetchone()["cnt"]
+            promise_reminders = self._build_promise_reminders_for_book(
+                conn, book["id"], number
+            )
+            open_promise_count = len(promise_reminders)
             runs = IterationRepository.list_by_chapter(conn, chapter["id"])
             iteration_count = len(runs)
+
+            # Blind Experience Gate: a passing review for the current revision is
+            # a hard gate for autonomous acceptance, matching the formal approval
+            # gate in NovelForgeService.approve_chapter.
+            blind_row = None
+            blind_passes = False
+            if current_revision_id is not None:
+                blind_row = BlindExperienceRepository.get_active_by_revision(
+                    conn, chapter["id"], current_revision_id
+                )
+            if blind_row is not None:
+                images = json.loads(blind_row["memorable_images"] or "[]")
+                gaps = json.loads(blind_row["knowledge_gaps"] or "[]")
+                issues = json.loads(blind_row["blocking_issues"] or "[]")
+                blind_passes = (
+                    blind_row["source_scope"] == "prose_only"
+                    and blind_row["verdict"] == "experience_reconstructable"
+                    and len(images) >= 3
+                    and not gaps
+                    and not issues
+                )
 
             checks["has_plan"] = plan_row is not None
             checks["scene_count"] = scene_count
@@ -603,8 +949,10 @@ class AutonomousWritingService:
             checks["unresolved_plot_support_ok"] = unresolved_plot_support == 0
             checks["bc_plot_support_count"] = len(bc_entries)
             checks["bc_plot_support_ok"] = bc_without_a_ref == 0
-            checks["open_promises"] = open_promises
-            checks["promises_ok"] = open_promises == 0
+            checks["open_promise_count"] = open_promise_count
+            checks["promise_reminders"] = promise_reminders
+            checks["promises_ok"] = open_promise_count == 0
+            checks["blind_experience_passes"] = blind_passes
             checks["iteration_count"] = iteration_count
             checks["max_rounds"] = max_rounds
             checks["under_max_rounds"] = iteration_count < max_rounds
@@ -619,6 +967,7 @@ class AutonomousWritingService:
                 and checks["bc_plot_support_ok"]
                 and checks["promises_ok"]
                 and checks["has_independent_edit_round"]
+                and checks["blind_experience_passes"]
             )
             checks["workflow_coverage"] = workflow_coverage
 

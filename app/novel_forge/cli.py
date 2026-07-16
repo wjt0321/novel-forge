@@ -103,6 +103,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--memo-file", required=True, type=Path, help="JSON file with the memo."
     )
 
+    # build-blind-reader-packet
+    p = sub.add_parser(
+        "build-blind-reader-packet",
+        help="Build a prose-only packet for an isolated blind reader.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument(
+        "--output-file", required=True, type=Path, help="Absolute output path."
+    )
+
+    # submit-blind-experience-review
+    p = sub.add_parser(
+        "submit-blind-experience-review",
+        help="Submit a prose-only blind reader reconstruction report.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument(
+        "--report-file", required=True, type=Path, help="JSON report file."
+    )
+
+    # blind-experience-status
+    p = sub.add_parser(
+        "blind-experience-status",
+        help="Show Blind Experience Gate status for the current revision.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+
     # approve-chapter
     p = sub.add_parser("approve-chapter", help="Approve a chapter.")
     p.add_argument("slug", help="Book slug.")
@@ -225,10 +255,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--status",
         required=True,
-        choices=["advanced", "resolved", "abandoned"],
+        choices=["planted", "partially_paid", "paid_off", "abandoned"],
     )
     p.add_argument("--scene-ref", required=True, help="Scene reference.")
     p.add_argument("--note", default=None, help="Resolution note.")
+
+    p = sub.add_parser("set-promise-target", help="Set or clear a promise payoff target.")
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("promise_id", type=int, help="Promise ID.")
+    p.add_argument("--target-chapter-number", type=int, default=None)
+    p.add_argument("--target-scene-ref", default=None)
+    p.add_argument("--clear", action="store_true", help="Clear the target.")
 
     p = sub.add_parser("list-promises", help="List promises for a book.")
     p.add_argument("slug", help="Book slug.")
@@ -385,6 +422,55 @@ def cmd_submit_editorial_memo(
         blocking_issues=memo_data.get("blocking_issues", []),
     )
     print(f"Submitted editorial memo {memo.id} (verdict={memo.verdict})")
+    return 0
+
+
+def cmd_build_blind_reader_packet(
+    svc: NovelForgeService, args: argparse.Namespace
+) -> int:
+    packet = svc.build_blind_reader_packet(
+        args.slug, args.number, args.output_file
+    )
+    print(f"Built blind reader packet: {packet.file_path}")
+    return 0
+
+
+def cmd_submit_blind_experience_review(
+    svc: NovelForgeService, args: argparse.Namespace
+) -> int:
+    report = json.loads(args.report_file.read_text(encoding="utf-8-sig"))
+    review = svc.submit_blind_experience_review(
+        args.slug,
+        args.number,
+        spatial_reconstruction=report["spatial_reconstruction"],
+        body_position_and_contact=report["body_position_and_contact"],
+        action_constraints=report["action_constraints"],
+        emotional_trajectory=report["emotional_trajectory"],
+        dialogue_dynamics=report["dialogue_dynamics"],
+        memorable_images=report["memorable_images"],
+        knowledge_gaps=report.get("knowledge_gaps", []),
+        verdict=report["verdict"],
+        blocking_issues=report.get("blocking_issues", []),
+    )
+    print(
+        f"Submitted blind review {review.id} (verdict={review.verdict}, "
+        f"images={len(review.memorable_images)})"
+    )
+    return 0
+
+
+def cmd_blind_experience_status(
+    svc: NovelForgeService, args: argparse.Namespace
+) -> int:
+    summary = svc.blind_experience_status(args.slug, args.number)
+    print(f"Blind experience status: exists={summary.exists} passes={summary.passes}")
+    if summary.exists:
+        print(f"  review_id={summary.review_id} verdict={summary.verdict}")
+        print(
+            f"  images={summary.memorable_image_count} "
+            f"gaps={summary.knowledge_gap_count} "
+            f"issues={summary.blocking_issue_count}"
+        )
     return 0
 
 
@@ -568,6 +654,25 @@ def cmd_update_promise(svc: NovelForgeService, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_promise_target(svc: NovelForgeService, args: argparse.Namespace) -> int:
+    auto = AutonomousWritingService(svc.root)
+    promise = auto.set_promise_target(
+        args.slug,
+        promise_id=args.promise_id,
+        target_chapter_number=args.target_chapter_number,
+        target_scene_ref=args.target_scene_ref,
+        clear=args.clear,
+    )
+    if args.clear:
+        print(f"Cleared promise {promise.id} target")
+    else:
+        target = f"chapter {promise.target_chapter_number}"
+        if promise.target_scene_ref:
+            target += f", scene {promise.target_scene_ref}"
+        print(f"Set promise {promise.id} target to {target}")
+    return 0
+
+
 def cmd_list_promises(svc: NovelForgeService, args: argparse.Namespace) -> int:
     auto = AutonomousWritingService(svc.root)
     promises = auto.list_promises(args.slug)
@@ -641,6 +746,9 @@ COMMANDS = {
     "reject-fact": cmd_reject_fact,
     "review-chapter": cmd_review_chapter,
     "submit-editorial-memo": cmd_submit_editorial_memo,
+    "build-blind-reader-packet": cmd_build_blind_reader_packet,
+    "submit-blind-experience-review": cmd_submit_blind_experience_review,
+    "blind-experience-status": cmd_blind_experience_status,
     "approve-chapter": cmd_approve_chapter,
     "rollback-chapter": cmd_rollback_chapter,
     "export-book": cmd_export_book,
@@ -653,6 +761,7 @@ COMMANDS = {
     "set-chapter-plan": cmd_set_chapter_plan,
     "get-chapter-plan": cmd_get_chapter_plan,
     "update-promise": cmd_update_promise,
+    "set-promise-target": cmd_set_promise_target,
     "list-promises": cmd_list_promises,
     "record-iteration": cmd_record_iteration,
     "list-iterations": cmd_list_iterations,

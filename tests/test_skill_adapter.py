@@ -30,7 +30,7 @@ def test_status_book_and_chapter_no_body(tmp_path: Path, capsys):
     assert data["operation"] == "status"
     assert data["data"]["book"]["slug"] == "test"
     assert len(data["data"]["chapters"]) == 1
-    assert "body" not in json.dumps(data)
+    assert '"body":' not in json.dumps(data)
 
     code = main(["--root", str(tmp_path), "status", "test", "1"])
     assert code == 0
@@ -45,7 +45,7 @@ def test_status_book_and_chapter_no_body(tmp_path: Path, capsys):
         "S3": 0,
         "S4": 0,
     }
-    assert "body" not in json.dumps(data)
+    assert '"body":' not in json.dumps(data)
 
 
 def test_init_book_requires_confirm(tmp_path: Path, capsys):

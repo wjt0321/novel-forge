@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from app.novel_forge.autonomous import AutonomousWritingService
 from app.novel_forge.service import NovelForgeError, NovelForgeService
 from app.novel_forge.skill_adapter import main
 from tests.conftest import (
     filled_scene_contract_v3,
+    filled_scene_contract_v4,
     filled_voice_bible,
     ready_memo,
 )
@@ -364,3 +366,195 @@ def test_adapter_build_drafting_packet_external_output_path(
     json_text = json.dumps(data)
     assert "Writer Operating Contract" not in json_text
     assert "## Scene Contract" not in json_text
+
+
+# ------------------------------------------------------------------
+# RTCO P0/P1/P2 layer tests
+# ------------------------------------------------------------------
+
+def _auto(root: Path) -> AutonomousWritingService:
+    return AutonomousWritingService(root)
+
+
+def test_packet_has_p0_p1_p2_sections(tmp_path: Path):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    assert "## P0" in text or "## P0 — Core" in text
+    assert "## P1" in text or "## P1 — Important Context" in text
+    assert "## P2" in text or "## P2 — Reference" in text
+
+
+def test_p0_contains_scene_contract_and_predecessor(tmp_path: Path):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output, previous_context_chars=50)
+    text = output.read_text(encoding="utf-8")
+
+    # P0 must include the scene contract and predecessor anchor.
+    p0_start = text.find("## P0")
+    p1_start = text.find("## P1")
+    p0_text = text[p0_start:p1_start]
+    assert "## Scene Contract" in p0_text
+    assert "Can she escape?" in p0_text
+    assert "## Predecessor Context" in p0_text
+    assert "This is a continuity hand-off fragment" in p0_text
+
+
+def test_p1_contains_approved_canon(tmp_path: Path):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    p1_start = text.find("## P1")
+    p2_start = text.find("## P2")
+    p1_text = text[p1_start:p2_start]
+    assert "## Approved Canon Facts" in p1_text
+    assert "hero age" in p1_text
+
+
+def test_p2_lists_unfulfilled_promises_for_this_chapter(tmp_path: Path):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+    auto = _auto(tmp_path)
+
+    # Promise due in chapter 2 (must resolve now).
+    auto.add_promise(
+        "test",
+        "the back door must be opened",
+        target_chapter_number=2,
+        target_scene_ref="s2",
+    )
+    # Promise due in chapter 1 (overdue).
+    auto.add_promise(
+        "test",
+        "the rusty key must be found",
+        target_chapter_number=1,
+        target_scene_ref="s1",
+    )
+    # Promise due in chapter 3 (future, should not appear).
+    auto.add_promise(
+        "test",
+        "the pursuers catch up",
+        target_chapter_number=3,
+        target_scene_ref="s3",
+    )
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    p2_start = text.find("## P2")
+    p2_text = text[p2_start:]
+    assert "the back door must be opened" in p2_text
+    assert "the rusty key must be found" in p2_text
+    assert "the pursuers catch up" not in p2_text
+    assert "Must Resolve" in p2_text
+    assert "Overdue" in p2_text
+
+
+def test_p2_falls_back_to_all_open_promises_when_no_target(tmp_path: Path):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+    auto = _auto(tmp_path)
+
+    auto.add_promise("test", "unscoped promise", target_chapter_number=None)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    p2_start = text.find("## P2")
+    p2_text = text[p2_start:]
+    assert "unscoped promise" in p2_text
+    assert "conservative" in p2_text or "unscoped" in p2_text
+
+
+def test_build_drafting_packet_includes_scene_embodiment_model_and_constraints(
+    tmp_path: Path,
+):
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+
+    vb_src = tmp_path / "vb.md"
+    filled_voice_bible(vb_src)
+    svc.write_voice_bible("test", vb_src)
+
+    svc.create_chapter("test", 1, "One")
+    ch1_body = tmp_path / "ch1.md"
+    ch1_body.write_text("开始。" + "正文长段落。" * 200 + "结尾。\n", encoding="utf-8")
+    svc.write_revision("test", 1, ch1_body)
+    svc.lint_chapter("test", 1)
+    ready_memo(svc, "test", 1)
+    svc.review_chapter("test", 1)
+    svc.approve_chapter("test", 1, "ok")
+
+    svc.create_chapter("test", 2, "Two")
+    sc_src = tmp_path / "sc2.md"
+    filled_scene_contract_v4(sc_src)
+    svc.write_scene_contract("test", 2, sc_src)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    assert "## P0" in text or "## P0 — Core" in text
+    assert "### Scene Embodiment Model" in text
+    assert "spatial_layout_and_routes" in text
+    assert "body_state_and_contacts" in text
+    assert "object_affordances" in text
+    assert "environmental_constraints" in text
+    assert "embodied_action_chain" in text
+    assert "不得用参数替代画面" in text
+    assert "开场能定位身体与关键物体" in text
+    assert "至少一项环境约束真实改变动作" in text
+    assert "不可逆选择由连续身体动作触发" in text
+
+
+def test_scene_embodiment_model_for_legacy_contract_prohibits_inference(
+    tmp_path: Path,
+):
+    svc = NovelForgeService(tmp_path)
+    _setup_ready_book(svc, tmp_path)
+
+    output = tmp_path / "ch2-packet.md"
+    svc.build_drafting_packet("test", 2, output)
+    text = output.read_text(encoding="utf-8")
+
+    sem_start = text.find("### Scene Embodiment Model")
+    assert sem_start != -1
+    sem_text = text[sem_start: text.find("### Chapter Goal", sem_start)]
+    assert "do not infer" in sem_text
+    assert "upgrade the Scene Contract" in sem_text
+    # Missing-field bullets in a ready/legacy packet must not use exploration-mode wording.
+    assert "not specified — do not infer; upgrade the Scene Contract" in sem_text
+    assert "not specified — exploration mode" not in sem_text
+
+
+def test_scene_embodiment_model_in_exploration_mode_marks_gap(
+    tmp_path: Path,
+):
+    svc = NovelForgeService(tmp_path)
+    svc.init_book("test", "Test Book")
+    svc.create_chapter("test", 1, "One")
+
+    output = tmp_path / "packet.md"
+    svc.build_drafting_packet("test", 1, output, allow_incomplete=True)
+    text = output.read_text(encoding="utf-8")
+
+    assert "> **READINESS BYPASSED**" in text
+    sem_start = text.find("### Scene Embodiment Model")
+    assert sem_start != -1
+    sem_text = text[sem_start: text.find("### Chapter Goal", sem_start)]
+    assert "exploration mode" in sem_text
+    assert "do not infer" in sem_text
+    assert "fix before final draft" in sem_text

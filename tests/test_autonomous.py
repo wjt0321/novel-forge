@@ -210,10 +210,15 @@ def test_update_promise_status(service: NovelForgeService) -> None:
     auto = AutonomousWritingService(service.root)
     auto.set_chapter_plan("auto", 1, _four_scene_plan())
     promise = next(p for p in auto.list_promises("auto") if p.promise_text == "promise-a")
-    updated = auto.update_promise_status(
-        "auto", promise.id, "resolved", scene_ref="s4", resolution_note="paid off"
+
+    # planted -> partially_paid -> paid_off
+    auto.update_promise_status(
+        "auto", promise.id, "partially_paid", scene_ref="s2", resolution_note="advance"
     )
-    assert updated.status == "resolved"
+    updated = auto.update_promise_status(
+        "auto", promise.id, "paid_off", scene_ref="s4", resolution_note="paid off"
+    )
+    assert updated.status == "paid_off"
     assert updated.resolved_scene_ref == "s4"
 
 
@@ -263,6 +268,24 @@ def _four_scene_plan_no_promises() -> list[ScenePlan]:
     ]
 
 
+def _passing_blind_report() -> dict:
+    return {
+        "spatial_reconstruction": "The prose places the character in a bounded space.",
+        "body_position_and_contact": "The body contacts the immediate setting.",
+        "action_constraints": "The setting limits action and forces a choice.",
+        "emotional_trajectory": "Pressure becomes visible through action.",
+        "dialogue_dynamics": "Speech or silence changes the immediate resistance.",
+        "memorable_images": [
+            {"location": "line 1", "evidence": "文字文字文字", "reader_image": "bounded space"},
+            {"location": "line 1", "evidence": "文字文字文字文字", "reader_image": "physical obstacle"},
+            {"location": "line 1", "evidence": "文字文字文字文字文字", "reader_image": "consequential action"},
+        ],
+        "knowledge_gaps": [],
+        "verdict": "experience_reconstructable",
+        "blocking_issues": [],
+    }
+
+
 def test_auto_acceptance_ready(service: NovelForgeService) -> None:
     _filled_book(service)
     _filled_chapter(service)
@@ -275,6 +298,9 @@ def test_auto_acceptance_ready(service: NovelForgeService) -> None:
 
     # Editorial memo ready.
     ready_memo(service, "auto", 1)
+
+    # Blind experience gate passing.
+    service.submit_blind_experience_review("auto", 1, **_passing_blind_report())
 
     # At least one independent edit round is required.
     auto.start_iteration_run(
@@ -294,6 +320,7 @@ def test_auto_acceptance_ready(service: NovelForgeService) -> None:
     assert result.checks["scene_count_ok"] is True
     assert result.checks["independent_editorial_status"] == "ready"
     assert result.checks["promises_ok"] is True
+    assert result.checks["blind_experience_passes"] is True
 
 
 def test_auto_acceptance_detects_prose_edit_concerns(service: NovelForgeService) -> None:
@@ -457,6 +484,86 @@ def test_writer_role_cannot_be_independent_reader_editor(
             word_count=100,
             status="completed",
         )
+
+
+def test_auto_acceptance_future_promise_does_not_block_current_chapter(
+    service: NovelForgeService,
+) -> None:
+    """A promise targeted at chapter 2 must not block chapter 1 acceptance."""
+    _filled_book(service)
+    _filled_chapter(service)
+    service.create_chapter("auto", 2, "Chapter 2")
+    sc_src = service.root / "scene-contract-2.md"
+    filled_scene_contract_v3(sc_src)
+    service.write_scene_contract("auto", 2, sc_src, note="filled")
+
+    auto = AutonomousWritingService(service.root)
+    auto.set_chapter_plan("auto", 1, _four_scene_plan_no_promises())
+    body = _make_five_thousand_han()
+    _make_revision_file(service.root, "auto", 1, body)
+    ready_memo(service, "auto", 1)
+    service.submit_blind_experience_review("auto", 1, **_passing_blind_report())
+    auto.start_iteration_run(
+        "auto",
+        1,
+        writer_role="writer_v1",
+        editor_verdict="ready_for_human_editor_decision",
+        blocking_issues=[],
+        revision_targets=[],
+        word_count=5000,
+        status="completed",
+    )
+
+    # Add a planned promise for chapter 2.
+    promise = auto.add_promise(
+        "auto",
+        promise_text="future-chapter-promise",
+        target_chapter_number=2,
+    )
+    assert promise.target_chapter_number == 2
+
+    result = auto.check_auto_acceptance("auto", 1)
+    assert result.checks["promises_ok"] is True
+    assert result.checks["open_promise_count"] == 0
+    assert result.decision == "autonomous_acceptance_complete"
+
+
+def test_auto_acceptance_blocked_without_blind_experience_review(
+    service: NovelForgeService,
+) -> None:
+    _filled_book(service)
+    _filled_chapter(service)
+    auto = AutonomousWritingService(service.root)
+    auto.set_chapter_plan("auto", 1, _four_scene_plan_no_promises())
+    body = _make_five_thousand_han()
+    _make_revision_file(service.root, "auto", 1, body)
+    # Submit editorial memo directly without the ready_memo helper, which would
+    # also create a passing blind review.
+    service.submit_editorial_memo(
+        "auto",
+        1,
+        narrative_necessity="This chapter is necessary.",
+        character_agency="She chooses to act.",
+        detail_selection="key details.",
+        causal_chain="cause → effect.",
+        prose_observation="S1 行动段落节奏有效；选择瞬间通过具体动作展示。",
+        verdict="ready_for_editor_decision",
+        blocking_issues=[],
+    )
+    auto.start_iteration_run(
+        "auto",
+        1,
+        writer_role="writer_v1",
+        editor_verdict="ready_for_human_editor_decision",
+        blocking_issues=[],
+        revision_targets=[],
+        word_count=5000,
+        status="completed",
+    )
+
+    result = auto.check_auto_acceptance("auto", 1)
+    assert result.checks["blind_experience_passes"] is False
+    assert result.decision == "revision_required"
 
 
 # ------------------------------------------------------------------

@@ -41,11 +41,14 @@ MUTATING_OPS = {
     "resolve-reader-review",
     "build-drafting-packet",
     "submit-editorial-memo",
+    "build-blind-reader-packet",
+    "submit-blind-experience-review",
     "add-research-entry",
     "update-research-entry",
     "set-story-engine",
     "set-chapter-plan",
     "update-promise",
+    "set-promise-target",
     "record-iteration",
     "git-checkpoint",
     "init-workspace",
@@ -250,7 +253,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", required=True)
 
     p = sub.add_parser(
-        "submit-editorial-memo", help="Submit a narrative editorial memo for the current revision."
+        "submit-editorial-memo",
+        help="Submit a narrative editorial memo for the current revision.",
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, help="Chapter number.")
@@ -367,10 +371,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("slug", help="Book slug.")
     p.add_argument("promise_id", type=int, help="Promise ID.")
     p.add_argument(
-        "--status", required=True, choices=["advanced", "resolved", "abandoned"]
+        "--status",
+        required=True,
+        choices=["planted", "partially_paid", "paid_off", "abandoned"],
     )
     p.add_argument("--scene-ref", required=True)
     p.add_argument("--note", default=None)
+
+    p = sub.add_parser("set-promise-target", help="Set or clear a promise payoff target.")
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("promise_id", type=int, help="Promise ID.")
+    p.add_argument("--target-chapter-number", type=int, default=None)
+    p.add_argument("--target-scene-ref", default=None)
+    p.add_argument(
+        "--clear", action="store_true", help="Clear the target chapter and scene."
+    )
 
     p = sub.add_parser("list-promises", help="List promises for a book.")
     p.add_argument("slug", help="Book slug.")
@@ -443,6 +458,29 @@ def _build_parser() -> argparse.ArgumentParser:
             "For exploratory drafts only; formal short stories must meet 5000."
         ),
     )
+
+    p = sub.add_parser(
+        "build-blind-reader-packet",
+        help="Build a prose-only packet for an isolated blind reader.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument("--output-file", required=True, type=Path)
+
+    p = sub.add_parser(
+        "submit-blind-experience-review",
+        help="Submit a prose-only blind reader reconstruction report.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument("--report-file", required=True, type=Path)
+
+    p = sub.add_parser(
+        "blind-experience-status",
+        help="Show Blind Experience Gate status for the current revision.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
 
     # Status: book or chapter. Use positional slug and optional number.
     # argparse does not easily support optional positional after required ones,
@@ -706,6 +744,18 @@ def _drafting_packet_dict(packet) -> dict:
     return packet.model_dump(mode="json")
 
 
+def _blind_reader_packet_dict(packet) -> dict:
+    return packet.model_dump(mode="json")
+
+
+def _blind_experience_review_dict(review) -> dict:
+    return review.model_dump(mode="json")
+
+
+def _blind_experience_summary_dict(summary) -> dict:
+    return summary.model_dump(mode="json")
+
+
 def _drafting_readiness_dict(readiness) -> dict:
     return readiness.model_dump(mode="json")
 
@@ -803,7 +853,7 @@ def run(argv: list[str] | None = None) -> int:
                     "promises": {
                         "count": len(promises),
                         "open_count": sum(
-                            1 for p in promises if p.status in ("planted", "advanced")
+                            1 for p in promises if p.status not in ("paid_off", "abandoned")
                         ),
                     },
                 },
@@ -827,6 +877,7 @@ def run(argv: list[str] | None = None) -> int:
         reader_summary = svc.reader_review_summary_for_chapter(slug, number)
         readiness = svc.assess_drafting_readiness(slug, number)
         memo_summary = svc.editorial_memo_status(slug, number)
+        blind_summary = svc.blind_experience_status(slug, number)
         chapter_plan = auto.get_chapter_plan(slug, number)
         iterations = auto.list_iteration_runs(slug, number)
         acceptance = auto.check_auto_acceptance(slug, number, max_rounds=3)
@@ -840,6 +891,7 @@ def run(argv: list[str] | None = None) -> int:
                 "reader_review_summary": _reader_review_summary_dict(reader_summary),
                 "drafting_readiness": _readiness_summary_dict(readiness),
                 "editorial_memo": _editorial_memo_summary_dict(memo_summary),
+                "blind_experience": _blind_experience_summary_dict(blind_summary),
                 "chapter_plan": _chapter_plan_dict(chapter_plan),
                 "iteration_count": len(iterations),
                 "acceptance": {
@@ -971,6 +1023,7 @@ def run(argv: list[str] | None = None) -> int:
                 ),
                 "reader_reviews": [_reader_review_dict(r) for r in result.reader_reviews],
                 "editorial_memo": result.editorial_memo_status,
+                "blind_experience": result.blind_experience_status,
             },
             state_changed=(before.state.value != after.state.value),
         )
@@ -1079,6 +1132,58 @@ def run(argv: list[str] | None = None) -> int:
         summary = svc.editorial_memo_status(slug, args.number)
         return _ok(op, {"editorial_memo": _editorial_memo_summary_dict(summary)})
 
+    if op == "build-blind-reader-packet":
+        output_file = _validate_output_file(root, args.output_file)
+        packet = svc.build_blind_reader_packet(slug, args.number, output_file)
+        return _ok(
+            op,
+            {"packet": _blind_reader_packet_dict(packet)},
+            state_changed=False,
+        )
+
+    if op == "submit-blind-experience-review":
+        report = _validate_json_file(root, args.report_file)
+        if not isinstance(report, dict):
+            raise NovelForgeError("Blind experience report must be a JSON object.")
+        required = {
+            "spatial_reconstruction",
+            "body_position_and_contact",
+            "action_constraints",
+            "emotional_trajectory",
+            "dialogue_dynamics",
+            "memorable_images",
+            "knowledge_gaps",
+            "verdict",
+            "blocking_issues",
+        }
+        missing = sorted(required - set(report))
+        if missing:
+            raise NovelForgeError(
+                f"Blind experience report is missing fields: {', '.join(missing)}"
+            )
+        review = svc.submit_blind_experience_review(
+            slug,
+            args.number,
+            spatial_reconstruction=report["spatial_reconstruction"],
+            body_position_and_contact=report["body_position_and_contact"],
+            action_constraints=report["action_constraints"],
+            emotional_trajectory=report["emotional_trajectory"],
+            dialogue_dynamics=report["dialogue_dynamics"],
+            memorable_images=report["memorable_images"],
+            knowledge_gaps=report["knowledge_gaps"],
+            verdict=report["verdict"],
+            blocking_issues=report["blocking_issues"],
+        )
+        return _ok(
+            op,
+            _blind_experience_review_dict(review),
+            state_changed=True,
+        )
+
+    if op == "blind-experience-status":
+        summary = svc.blind_experience_status(slug, args.number)
+        return _ok(op, {"blind_experience": _blind_experience_summary_dict(summary)})
+
     if op == "build-drafting-packet":
         output_file = _validate_output_file(root, args.output_file)
         readiness = svc.assess_drafting_readiness(slug, args.number)
@@ -1182,6 +1287,16 @@ def run(argv: list[str] | None = None) -> int:
             status=args.status,
             scene_ref=args.scene_ref,
             resolution_note=args.note,
+        )
+        return _ok(op, {"promise": _promise_dict(promise)}, state_changed=True)
+
+    if op == "set-promise-target":
+        promise = auto.set_promise_target(
+            slug,
+            promise_id=args.promise_id,
+            target_chapter_number=args.target_chapter_number,
+            target_scene_ref=args.target_scene_ref,
+            clear=args.clear,
         )
         return _ok(op, {"promise": _promise_dict(promise)}, state_changed=True)
 

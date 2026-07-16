@@ -47,7 +47,7 @@ def _setup_approvable_chapter(svc: NovelForgeService, root: Path) -> None:
     svc.lint_chapter("test", 1)
 
 
-def test_new_chapter_template_is_v3(service: NovelForgeService):
+def test_new_chapter_template_is_v4(service: NovelForgeService):
     service.init_book("test", "Test Book")
     service.create_chapter("test", 1, "One")
 
@@ -60,7 +60,12 @@ def test_new_chapter_template_is_v3(service: NovelForgeService):
     assert "## detail_payoff_plan" in text
     assert "## scene_necessity" in text
     assert "## ending_change" in text
-    assert "contract_version: 3" in text
+    assert "## spatial_layout_and_routes" in text
+    assert "## body_state_and_contacts" in text
+    assert "## object_affordances" in text
+    assert "## environmental_constraints" in text
+    assert "## embodied_action_chain" in text
+    assert "contract_version: 4" in text
 
 
 def test_review_without_memo_returns_concerns(service: NovelForgeService):

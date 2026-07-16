@@ -8,6 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from app.novel_forge.db import get_db_path, init_db
 from app.novel_forge.export import (
@@ -21,6 +22,9 @@ from app.novel_forge.lint import _count_cjk_chars, lint_file
 from app.novel_forge.project_templates import ProjectTemplateError, init_book_project
 from app.novel_forge.models import (
     AuditEvent,
+    BlindExperienceReview,
+    BlindExperienceSummary,
+    BlindReaderPacket,
     Book,
     BookSummary,
     Chapter,
@@ -42,18 +46,23 @@ from app.novel_forge.models import (
 )
 from app.novel_forge.readiness import (
     count_concrete_anchors,
+    count_valid_list_items,
     detect_contract_version,
+    has_causal_chain,
     is_missing_content,
+    is_parameter_only_spatial_layout,
     parse_markdown_sections,
 )
 from app.novel_forge.repository import (
     AuditRepository,
+    BlindExperienceRepository,
     BookRepository,
     ChapterRepository,
     EditorialMemoRepository,
     ExportRepository,
     FactRepository,
     FindingRepository,
+    PromiseRepository,
     ReaderReviewRepository,
     RevisionRepository,
     SceneContractRepository,
@@ -251,8 +260,21 @@ class NovelForgeService:
             "待填写\n\n"
             "## ending_change\n"
             "待填写\n\n"
+            "## spatial_layout_and_routes\n"
+            "待填写\n\n"
+            "## body_state_and_contacts\n"
+            "待填写\n\n"
+            "## object_affordances\n"
+            "- 物体 1：可做什么 / 不可做什么 / 何时改变行动\n"
+            "- 物体 2：可做什么 / 不可做什么 / 何时改变行动\n\n"
+            "## environmental_constraints\n"
+            "待填写\n\n"
+            "## embodied_action_chain\n"
+            "- 第一步：感知/接触 → 动作 → 环境反馈/代价\n"
+            "- 第二步：感知/接触 → 动作 → 环境反馈/代价\n"
+            "- 第三步：感知/接触 → 动作 → 环境反馈/代价\n\n"
             "---\n\n"
-            "contract_version: 3\n"
+            "contract_version: 4\n"
         )
 
     # ------------------------------------------------------------------
@@ -613,7 +635,7 @@ class NovelForgeService:
                 revision_number=1,
                 file_path=str(contract_path.relative_to(self.root)),
                 content_hash=contract_hash,
-                note="initial v2 template",
+                note="initial v4 template",
             )
             SceneContractRepository.update_current(
                 conn,
@@ -700,6 +722,16 @@ class NovelForgeService:
     # ------------------------------------------------------------------
     # Revision
     # ------------------------------------------------------------------
+    def _require_formal_revision_length(self, from_file: Path) -> None:
+        """Ensure a revision source is non-empty.
+
+        Encoding validation is left to later stages so that legacy/non-UTF-8
+        files can be copied into the library and reported by lint rather than
+        crashing the revision write path.
+        """
+        if from_file.stat().st_size == 0:
+            raise NovelForgeError("Revision source is empty.")
+
     def write_revision(
         self,
         slug: str,
@@ -749,6 +781,13 @@ class NovelForgeService:
             )
             ChapterRepository.update_current_revision(
                 conn, chapter["id"], rev_id, content_hash
+            )
+
+            # A new revision invalidates any previous blind experience review for
+            # this chapter. The old review remains in the ledger but is superseded
+            # so it cannot satisfy the current revision's approval gate.
+            BlindExperienceRepository.supersede_active_for_chapter(
+                conn, chapter["id"]
             )
 
             # State transition.
@@ -1174,6 +1213,12 @@ class NovelForgeService:
                 or len(json.loads(active_memo["blocking_issues"] or "[]")) > 0
             )
 
+            blind_row = BlindExperienceRepository.get_active_by_revision(
+                conn, chapter["id"], current_revision_id
+            )
+            blind_summary = self._blind_experience_summary_from_row(blind_row)
+            blind_blocks = not blind_summary.passes
+
             if review_counts["S1"] > 0 or rr_severity_counts["S1"] > 0:
                 verdict = ReviewVerdict.REJECT
             elif (
@@ -1181,6 +1226,7 @@ class NovelForgeService:
                 or rr_severity_counts["S2"] > 0
                 or lint_counts["blocking"] > 0
                 or memo_blocks
+                or blind_blocks
             ):
                 verdict = ReviewVerdict.CONCERNS
             else:
@@ -1204,6 +1250,10 @@ class NovelForgeService:
                         "editorial_memo_blocking_issues": memo_status.get(
                             "blocking_issue_count", 0
                         ),
+                        "blind_experience_review_id": blind_summary.review_id,
+                        "blind_experience_passes": blind_summary.passes,
+                        "blind_experience_blocking_issues": blind_summary.blocking_issue_count,
+                        "blind_experience_knowledge_gaps": blind_summary.knowledge_gap_count,
                     },
                     ensure_ascii=False,
                 ),
@@ -1225,6 +1275,7 @@ class NovelForgeService:
                     ReaderReview.model_validate(dict(r)) for r in open_reader_reviews
                 ],
                 editorial_memo_status=memo_status,
+                blind_experience_status=blind_summary.model_dump(mode="json"),
             )
 
     def approve_chapter(self, slug: str, number: int, note: str) -> Chapter:
@@ -1290,6 +1341,17 @@ class NovelForgeService:
             if blocking_issue_count > 0:
                 raise NovelForgeError(
                     "Cannot approve: editorial memo has unresolved blocking issues."
+                )
+
+            blind_row = BlindExperienceRepository.get_active_by_revision(
+                conn, chapter["id"], current_revision_id
+            )
+            blind_summary = self._blind_experience_summary_from_row(blind_row)
+            if not blind_summary.passes:
+                raise NovelForgeError(
+                    "Cannot approve: no passing blind experience review for the "
+                    "current revision. A prose-only reader must reconstruct space, "
+                    "body, action constraints, emotion, dialogue change, and images."
                 )
 
             ChapterRepository.set_state(conn, chapter["id"], "approved")
@@ -1765,6 +1827,374 @@ class NovelForgeService:
             )
 
     # ------------------------------------------------------------------
+    # Blind Experience Gate
+    # ------------------------------------------------------------------
+    _BLIND_FORBIDDEN_SOURCE_TERMS = (
+        "scene contract",
+        "voice bible",
+        "drafting packet",
+        "chapter plan",
+        "story engine",
+        "作者意图",
+        "场景合同",
+        "声线圣经",
+        "写作包",
+        "章节计划",
+        "故事发动机",
+    )
+
+    _BLIND_MIN_EVIDENCE_LENGTH = 6
+
+    @classmethod
+    def _blind_review_contains_forbidden_source_terms(
+        cls,
+        fields: dict[str, str],
+        images: list[dict[str, str]],
+        gaps: list[str],
+        issues: list[dict[str, str]],
+    ) -> bool:
+        """Return True if any user-provided string contains planning-source language.
+
+        The scan covers the five free-text fields, every nested string inside
+        memorable_images and blocking_issues, and every knowledge_gap. This keeps
+        the blind reader isolated from author intent regardless of where the leak
+        is attempted.
+        """
+        texts: list[str] = list(fields.values())
+        texts.extend(gap for gap in gaps)
+        for image in images:
+            texts.extend(image.get(k, "") for k in ("location", "evidence", "reader_image"))
+        for issue in issues:
+            texts.extend(
+                issue.get(k, "")
+                for k in ("location", "evidence", "reader_effect", "revision_intent")
+            )
+        combined = " ".join(str(v).lower() for v in texts)
+        return any(term in combined for term in cls._BLIND_FORBIDDEN_SOURCE_TERMS)
+
+    def build_blind_reader_packet(
+        self, slug: str, number: int, output_file: Path
+    ) -> BlindReaderPacket:
+        """Write a prose-only, line-numbered packet for an isolated reader.
+
+        No planning asset is loaded by this method. The packet is deliberately
+        ignorant of intent so missing images cannot be supplied from memory.
+        """
+        output_file = Path(output_file)
+        if not output_file.is_absolute():
+            raise NovelForgeError("output_file must be an absolute path.")
+        resolved = output_file.resolve()
+        if resolved.exists():
+            raise NovelForgeError(f"output_file already exists: {output_file}")
+        try:
+            resolved.relative_to((self.root / "library").resolve())
+            raise NovelForgeError(
+                "output_file must not be inside the project library directory."
+            )
+        except ValueError:
+            pass
+
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise NovelForgeError(f"Book not found: {slug}")
+            chapter = ChapterRepository.get_by_book_and_number(
+                conn, book["id"], number
+            )
+            if chapter is None:
+                raise NovelForgeError(f"Chapter {number} not found in book {slug}.")
+            revision_id = chapter["current_revision_id"]
+            if revision_id is None:
+                raise NovelForgeError(
+                    f"Chapter {number} has no current revision; cannot build blind packet."
+                )
+            revision = RevisionRepository.get_by_id(conn, revision_id)
+            if revision is None:
+                raise NovelForgeError(f"Revision not found: {revision_id}")
+            revision_path = self.root / revision["file_path"]
+            prose = revision_path.read_text(encoding="utf-8")
+
+        lines = [
+            "# Blind Reader Packet",
+            "",
+            "> SOURCE SCOPE: PROSE ONLY.",
+            "> Do not infer author intent, planning notes, world rules, or missing images.",
+            "> Report only what a first-time reader can reconstruct from the text below.",
+            "",
+            f"- book_slug: {slug}",
+            f"- chapter_number: {number}",
+            f"- revision_id: {revision_id}",
+            "",
+            "## Prose With Line Numbers",
+            "",
+        ]
+        for idx, line in enumerate(prose.splitlines(), 1):
+            lines.append(f"{idx:03d} | {line}")
+        lines.extend(
+            [
+                "",
+                "## Required Reconstruction",
+                "",
+                "Describe spatial layout, body position/contact, action constraints, emotional trajectory, dialogue change, and at least three memorable images. List every place where outside knowledge would be required.",
+            ]
+        )
+        content = "\n".join(lines) + "\n"
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        try:
+            recorded = str(resolved.relative_to(self.root))
+        except ValueError:
+            recorded = str(resolved)
+
+        with self._conn() as conn:
+            AuditRepository.add(
+                conn,
+                book_id=book["id"],
+                entity_type="blind_reader_packet",
+                entity_id=revision_id,
+                action="build",
+                details=json.dumps(
+                    {"output_file": recorded, "content_hash": digest},
+                    ensure_ascii=False,
+                ),
+            )
+
+        return BlindReaderPacket(
+            file_path=recorded,
+            absolute_path=str(resolved),
+            content_hash=digest,
+            book_slug=slug,
+            chapter_number=number,
+            revision_id=revision_id,
+        )
+
+    def submit_blind_experience_review(
+        self,
+        slug: str,
+        number: int,
+        spatial_reconstruction: str,
+        body_position_and_contact: str,
+        action_constraints: str,
+        emotional_trajectory: str,
+        dialogue_dynamics: str,
+        memorable_images: list[dict[str, Any]],
+        knowledge_gaps: list[str],
+        verdict: str,
+        blocking_issues: list[dict[str, Any]],
+    ) -> BlindExperienceReview:
+        if verdict not in {"experience_reconstructable", "revision_required"}:
+            raise NovelForgeError(f"Invalid blind review verdict: {verdict!r}.")
+        fields = {
+            "spatial_reconstruction": spatial_reconstruction,
+            "body_position_and_contact": body_position_and_contact,
+            "action_constraints": action_constraints,
+            "emotional_trajectory": emotional_trajectory,
+            "dialogue_dynamics": dialogue_dynamics,
+        }
+        for name, value in fields.items():
+            if not value or not str(value).strip():
+                raise NovelForgeError(f"Blind review field '{name}' cannot be empty.")
+        images: list[dict[str, str]] = []
+        image_evidence_seen: set[str] = set()
+        for idx, image in enumerate(memorable_images):
+            if not isinstance(image, dict):
+                raise NovelForgeError(
+                    f"Memorable image at index {idx} must be an object."
+                )
+            normalized: dict[str, str] = {}
+            for required in ("location", "evidence", "reader_image"):
+                value = str(image.get(required, "")).strip()
+                if not value:
+                    raise NovelForgeError(
+                        f"Memorable image at index {idx} is missing '{required}'."
+                    )
+                normalized[required] = value
+            if len(normalized["evidence"]) < self._BLIND_MIN_EVIDENCE_LENGTH:
+                raise NovelForgeError(
+                    f"Memorable image at index {idx} evidence must be at least "
+                    f"{self._BLIND_MIN_EVIDENCE_LENGTH} characters."
+                )
+            if normalized["evidence"] in image_evidence_seen:
+                raise NovelForgeError(
+                    f"Memorable image at index {idx} duplicates evidence from an earlier image."
+                )
+            image_evidence_seen.add(normalized["evidence"])
+            images.append(normalized)
+        if verdict == "experience_reconstructable" and len(images) < 3:
+            raise NovelForgeError(
+                "A passing blind review requires at least 3 memorable_images."
+            )
+        gaps = [str(x).strip() for x in knowledge_gaps if str(x).strip()]
+        validated_issues: list[dict[str, str]] = []
+        issue_evidence_seen: set[str] = set()
+        for idx, issue in enumerate(blocking_issues):
+            if not isinstance(issue, dict):
+                raise NovelForgeError(
+                    f"Blind blocking issue at index {idx} must be an object."
+                )
+            normalized: dict[str, str] = {}
+            for required in (
+                "location",
+                "evidence",
+                "reader_effect",
+                "revision_intent",
+            ):
+                value = str(issue.get(required, "")).strip()
+                if not value:
+                    raise NovelForgeError(
+                        f"Blind blocking issue at index {idx} is missing '{required}'."
+                    )
+                normalized[required] = value
+            if len(normalized["evidence"]) < self._BLIND_MIN_EVIDENCE_LENGTH:
+                raise NovelForgeError(
+                    f"Blind blocking issue at index {idx} evidence must be at least "
+                    f"{self._BLIND_MIN_EVIDENCE_LENGTH} characters."
+                )
+            if normalized["evidence"] in issue_evidence_seen:
+                raise NovelForgeError(
+                    f"Blind blocking issue at index {idx} duplicates evidence from an earlier issue."
+                )
+            issue_evidence_seen.add(normalized["evidence"])
+            validated_issues.append(normalized)
+        if self._blind_review_contains_forbidden_source_terms(
+            {k: str(v).strip() for k, v in fields.items()},
+            images,
+            gaps,
+            validated_issues,
+        ):
+            raise NovelForgeError(
+                "Blind review contains planning-source language; the reader must use prose only."
+            )
+        if verdict == "revision_required" and not validated_issues:
+            raise NovelForgeError(
+                "Blind review verdict 'revision_required' requires blocking_issues."
+            )
+        if verdict == "experience_reconstructable" and (validated_issues or gaps):
+            raise NovelForgeError(
+                "A passing blind review cannot contain knowledge_gaps or blocking_issues."
+            )
+
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise NovelForgeError(f"Book not found: {slug}")
+            chapter = ChapterRepository.get_by_book_and_number(
+                conn, book["id"], number
+            )
+            if chapter is None:
+                raise NovelForgeError(f"Chapter {number} not found in book {slug}.")
+            revision_id = chapter["current_revision_id"]
+            if revision_id is None:
+                raise NovelForgeError(
+                    f"Chapter {number} has no current revision; cannot attach blind review."
+                )
+            revision = RevisionRepository.get_by_id(conn, revision_id)
+            if revision is None:
+                raise NovelForgeError(f"Revision not found: {revision_id}")
+            revision_text = (self.root / revision["file_path"]).read_text(
+                encoding="utf-8"
+            )
+            for idx, image in enumerate(images):
+                if image["evidence"] not in revision_text:
+                    raise NovelForgeError(
+                        f"Memorable image at index {idx} evidence was not found "
+                        "in the current revision."
+                    )
+            for idx, issue in enumerate(validated_issues):
+                if issue["evidence"] not in revision_text:
+                    raise NovelForgeError(
+                        f"Blind blocking issue at index {idx} evidence was not found "
+                        "in the current revision."
+                    )
+            BlindExperienceRepository.supersede_active_for_chapter(
+                conn, chapter["id"]
+            )
+            review_id = BlindExperienceRepository.create(
+                conn,
+                chapter_id=chapter["id"],
+                revision_id=revision_id,
+                spatial_reconstruction=spatial_reconstruction.strip(),
+                body_position_and_contact=body_position_and_contact.strip(),
+                action_constraints=action_constraints.strip(),
+                emotional_trajectory=emotional_trajectory.strip(),
+                dialogue_dynamics=dialogue_dynamics.strip(),
+                memorable_images=json.dumps(images, ensure_ascii=False),
+                knowledge_gaps=json.dumps(gaps, ensure_ascii=False),
+                verdict=verdict,
+                blocking_issues=json.dumps(validated_issues, ensure_ascii=False),
+            )
+            AuditRepository.add(
+                conn,
+                book_id=book["id"],
+                entity_type="blind_experience_review",
+                entity_id=review_id,
+                action="submit",
+                details=json.dumps(
+                    {
+                        "chapter_id": chapter["id"],
+                        "revision_id": revision_id,
+                        "verdict": verdict,
+                        "memorable_image_count": len(images),
+                        "knowledge_gap_count": len(gaps),
+                        "blocking_issue_count": len(validated_issues),
+                        "source_scope": "prose_only",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            row = BlindExperienceRepository.get_by_id(conn, review_id)
+        return BlindExperienceReview.model_validate(dict(row))
+
+    def blind_experience_status(
+        self, slug: str, number: int
+    ) -> BlindExperienceSummary:
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise NovelForgeError(f"Book not found: {slug}")
+            chapter = ChapterRepository.get_by_book_and_number(
+                conn, book["id"], number
+            )
+            if chapter is None:
+                raise NovelForgeError(f"Chapter {number} not found in book {slug}.")
+            revision_id = chapter["current_revision_id"]
+            if revision_id is None:
+                return BlindExperienceSummary()
+            row = BlindExperienceRepository.get_active_by_revision(
+                conn, chapter["id"], revision_id
+            )
+            return self._blind_experience_summary_from_row(row)
+
+    @staticmethod
+    def _blind_experience_summary_from_row(
+        row: sqlite3.Row | None,
+    ) -> BlindExperienceSummary:
+        if row is None:
+            return BlindExperienceSummary()
+        images = json.loads(row["memorable_images"] or "[]")
+        gaps = json.loads(row["knowledge_gaps"] or "[]")
+        issues = json.loads(row["blocking_issues"] or "[]")
+        passes = (
+            row["source_scope"] == "prose_only"
+            and row["verdict"] == "experience_reconstructable"
+            and len(images) >= 3
+            and not gaps
+            and not issues
+        )
+        return BlindExperienceSummary(
+            exists=True,
+            review_id=row["id"],
+            revision_id=row["revision_id"],
+            verdict=row["verdict"],
+            passes=passes,
+            memorable_image_count=len(images),
+            knowledge_gap_count=len(gaps),
+            blocking_issue_count=len(issues),
+            created_at=row["created_at"],
+        )
+
+    # ------------------------------------------------------------------
     # Narrative Editorial Memo
     # ------------------------------------------------------------------
     def submit_editorial_memo(
@@ -2083,6 +2513,13 @@ class NovelForgeService:
                 "scene_necessity",
                 "ending_change",
             ]
+            required_scene_contract_v4 = [
+                "spatial_layout_and_routes",
+                "body_state_and_contacts",
+                "object_affordances",
+                "environmental_constraints",
+                "embodied_action_chain",
+            ]
             if sc_current is None:
                 blockers.append(
                     {
@@ -2122,9 +2559,23 @@ class NovelForgeService:
                                 ),
                             }
                         )
+                    if contract_version < 4:
+                        warnings.append(
+                            {
+                                "code": "scene_contract_upgrade_to_v4",
+                                "asset": "scene_contract",
+                                "field": None,
+                                "message": (
+                                    "Scene Contract is below v4. Consider upgrading to v4 "
+                                    "to include the embodied scene model."
+                                ),
+                            }
+                        )
                     checked_fields = list(required_scene_contract)
                     if contract_version >= 3:
                         checked_fields.extend(required_scene_contract_v3)
+                    if contract_version >= 4:
+                        checked_fields.extend(required_scene_contract_v4)
                     for key in checked_fields:
                         section = sc_sections.get(key)
                         if section is None:
@@ -2136,7 +2587,8 @@ class NovelForgeService:
                                     "message": f"Scene Contract section '{key}' is missing.",
                                 }
                             )
-                        elif key == "concrete_anchor":
+                            continue
+                        if key == "concrete_anchor":
                             anchor_count = count_concrete_anchors(section.content)
                             if anchor_count < 2:
                                 blockers.append(
@@ -2150,7 +2602,89 @@ class NovelForgeService:
                                         ),
                                     }
                                 )
-                        elif is_missing_content(section.content):
+                            continue
+                        if key in required_scene_contract_v4:
+                            if is_missing_content(section.content):
+                                blockers.append(
+                                    {
+                                        "code": f"scene_contract_empty_{key}",
+                                        "asset": "scene_contract",
+                                        "field": key,
+                                        "message": f"Scene Contract section '{key}' is empty or placeholder.",
+                                    }
+                                )
+                                continue
+                            if key == "spatial_layout_and_routes" and is_parameter_only_spatial_layout(
+                                section.content
+                            ):
+                                blockers.append(
+                                    {
+                                        "code": "scene_contract_spatial_layout_parameter_only",
+                                        "asset": "scene_contract",
+                                        "field": key,
+                                        "message": (
+                                            "Scene Contract 'spatial_layout_and_routes' "
+                                            "appears to list dimensions/parameters without "
+                                            "relative positions or passable routes."
+                                        ),
+                                    }
+                                )
+                            elif key == "object_affordances":
+                                affordance_count = count_valid_list_items(section.content)
+                                if affordance_count < 2:
+                                    blockers.append(
+                                        {
+                                            "code": "scene_contract_insufficient_object_affordances",
+                                            "asset": "scene_contract",
+                                            "field": key,
+                                            "message": (
+                                                f"Scene Contract 'object_affordances' needs "
+                                                f"at least 2 valid items (found {affordance_count})."
+                                            ),
+                                        }
+                                    )
+                                elif affordance_count > 5:
+                                    blockers.append(
+                                        {
+                                            "code": "scene_contract_too_many_object_affordances",
+                                            "asset": "scene_contract",
+                                            "field": key,
+                                            "message": (
+                                                f"Scene Contract 'object_affordances' allows at "
+                                                f"most 5 valid items (found {affordance_count})."
+                                            ),
+                                        }
+                                    )
+                            elif key == "environmental_constraints" and not has_causal_chain(
+                                section.content
+                            ):
+                                blockers.append(
+                                    {
+                                        "code": "scene_contract_environmental_constraint_no_causal_chain",
+                                        "asset": "scene_contract",
+                                        "field": key,
+                                        "message": (
+                                            "Scene Contract 'environmental_constraints' "
+                                            "needs at least one causal chain."
+                                        ),
+                                    }
+                                )
+                            elif key == "embodied_action_chain":
+                                chain_count = count_valid_list_items(section.content)
+                                if chain_count < 3:
+                                    blockers.append(
+                                        {
+                                            "code": "scene_contract_insufficient_embodied_action_chain",
+                                            "asset": "scene_contract",
+                                            "field": key,
+                                            "message": (
+                                                f"Scene Contract 'embodied_action_chain' needs "
+                                                f"at least 3 valid items (found {chain_count})."
+                                            ),
+                                        }
+                                    )
+                            continue
+                        if is_missing_content(section.content):
                             blockers.append(
                                 {
                                     "code": f"scene_contract_empty_{key}",
@@ -2260,6 +2794,12 @@ class NovelForgeService:
             # Approved canon facts scoped to this book.
             canon_rows = FactRepository.list_canon_by_book(conn, book["id"])
 
+            # Unfulfilled promises relevant to this chapter (RTCO P2 layer).
+            promise_rows = PromiseRepository.list_open_by_book(conn, book["id"])
+            promise_reminders = self._categorize_promise_reminders(
+                promise_rows, chapter["number"]
+            )
+
             # Predecessor context: only the immediately previous chapter,
             # only if approved and has a revision.
             predecessor_text: str | None = None
@@ -2290,6 +2830,7 @@ class NovelForgeService:
             scene_contract_text=scene_contract_text,
             scene_contract_hash=sc_current["current_hash"],
             canon_rows=canon_rows,
+            promise_reminders=promise_reminders,
             predecessor_text=predecessor_text,
             note=note,
             previous_context_chars=previous_context_chars,
@@ -2337,6 +2878,58 @@ class NovelForgeService:
             current_revision_id=chapter["current_revision_id"],
         )
 
+    def _categorize_promise_reminders(
+        self,
+        promise_rows: list[sqlite3.Row],
+        chapter_number: int,
+    ) -> list[dict[str, Any]]:
+        """Categorize open promises for the RTCO P2 layer.
+
+        This mirrors the logic in AutonomousWritingService.build_promise_reminders
+        so that the drafting packet can include continuity reminders without
+        depending on the experimental autonomous layer.
+        """
+        reminders: list[dict[str, Any]] = []
+        for row in promise_rows:
+            target = row["target_chapter_number"]
+            if target is None:
+                category = "unscoped"
+            elif target < chapter_number:
+                category = "overdue"
+            elif target == chapter_number:
+                category = "must_resolve"
+            else:
+                continue
+
+            if category == "must_resolve":
+                message = (
+                    f"Promise (ID {row['id']}) is scheduled for this chapter "
+                    f"and is still {row['status']}."
+                )
+            elif category == "overdue":
+                message = (
+                    f"Promise (ID {row['id']}) was scheduled for chapter {target} "
+                    f"but is still {row['status']}."
+                )
+            else:
+                message = (
+                    f"Promise (ID {row['id']}) has no target chapter and is still "
+                    f"{row['status']}."
+                )
+
+            reminders.append(
+                {
+                    "promise_id": row["id"],
+                    "promise_text": row["promise_text"],
+                    "status": row["status"],
+                    "category": category,
+                    "target_chapter_number": target,
+                    "target_scene_ref": row["target_scene_ref"],
+                    "message": message,
+                }
+            )
+        return reminders
+
     def _build_packet_markdown(
         self,
         book: sqlite3.Row,
@@ -2347,6 +2940,7 @@ class NovelForgeService:
         scene_contract_text: str,
         scene_contract_hash: str | None,
         canon_rows: list[sqlite3.Row],
+        promise_reminders: list[dict[str, Any]],
         predecessor_text: str | None,
         note: str | None,
         previous_context_chars: int,
@@ -2388,6 +2982,11 @@ class NovelForgeService:
         lines.append(f"  - scene_contract_hash: {scene_contract_hash or 'MISSING'}")
         lines.append("")
 
+        sc_sections = {
+            section.key: section
+            for section in parse_markdown_sections(scene_contract_text)
+        }
+
         lines.append("## Writer Operating Contract")
         lines.append(
             "- Write only this scene. Do not advance past the boundary set by the Scene Contract."
@@ -2397,6 +2996,9 @@ class NovelForgeService:
         )
         lines.append(
             "- Do not decide a character's emotions in authorial voice; let actions and perceptions carry the feeling."
+        )
+        lines.append(
+            "- 数字/术语必须落到身体接触、相对位置、可操作物与受阻动作中，不得用参数替代画面。"
         )
         lines.append(
             "- Do not paste this packet's instructions or metadata into the prose draft."
@@ -2409,21 +3011,101 @@ class NovelForgeService:
         )
         lines.append("")
 
-        lines.append("## Voice Bible")
+        # ------------------------------------------------------------------
+        # P0 — Core: must-follow constraints for this scene.
+        # ------------------------------------------------------------------
+        lines.append("## P0 — Core (must follow)")
+        lines.append("")
+
+        lines.append("### Scene Contract")
+        lines.append(scene_contract_text)
+        lines.append("")
+
+        lines.append("### Scene Embodiment Model")
+        lines.append(
+            "Summarized from the Scene Contract embodied fields. "
+            "Missing fields are marked 'not specified'. "
+            "Do not use external planning knowledge to infer them; "
+            "upgrade the Scene Contract before drafting. "
+            "In allow-incomplete exploration mode, the gap must remain visible "
+            "and be addressed in the next revision."
+        )
+        lines.append("")
+        embodied_fields = [
+            "spatial_layout_and_routes",
+            "body_state_and_contacts",
+            "object_affordances",
+            "environmental_constraints",
+            "embodied_action_chain",
+        ]
+        exploration_mode = allow_incomplete and not readiness.ready
+        for key in embodied_fields:
+            section = sc_sections.get(key)
+            if section and not is_missing_content(section.content):
+                lines.append(f"#### {section.title}")
+                lines.append(section.content)
+                lines.append("")
+            else:
+                if exploration_mode:
+                    lines.append(
+                        f"- **{key}**: not specified — exploration mode; "
+                        f"do not infer, fix before final draft."
+                    )
+                else:
+                    lines.append(
+                        f"- **{key}**: not specified — do not infer; "
+                        f"upgrade the Scene Contract with this field."
+                    )
+                lines.append("")
+
+        lines.append("### Chapter Goal")
+        lines.append("Extracted from the Scene Contract:")
+        lines.append("")
+        goal_found = False
+        for key in ("scene_question", "present_want"):
+            section = sc_sections.get(key)
+            if section and not is_missing_content(section.content):
+                lines.append(f"- **{key}**: {section.content.strip()}")
+                goal_found = True
+        if not goal_found:
+            lines.append(
+                "- No explicit `scene_question` / `present_want` found; follow the Scene Contract directly."
+            )
+        lines.append("")
+
+        if predecessor_text is not None:
+            lines.append(
+                f"### Predecessor Context (approved chapter {chapter['number'] - 1}, last {previous_context_chars} characters)"
+            )
+            lines.append(
+                "This is a continuity hand-off fragment. Do not copy it verbatim; use it to maintain voice and causal thread."
+            )
+            lines.append("```")
+            lines.append(predecessor_text)
+            lines.append("```")
+            lines.append("")
+
+        # ------------------------------------------------------------------
+        # P1 — Important context: book-level assets scoped as tightly as possible.
+        # ------------------------------------------------------------------
+        lines.append("## P1 — Important Context")
+        lines.append("")
+
+        lines.append("### Voice Bible")
         if voice_bible_text:
             lines.append(voice_bible_text)
         else:
             lines.append("**MISSING**: No Voice Bible has been written for this book.")
         lines.append("")
 
-        lines.append("## Scene Contract")
-        lines.append(scene_contract_text)
+        lines.append("### Approved Canon Facts")
+        lines.append(
+            "Book-wide approved facts (conservative fallback; chapter-level character/relationship filtering is not yet implemented)."
+        )
         lines.append("")
-
-        lines.append("## Approved Canon Facts")
         if canon_rows:
             for row in canon_rows:
-                lines.append(f"### {row['subject']} {row['predicate']}")
+                lines.append(f"#### {row['subject']} {row['predicate']}")
                 lines.append(f"- object: {row['object']}")
                 lines.append(f"- evidence: {row['evidence']}")
                 lines.append(f"- source_chapter_id: {row['chapter_id']}")
@@ -2433,16 +3115,36 @@ class NovelForgeService:
             lines.append("No approved canon facts for this book.")
             lines.append("")
 
-        if predecessor_text is not None:
-            lines.append(
-                f"## Predecessor Context (approved chapter {chapter['number'] - 1}, last {previous_context_chars} characters)"
-            )
-            lines.append(
-                "This is a continuity hand-off fragment. Do not copy it verbatim; use it to maintain voice and causal thread."
-            )
-            lines.append("```")
-            lines.append(predecessor_text)
-            lines.append("```")
+        # ------------------------------------------------------------------
+        # P2 — Reference: unfulfilled promises / foreshadows relevant to this chapter.
+        # ------------------------------------------------------------------
+        lines.append("## P2 — Reference: Unfulfilled Promises / Foreshadows")
+        lines.append(
+            "> These reminders are continuity signals only. They do not auto-approve anything and must be reviewed by a human/editor."
+        )
+        lines.append("")
+        if promise_reminders:
+            for category, title in (
+                ("must_resolve", "Must Resolve This Chapter"),
+                ("overdue", "Overdue From Earlier Chapters"),
+                ("unscoped", "Unscoped / No Target Chapter"),
+            ):
+                cat_reminders = [r for r in promise_reminders if r["category"] == category]
+                if not cat_reminders:
+                    continue
+                lines.append(f"#### {title}")
+                for r in cat_reminders:
+                    lines.append(
+                        f"- ID:{r['promise_id']} | `{r['status']}` | {r['promise_text']}"
+                    )
+                    target = r["target_chapter_number"]
+                    scene = r["target_scene_ref"] or "unspecified"
+                    if target is not None:
+                        lines.append(f"  - target: chapter {target}, scene {scene}")
+                    lines.append(f"  - {r['message']}")
+                lines.append("")
+        else:
+            lines.append("No unfulfilled promises flagged for this chapter.")
             lines.append("")
 
         lines.append("## Delivery Checklist")
@@ -2453,6 +3155,15 @@ class NovelForgeService:
         lines.append("- [ ] The `irreversible_turn` has happened and cannot be undone.")
         lines.append("- [ ] The `cost_or_tradeoff` is present or implied through action.")
         lines.append("- [ ] The `ending_pressure` is left intact for the next scene.")
+        lines.append(
+            "- [ ] 开场能定位身体与关键物体；身体的姿态、接触面与空间位置在读者脑中可定位。"
+        )
+        lines.append(
+            "- [ ] 至少一项环境约束真实改变动作；环境不仅是背景，而是让某个动作受阻、变慢、暴露或付出代价。"
+        )
+        lines.append(
+            "- [ ] 不可逆选择由连续身体动作触发，而非摘要宣布；让读者在身体动作链中意识到选择已发生。"
+        )
         lines.append(
             "- [ ] Checking these boxes does not guarantee quality; human/editor review remains the gate."
         )

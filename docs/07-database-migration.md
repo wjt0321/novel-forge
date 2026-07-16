@@ -9,6 +9,8 @@ Novel Forge 使用 SQLite `PRAGMA user_version` 跟踪 schema 版本：
 - `v3`：第三/四里程碑，新增 Editorial Memo
 - `v4`：第六里程碑初版，新增 Research Ledger、Story Engine、Chapter Plan、Promise Ledger、Iteration Runs
 - `v5`：第六里程碑修正，为 Research Ledger 增加 `verification_state` 与 `verification_ref`，支持 B/C 级 `plot_support` 的 A 级佐证
+- `v6`：第七里程碑初版，扩展 Promise Ledger 生命周期为 `planned → planted → partially_paid → paid_off`，新增 `target_chapter_number` / `target_scene_ref` 以支持逾期/本章提醒
+- `v7`：新增 prose-only Blind Experience Review 账本，使正文的空间、身体、行动限制、情绪和对白变化可以按 revision 独立验收
 
 `app/novel_forge/db.py` 中的 `init_db()` 在打开数据库时自动检测版本并应用迁移。
 
@@ -16,17 +18,17 @@ Novel Forge 使用 SQLite `PRAGMA user_version` 跟踪 schema 版本：
 
 第一里程碑的 `init_db()` 没有写入 `PRAGMA user_version`，因此真实旧库是 `user_version=0` 但已经包含 `books`/`chapters` 等表。系统通过以下规则区分：
 
-- `user_version=0` 且不存在 `books` 表：视为全新空库，直接创建 v5 schema，不生成备份。
+- `user_version=0` 且不存在 `books` 表：视为全新空库，直接创建 v7 schema，不生成备份。
 - `user_version=0` 但已存在 `books` 表：视为遗留未版本化 v1 库，先备份再迁移。
 - `user_version=1`：显式 v1 库，先备份再迁移。
-- `user_version > 5`：拒绝启动，提示升级 Novel Forge，不写入、不备份。
+- `user_version > 7`：拒绝启动，提示升级 Novel Forge，不写入、不备份。
 
 ## 自动备份
 
 当且仅当数据库需要升级时，`init_db()` 会在迁移前创建带时间戳的备份：
 
 ```text
-data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v5.db
+data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v7.db
 ```
 
 - 备份与主 DB 在同一目录。
@@ -65,6 +67,7 @@ data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v5.db
 - `chapter_plans`
 - `promise_ledger`
 - `iteration_runs`
+- `blind_experience_reviews`
 
 旧书不会自动获得 Voice Bible 模板；首次调用 `write-voice-bible` 时会创建 revision 1。
 
@@ -78,13 +81,27 @@ data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v5.db
 
 旧数据保持 `verification_state=collected`、`verification_ref=NULL`，不影响既有流程。
 
+### v5 → v6
+
+重命名 `promise_ledger` 表并重建，变更如下：
+
+1. 状态空间扩展为 `planned` / `planted` / `partially_paid` / `paid_off` / `abandoned`，默认 `planned`。
+2. `planted_scene_ref` 改为可空，以支持 `planned` 状态的承诺。
+3. 新增 `target_chapter_number`（整数，可空）与 `target_scene_ref`（文本，可空），用于生成逾期/本章连续性提醒。
+4. 旧状态映射：`advanced` → `partially_paid`，`resolved` → `paid_off`；`planted` / `abandoned` 保持不变。
+5. 迁移后的旧承诺无目标章节/场景，后续可手动补充或作为 `unscoped` 提醒处理。
+
+### v6 → v7
+
+新增 `blind_experience_reviews` 表及 `(chapter_id, revision_id)` 索引。该表只记录 prose-only 盲读报告、证据与 verdict，不修改任何正文、Scene Contract 或历史 revision。
+
 ## 验证迁移
 
 打开数据库检查版本：
 
 ```bash
 sqlite3 data/novel-forge.db "PRAGMA user_version;"
-# 应输出 5
+# 应输出 7
 ```
 
 检查 scene contract 是否已迁移：
@@ -97,7 +114,7 @@ sqlite3 data/novel-forge.db "SELECT chapter_id, revision_number, file_path FROM 
 检查备份：
 
 ```bash
-ls data/novel-forge.backup-*-migration-to-v5.db
+ls data/novel-forge.backup-*-migration-to-v7.db
 ```
 
 ## 恢复
@@ -105,7 +122,7 @@ ls data/novel-forge.backup-*-migration-to-v5.db
 如果迁移后出现问题，先停止所有 Novel Forge 进程，然后用备份替换当前 DB：
 
 ```bash
-cp data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v5.db data/novel-forge.db
+cp data/novel-forge.backup-YYYYMMDD-HHMMSS-migration-to-v7.db data/novel-forge.db
 ```
 
 恢复后的 DB 仍是旧版本，下次启动服务会再次触发迁移并生成新的备份。

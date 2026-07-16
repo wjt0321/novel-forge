@@ -10,7 +10,10 @@ from app.novel_forge.db import (
     UnsupportedSchemaVersionError,
     V1_SCHEMA,
     V3_SCHEMA,
+    V5_SCHEMA,
     _backup_db,
+    _migrate_v5_to_v6,
+    _migrate_v6_to_v7,
     get_db_path,
     init_db,
 )
@@ -82,7 +85,7 @@ def test_migration_from_v1_to_v5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
 
     # Backup was created.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 1
 
     # Original assets still exist.
@@ -143,7 +146,7 @@ def test_migration_is_idempotent(tmp_path: Path):
     sc = svc.get_scene_contract("test", 1)
     assert sc.current_revision_number == 1
 
-    first_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    first_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(first_backups) == 1
 
     # Re-running init_db on an up-to-date DB is a no-op and must not create
@@ -151,7 +154,7 @@ def test_migration_is_idempotent(tmp_path: Path):
     conn = init_db(tmp_path)
     conn.close()
 
-    second_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    second_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(second_backups) == 1
 
     sc = svc.get_scene_contract("test", 1)
@@ -164,19 +167,19 @@ def test_migration_is_idempotent(tmp_path: Path):
         ).fetchone()["cnt"]
         assert rev_count == 1
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 5
+        assert version == 7
 
 
 def test_fresh_database_has_no_backup_and_version_5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
     svc.init_book("fresh", "Fresh Book")
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 0
 
     with sqlite3.connect(str(get_db_path(tmp_path))) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 5
+        assert version == 7
 
 
 def test_legacy_unversioned_v1_database_migrates_to_v5(tmp_path: Path):
@@ -188,13 +191,13 @@ def test_legacy_unversioned_v1_database_migrates_to_v5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
 
     # Exactly one backup created for the migration.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 1
 
     # Schema upgraded to v5.
     with sqlite3.connect(str(get_db_path(tmp_path))) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 5
+        assert version == 7
 
     # Old data preserved and usable through v5 metadata.
     ch = svc.get_chapter("test", 1)
@@ -228,7 +231,7 @@ def test_unknown_user_version_is_rejected(tmp_path: Path):
     assert str(CURRENT_SCHEMA_VERSION) in str(exc_info.value)
 
     # No backup should be created and the DB must remain untouched.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 0
 
     with sqlite3.connect(str(db_path)) as conn:
@@ -251,7 +254,7 @@ def test_backup_name_never_overwrites_existing(tmp_path: Path):
     assert second.exists()
     assert "-001-" in second.name or "-002-" in second.name or second.name != first.name
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 2
 
 
@@ -313,7 +316,7 @@ def test_migration_from_v3_to_v5(tmp_path: Path):
 
     svc = NovelForgeService(tmp_path)
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v5.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
     assert len(backups) == 1
 
     ch = svc.get_chapter("v3book", 1)
@@ -348,3 +351,198 @@ def test_migration_from_v3_to_v5(tmp_path: Path):
         thematic_pressure="p",
     )
     assert engine.book_id == ch.book_id
+
+
+def _create_v5_database(root: Path) -> None:
+    """Create a v5 database with legacy promise statuses."""
+    db_path = get_db_path(root)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(V5_SCHEMA)
+    conn.execute("PRAGMA user_version = 5")
+
+    cur = conn.execute(
+        "INSERT INTO books (slug, title) VALUES (?, ?)", ("v5book", "V5 Book")
+    )
+    book_id = cur.lastrowid
+    promises = [
+        ("advanced promise", "advanced", "s1", "adv1", None),
+        ("resolved promise", "resolved", "s1", None, "res1"),
+        ("planted promise", "planted", "s1", None, None),
+        ("abandoned promise", "abandoned", "s1", None, None),
+    ]
+    for text, status, planted, advanced, resolved in promises:
+        conn.execute(
+            """INSERT INTO promise_ledger
+               (book_id, promise_text, status, planted_scene_ref,
+                advanced_scene_ref, resolved_scene_ref)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (book_id, text, status, planted, advanced, resolved),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_migration_from_v5_to_v6_maps_legacy_statuses(tmp_path: Path) -> None:
+    """Old advanced/resolved statuses map to partially_paid/paid_off."""
+    _create_v5_database(tmp_path)
+
+    svc = NovelForgeService(tmp_path)
+    from app.novel_forge.autonomous import AutonomousWritingService
+
+    auto = AutonomousWritingService(tmp_path)
+    promises = {p.promise_text: p for p in auto.list_promises("v5book")}
+
+    assert promises["advanced promise"].status == "partially_paid"
+    assert promises["advanced promise"].advanced_scene_ref == "adv1"
+    assert promises["resolved promise"].status == "paid_off"
+    assert promises["resolved promise"].resolved_scene_ref == "res1"
+    assert promises["planted promise"].status == "planted"
+    assert promises["abandoned promise"].status == "abandoned"
+
+    with sqlite3.connect(str(get_db_path(tmp_path))) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == CURRENT_SCHEMA_VERSION
+
+
+def test_migration_v5_to_v6_rolls_back_on_insert_failure(tmp_path: Path) -> None:
+    """If the data copy fails, the original v5 table remains intact."""
+
+    class _FailingConnection:
+        def __init__(self, conn: sqlite3.Connection):
+            self._conn = conn
+
+        @property
+        def isolation_level(self):
+            return self._conn.isolation_level
+
+        @isolation_level.setter
+        def isolation_level(self, value):
+            self._conn.isolation_level = value
+
+        def execute(self, sql, parameters=None):
+            if isinstance(sql, str) and "INSERT INTO promise_ledger" in sql:
+                raise sqlite3.OperationalError("simulated insert failure")
+            if parameters is None:
+                return self._conn.execute(sql)
+            return self._conn.execute(sql, parameters)
+
+        def commit(self):
+            return self._conn.commit()
+
+        def rollback(self):
+            return self._conn.rollback()
+
+        def close(self):
+            return self._conn.close()
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    _create_v5_database(tmp_path)
+    db_path = get_db_path(tmp_path)
+
+    raw_conn = sqlite3.connect(str(db_path))
+    raw_conn.row_factory = sqlite3.Row
+    conn = _FailingConnection(raw_conn)
+
+    with pytest.raises(sqlite3.OperationalError, match="simulated insert failure"):
+        _migrate_v5_to_v6(conn)
+
+    conn.close()
+
+    with sqlite3.connect(str(db_path)) as check:
+        check.row_factory = sqlite3.Row
+        tables = {
+            row["name"]
+            for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "promise_ledger" in tables
+        assert "_old_promise_ledger_v5" not in tables
+
+        row = check.execute(
+            "SELECT status FROM promise_ledger WHERE promise_text = ?",
+            ("advanced promise",),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "advanced"
+
+        version = check.execute("PRAGMA user_version").fetchone()[0]
+        assert version == 5
+
+
+def test_migration_v6_to_v7_failure_restores_v5_backup(tmp_path: Path) -> None:
+    """If v5->v6 succeeds but v6->v7 fails, the on-disk DB is restored to v5."""
+    _create_v5_database(tmp_path)
+    db_path = get_db_path(tmp_path)
+
+    original_migrate_v6_to_v7 = _migrate_v6_to_v7
+
+    def _partial_v6_to_v7(conn: sqlite3.Connection) -> None:
+        # Create the v7 table but fail before the index, leaving partial v7
+        # schema in the database. This simulates a mid-migration crash.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS blind_experience_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chapter_id INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+                revision_id INTEGER NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+                reviewer_role TEXT NOT NULL DEFAULT 'blind_reader',
+                source_scope TEXT NOT NULL DEFAULT 'prose_only',
+                spatial_reconstruction TEXT NOT NULL,
+                body_position_and_contact TEXT NOT NULL,
+                action_constraints TEXT NOT NULL,
+                emotional_trajectory TEXT NOT NULL,
+                dialogue_dynamics TEXT NOT NULL,
+                memorable_images TEXT NOT NULL DEFAULT '[]',
+                knowledge_gaps TEXT NOT NULL DEFAULT '[]',
+                verdict TEXT NOT NULL,
+                blocking_issues TEXT NOT NULL DEFAULT '[]',
+                superseded_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"""
+        )
+        raise sqlite3.OperationalError("simulated v6->v7 failure")
+
+    # Pre-migration snapshot for comparison.
+    pre_migration_bytes = db_path.read_bytes()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "app.novel_forge.db._migrate_v6_to_v7", _partial_v6_to_v7
+        )
+        with pytest.raises(sqlite3.OperationalError, match="simulated v6->v7 failure"):
+            init_db(tmp_path)
+
+    # The backup file must still exist.
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    assert len(backups) == 1
+
+    # The on-disk database must be restored to the pre-migration v5 state.
+    with sqlite3.connect(str(db_path)) as check:
+        check.row_factory = sqlite3.Row
+        version = check.execute("PRAGMA user_version").fetchone()[0]
+        assert version == 5
+
+        tables = {
+            row["name"]
+            for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "promise_ledger" in tables
+        assert "blind_experience_reviews" not in tables
+        assert "_old_promise_ledger_v5" not in tables
+
+        row = check.execute(
+            "SELECT status FROM promise_ledger WHERE promise_text = ?",
+            ("advanced promise",),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "advanced"
+
+    # The restored DB file matches the pre-migration snapshot.
+    assert db_path.read_bytes() == pre_migration_bytes

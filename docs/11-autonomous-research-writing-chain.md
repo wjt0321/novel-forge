@@ -59,8 +59,11 @@ B/C 级 `plot_support` 若无 `verification_ref` 指向 verified A 级 `plot_sup
 
 `promise_ledger` 追踪叙事承诺生命周期：
 
-- `planted` → `advanced` / `resolved` / `abandoned`
-- 每个承诺必须带 `promise_text` 与 `planted_scene_ref`
+- 状态机：`planned` → `planted` → `partially_paid` → `paid_off`，任意非终态均可转至 `abandoned`。
+- 终态 `paid_off` 与 `abandoned` 不可再转移。
+- 每条承诺包含 `promise_text`，以及可选的 `target_chapter_number` / `target_scene_ref` 用于逾期/本章提醒。
+- `set-chapter-plan` 中 `scene.promises` 只表示“在本场景植入该承诺”，因此只写入 `planted_scene_ref`，`target_*` 保持为空；明确的回收目标需后续通过 `update-promise` 或受支持 API 设置。
+- 状态变更通过 `update-promise` 触发，写入 `audit_events` 记录前后状态，历史可追溯。
 
 ### Iteration Runs（章级）
 
@@ -83,7 +86,7 @@ B/C 级 `plot_support` 若无 `verification_ref` 指向 verified A 级 `plot_sup
 2. 当前 revision 存在
 3. 当前 revision 正文 >= 5000 个 CJK Han
 4. 无未解决的 `plot_support` 研究
-5. 所有 promise 已 `resolved` 或 `abandoned`
+5. 所有 promise 已 `paid_off` 或 `abandoned`
 6. 当前 revision 有 active editorial memo，verdict 为 `ready_for_editor_decision`，且无 blocking issues
 7. 当前 revision 无 blocking lint、无未关闭 S1/S2 review finding / reader review
 8. 迭代轮次 < `max_rounds`
@@ -117,7 +120,8 @@ PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:\my-novel <operati
 - `update-research-entry <slug> <entry_id> [--verification-state ...] [--verification-ref ID]`
 - `set-story-engine <slug> --secret ... --desire ... --alternative-actions a1 a2 ... --irreversible-choice ... --immediate-cost ... --thematic-pressure ...`
 - `set-chapter-plan <slug> <number> --plan-file ABS.json [--status draft|approved_for_writing]`
-- `update-promise <slug> <promise_id> --status advanced|resolved|abandoned --scene-ref ... [--note ...]`
+- `update-promise <slug> <promise_id> --status planted|partially_paid|paid_off|abandoned --scene-ref ... [--note ...]`
+- `set-promise-target <slug> <promise_id> --target-chapter-number N [--target-scene-ref REF]` / `--clear`
 - `record-iteration <slug> <number> --writer-role ... --editor-verdict ... --blocking-issues-file ABS.json --revision-targets t1 t2 ... --word-count N [--status running|completed|failed]`
 - `git-checkpoint <slug> --message "..."`
 

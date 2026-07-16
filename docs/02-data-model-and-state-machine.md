@@ -33,6 +33,13 @@
 - `canon_facts`：已批准、不可静默冲突的事实
 - 唯一索引 `(subject, predicate)` 防止冲突
 
+### Promise Ledger
+
+- `promise_ledger` 按书记录叙事承诺/伏笔生命周期
+- 状态：`planned` → `planted` → `partially_paid` → `paid_off`；任意非终态可转至 `abandoned`
+- 可选 `target_chapter_number` / `target_scene_ref` 支持逾期与本章提醒
+- 每次状态变更写入 `audit_events`，保留前后状态
+
 ### Audit
 
 - 所有状态变更、审批、导出均写入 `audit_events`

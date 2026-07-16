@@ -222,6 +222,42 @@ class FindingRepository:
         )
 
     @staticmethod
+    def resolve_open_by_chapter_and_location(
+        conn: sqlite3.Connection,
+        chapter_id: int | None,
+        location: str,
+        perspective: str,
+        note: str,
+        book_id: int | None = None,
+    ) -> int:
+        """Resolve all open findings for a chapter/location/perspective.
+
+        Cross-chapter resolution requires book_id so findings from another
+        book cannot be closed by a matching synthetic location. Returns the
+        number of rows updated.
+        """
+        if chapter_id is None:
+            if book_id is None:
+                raise ValueError("book_id is required when chapter_id is None")
+            cur = conn.execute(
+                """UPDATE review_findings
+                   SET resolved = 1, resolution_note = ?, resolved_at = datetime('now')
+                   WHERE chapter_id IN (
+                           SELECT id FROM chapters WHERE book_id = ?
+                       )
+                     AND location = ? AND perspective = ? AND resolved = 0""",
+                (note, book_id, location, perspective),
+            )
+        else:
+            cur = conn.execute(
+                """UPDATE review_findings
+                   SET resolved = 1, resolution_note = ?, resolved_at = datetime('now')
+                   WHERE chapter_id = ? AND location = ? AND perspective = ? AND resolved = 0""",
+                (note, chapter_id, location, perspective),
+            )
+        return cur.rowcount
+
+    @staticmethod
     def open_review_counts_for_revision(
         conn: sqlite3.Connection, revision_id: int | None
     ) -> dict[str, int]:
@@ -768,6 +804,74 @@ class EditorialMemoRepository:
         return cur.fetchall()
 
 
+class BlindExperienceRepository:
+    @staticmethod
+    def create(
+        conn: sqlite3.Connection,
+        chapter_id: int,
+        revision_id: int,
+        spatial_reconstruction: str,
+        body_position_and_contact: str,
+        action_constraints: str,
+        emotional_trajectory: str,
+        dialogue_dynamics: str,
+        memorable_images: str,
+        knowledge_gaps: str,
+        verdict: str,
+        blocking_issues: str,
+    ) -> int:
+        cur = conn.execute(
+            """INSERT INTO blind_experience_reviews
+               (chapter_id, revision_id, spatial_reconstruction,
+                body_position_and_contact, action_constraints,
+                emotional_trajectory, dialogue_dynamics, memorable_images,
+                knowledge_gaps, verdict, blocking_issues)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                chapter_id,
+                revision_id,
+                spatial_reconstruction,
+                body_position_and_contact,
+                action_constraints,
+                emotional_trajectory,
+                dialogue_dynamics,
+                memorable_images,
+                knowledge_gaps,
+                verdict,
+                blocking_issues,
+            ),
+        )
+        return cur.lastrowid
+
+    @staticmethod
+    def get_by_id(conn: sqlite3.Connection, review_id: int) -> sqlite3.Row | None:
+        return conn.execute(
+            "SELECT * FROM blind_experience_reviews WHERE id = ?", (review_id,)
+        ).fetchone()
+
+    @staticmethod
+    def get_active_by_revision(
+        conn: sqlite3.Connection, chapter_id: int, revision_id: int
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            """SELECT * FROM blind_experience_reviews
+               WHERE chapter_id = ? AND revision_id = ? AND superseded_at IS NULL
+               ORDER BY id DESC LIMIT 1""",
+            (chapter_id, revision_id),
+        ).fetchone()
+
+    @staticmethod
+    def supersede_active_for_chapter(
+        conn: sqlite3.Connection, chapter_id: int
+    ) -> None:
+        conn.execute(
+            """UPDATE blind_experience_reviews
+               SET superseded_at = datetime('now')
+               WHERE chapter_id = ? AND superseded_at IS NULL""",
+            (chapter_id,),
+        )
+
+
 class ResearchRepository:
     @staticmethod
     def create(
@@ -946,13 +1050,24 @@ class PromiseRepository:
         conn: sqlite3.Connection,
         book_id: int,
         promise_text: str,
-        planted_scene_ref: str,
+        status: str,
+        planted_scene_ref: str | None = None,
+        target_chapter_number: int | None = None,
+        target_scene_ref: str | None = None,
     ) -> int:
         cur = conn.execute(
             """INSERT INTO promise_ledger
-               (book_id, promise_text, status, planted_scene_ref)
-               VALUES (?, ?, 'planted', ?)""",
-            (book_id, promise_text, planted_scene_ref),
+               (book_id, promise_text, status, planted_scene_ref,
+                target_chapter_number, target_scene_ref)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                book_id,
+                promise_text,
+                status,
+                planted_scene_ref,
+                target_chapter_number,
+                target_scene_ref,
+            ),
         )
         return cur.lastrowid
 
@@ -976,6 +1091,20 @@ class PromiseRepository:
         return cur.fetchall()
 
     @staticmethod
+    def list_open_by_book(
+        conn: sqlite3.Connection, book_id: int
+    ) -> list[sqlite3.Row]:
+        """Return promises that are not yet paid off or abandoned."""
+        cur = conn.execute(
+            """SELECT * FROM promise_ledger
+               WHERE book_id = ?
+                 AND status NOT IN ('paid_off', 'abandoned')
+               ORDER BY id""",
+            (book_id,),
+        )
+        return cur.fetchall()
+
+    @staticmethod
     def update_status(
         conn: sqlite3.Connection,
         promise_id: int,
@@ -984,8 +1113,9 @@ class PromiseRepository:
         resolution_note: str | None = None,
     ) -> None:
         col = {
-            "advanced": "advanced_scene_ref",
-            "resolved": "resolved_scene_ref",
+            "planted": "planted_scene_ref",
+            "partially_paid": "advanced_scene_ref",
+            "paid_off": "resolved_scene_ref",
             "abandoned": "abandoned_scene_ref",
         }.get(status)
         if col is None:
@@ -996,6 +1126,21 @@ class PromiseRepository:
                     updated_at = datetime('now')
                 WHERE id = ?""",
             (status, scene_ref, resolution_note, promise_id),
+        )
+
+    @staticmethod
+    def update_target(
+        conn: sqlite3.Connection,
+        promise_id: int,
+        target_chapter_number: int | None,
+        target_scene_ref: str | None,
+    ) -> None:
+        conn.execute(
+            """UPDATE promise_ledger
+               SET target_chapter_number = ?, target_scene_ref = ?,
+                   updated_at = datetime('now')
+               WHERE id = ?""",
+            (target_chapter_number, target_scene_ref, promise_id),
         )
 
 
