@@ -9,6 +9,7 @@ data/
 library/
 experiments/
 work/
+books/
 
 # Local tooling metadata and read-only third-party reference trees
 .reasonix/

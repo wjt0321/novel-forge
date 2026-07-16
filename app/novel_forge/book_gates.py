@@ -100,7 +100,9 @@ def _material_filled(text: str) -> bool:
     if re.search(r"_{3,}", body):
         return False
     # Wholly empty table cells ("|  |  |") mean the table was never filled.
-    if re.search(r"\|\s*\|", body):
+    # Checked per line: `\s` would also match the newline between two adjacent
+    # table rows and false-flag every proper Markdown table.
+    if any(re.search(r"\|[ \t]*\|", line) for line in body.splitlines()):
         return False
     stripped = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
     stripped = re.sub(r"^#.*$", "", stripped, flags=re.MULTILINE)

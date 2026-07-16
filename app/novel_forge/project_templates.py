@@ -168,7 +168,8 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `context-collector`: 写前收集最小上下文，输出到 `memory/context-cache/`。
 - `orchestrator`: 维护章节状态、门禁证据与回退决策，不写正文。
 - `causal-editor`: 审场景因果、信息账本、术语预算与人物行动后果。
-- `line-editor`: 审对白归属、重复、节奏方差与解释性行文。
+- `line-editor`: 审对白归属、对白行动性、重复簇、解释性旁白。
+- `texture-editor`: 审句子工艺——分句堆叠、排比、比喻密度、解释腔、句长方差、套话。
 - `consistency-guard`: 写后检查实体、时间线、未回收承诺，输出报告。
 - `blind-reader`: 只读正文，重建空间/身体/行动/情绪轨迹/对话动态与可记忆画面。
 - `chapter-editor`: 宏观五维审稿（轻量 Editorial Memo），输出 verdict。
@@ -202,7 +203,7 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 2. 填写 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
 3. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，润色不得偷渡关键事件、设定或动机。
 4. 运行 `quality_check.py` 和 `narrative_gate.py`。
-5. 依次交 `causal-editor`、`line-editor`、`consistency-guard`、`blind-reader`、`chapter-editor` 审阅，结论落盘到 `reviews/`；由 `orchestrator` 记录门禁及回退。
+5. 依次交 `causal-editor`、`line-editor`、`texture-editor`、`consistency-guard`、`blind-reader`、`chapter-editor` 审阅，结论落盘到 `reviews/`；由 `orchestrator` 记录门禁及回退。
 6. 修订：结构问题回到场景包/动作稿，纯行文问题才用局部 patch。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
@@ -345,6 +346,7 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 
 ## exemplar_notes
 > 第 2 章起必填（narrative_gate 会检查本节）：从本书已写章节中选一段最能代表目标声音的正文贴在此处，注明选自哪章、为什么它是标杆。起草前用它校准方向——校准感觉，不抄句子。
+> 贴完范文段落后，把它的**声音指纹**一并贴上（在仓库根运行 `PYTHONPATH=. python -m app.novel_forge.voice_signature <章节文件>`）。指纹把"像不像本书"变成可测量的距离：起草时对齐它，texture-editor 用它做漂移检查。
 
 ________________
 """
@@ -454,6 +456,9 @@ def _agent_consistency_guard_md() -> str:
 - 承诺状态：兑现 / 保持未回收 / 延后 / **偏离：X**
 - verdict: pass / needs_revision
 
+## 复审协议
+复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的不一致，而不是仅核对原 finding 是否被删除。
+
 ## 边界
 - 不生成新正文。
 - 不修改 `chapters/` 与 `memory/`。
@@ -493,6 +498,9 @@ def _agent_chapter_editor_md() -> str:
 - 纯抽象赞扬（“写得好”“画面感强”而无原文证据）判为无效审稿，必须重写。
 - verdict: `ready_for_editor_decision` / `needs_revision`
 
+## 复审协议
+复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的宏观问题，而不是仅核对原 finding 是否被删除。
+
 ## 边界
 - 不生成新正文。
 - 不判断文学价值或市场潜力。
@@ -519,6 +527,9 @@ def _agent_blind_reader_md() -> str:
 - 六项重建结果逐项给出；任何一项重建失败即 MUST，注明卡在哪个位置、正文缺什么信息。
 - 每条结论必须有原文证据；禁止抽象赞扬。
 - verdict: pass / needs_revision
+
+## 复审协议
+复审时必须重读修订后的**完整正文**（依然只读正文，不读规划材料）与对应 patch 记录，确认修改没有产生新的画面缺口，而不是仅核对原 finding 是否被删除。
 
 ## 边界
 - 不重写正文。
@@ -691,6 +702,36 @@ def _planning_dialogue_ledger_template_md() -> str:
 """
 
 
+def _agent_texture_editor_md() -> str:
+    return """# Texture Editor
+
+## 角色
+文字肌理编辑。只管句子与分句的工艺，不管结构、因果与设定。在 line-editor 通过后执行；只审读，不重写正文。
+
+## 审稿维度（仅此六项，逐项给证据）
+1. **分句堆叠**：逗号串起的均匀微短分句（如"弯腰，笑，说了好一阵"式的动作碎片连排）。人写动作长短参差，AI 的堆叠均匀得像在打点。
+2. **排比铺陈**：结构相似的短语/短句三连以上（名词排比、判断排比、动作排比）。
+3. **比喻**：每章 ≤3 个且必须承担功能；删装饰性比喻。
+4. **解释腔**：叙述者替读者总结情绪/规矩/主题（含动作中段背规矩条文）。
+5. **句长方差**：句内与段内句长是否有呼吸；均匀短句与均匀长句都报警。
+6. **套话与悬浮词**：冷光闪烁、空气凝固、时光荏苒类；没有落到具体物象的抽象词。
+
+## 声音指纹漂移（有 exemplar 时必做）
+若 `memory/voice-bible.md` 的 exemplar_notes 已贴范文段落，运行
+`PYTHONPATH=. python -m app.novel_forge.voice_signature <本章正文> --vs <范文文件>`
+（范文无独立文件时，把范文段落临时存成文件再跑）。任何一项 metric 漂移超出容差即 MAY；句长方差、对白占比、分句复杂度三项同时漂移即 MUST。
+
+## 输出
+写入 `reviews/chXX-texture-editor.md`：最多 8 条 MUST/MAY，每条含位置、原文证据、读者效果、修订意图；附 verdict: pass / needs_revision。MUST 用于：排比/堆叠造成的机械节奏、解释替代呈现、硬禁令违例。
+
+## 复审协议
+复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的肌理问题，而不是仅核对原 finding 是否被删除。
+
+## 边界
+不评价结构、因果、人物动机与设定；不生成新正文。
+"""
+
+
 def _agent_causal_editor_md() -> str:
     return """# Causal Editor
 
@@ -714,6 +755,9 @@ def _agent_causal_editor_md() -> str:
 ## 输出
 写入 `reviews/chXX-causal-editor.md`：最多 6 条 MUST/MAY，含位置、证据、断裂的因果/信息责任、应回退层级（场景包/动作稿/对白账本/正文）、修订意图；附 verdict: pass / needs_revision。
 
+## 复审协议
+复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的因果断裂，而不是仅核对原 finding 是否被删除。
+
 ## 边界
 不生成新正文；不把文采偏好当作因果问题。
 """
@@ -723,17 +767,20 @@ def _agent_line_editor_md() -> str:
     return """# Line Editor
 
 ## 角色
-行文编辑。在 causal-editor 通过后执行；只审读，不重写正文。
+行文编辑，管对白与信息流。在 causal-editor 通过后执行；句子工艺（分句、比喻、句长）归 texture-editor，不在本角色重复审。只审读，不重写正文。
 
 ## 审稿维度
 1. 对白归属：称呼、动作、位置、物件或明确反应是否足够。
 2. 对白行动性：是否只为解释设定、复述信息或整齐排比而存在。
 3. 重复簇：相邻段是否近义重复且未改变局势。
-4. 解释性旁白：叙述者是否替读者总结情绪、主题或认知。
-5. 节奏：呼吸段是否具备人物功能；句长是否有方差——全短或全长的均匀段都是机械节奏。
+4. 解释性旁白：叙述者是否替读者总结情绪、主题或认知（句子级的解释腔由 texture-editor 复核）。
+5. 呼吸段：是否具备标注的人物功能。
 
 ## 输出
 写入 `reviews/chXX-line-editor.md`：最多 6 条 MUST/MAY，含位置、原文证据、读者效果、修订意图；附 verdict: pass / needs_revision。MUST 仅用于归属不明、重复造成信息停滞或解释取代关键行动。
+
+## 复审协议
+复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的行文问题，而不是仅核对原 finding 是否被删除。
 
 ## 边界
 不擅自统一文风，不以禁词命中替代上下文判断，不生成新正文。
@@ -757,6 +804,7 @@ def _agent_orchestrator_md() -> str:
 - 表面质检失败 → `drafted`，修正文。
 - 叙事门禁或 causal-editor MUST → `scene_packaged` 或 `action_drafted`。
 - line-editor MUST → `drafted`。
+- texture-editor MUST → `drafted`。
 - consistency-guard MUST → 由问题定位；不得静默篡改既成事实。
 - blind-reader 重建失败 → `drafted`（渲染不足）或 `scene_packaged`（场景本身缺物）。
 - chapter-editor verdict=needs_revision → 按维度回退：因果类 → `scene_packaged`/`action_drafted`；行文类 → `drafted`。
@@ -794,6 +842,7 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     ".claude/agents/blind-reader.md": (_agent_blind_reader_md, ()),
     ".claude/agents/causal-editor.md": (_agent_causal_editor_md, ()),
     ".claude/agents/line-editor.md": (_agent_line_editor_md, ()),
+    ".claude/agents/texture-editor.md": (_agent_texture_editor_md, ()),
     ".claude/agents/orchestrator.md": (_agent_orchestrator_md, ()),
 }
 
@@ -823,6 +872,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     ".claude/agents/blind-reader.md",
     ".claude/agents/causal-editor.md",
     ".claude/agents/line-editor.md",
+    ".claude/agents/texture-editor.md",
     ".claude/agents/orchestrator.md",
     "planning/scene-package-template.md",
     "planning/action-draft-template.md",

@@ -32,7 +32,7 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 1. 填写 `memory/voice-bible.md`、`planning/story-engine.md` 与场景包（目标/阻力/不可逆选择/beat 因果链/信息账本/术语预算/锚定物象）；
 2. 写动作稿与对白账本，再起草 `chapters/eXX/ch-XX/正文.md`；
 3. 跑 `tools/quality_check.py` 与 `tools/narrative_gate.py`（两者是仓库规则的薄壳）；
-4. 五个独立审稿角色依次审读，结论落盘 `reviews/`；盲读者只凭正文重建画面，宏观编辑按五维输出 verdict；
+4. 六个独立审稿角色依次审读（因果、行文、文字肌理、一致性、盲读者、宏观编辑），结论落盘 `reviews/`；盲读者只凭正文重建画面，宏观编辑按五维输出 verdict；
 5. 状态机推进到 `ready`（强制要求盲审通过 + 宏观编辑放行）；修订回退到对应材料层，不用措辞掩盖结构问题。
 
 ## 两种工作流
@@ -73,7 +73,7 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
 tests/               # 320 个 pytest 用例
 docs/                # 15 份里程碑文档
 docs/examples/       # 人味解剖 + AI 味反模式（起草与审稿前必读）
-books/               # 小说项目（一书一目录，项目级隔离；当前为空库）
+books/               # 小说项目（一书一目录，项目级隔离；gitignored，仅存本地不上传）
 library/             # legacy 审计资产（gitignore）
 data/                # SQLite 账本（gitignore，可重建）
 research/            # 前期调研
@@ -86,6 +86,7 @@ research/            # 前期调研
 - 质量门控：`docs/03`、`docs/05`、`docs/06`、`docs/12`、`docs/14`
 - books/ 工作流与 Skill 化：`docs/13`、`docs/15`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
+- 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 
 ## 边界
 

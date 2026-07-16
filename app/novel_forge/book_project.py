@@ -296,7 +296,10 @@ def record_review(
 
     target = book_dir / "reviews" / _review_filename(ch_id, role)
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(review_file, target)
+    # The review may already sit at its canonical location (reviewers write
+    # directly into reviews/); only copy when source and target differ.
+    if review_file.resolve() != target.resolve():
+        shutil.copyfile(review_file, target)
 
     state = REVIEW_STATE_FOR_ROLE[role]
     when = _now()
@@ -347,14 +350,14 @@ def advance_state(
     when = _now()
 
     if to_state == "ready":
+        from .planning_spec import READY_REQUIRED_REVIEWS
+
         reviews = {r["role"]: r for r in list_reviews(book_dir, ch_id)}
-        missing: list[str] = []
-        blind = reviews.get("blind-reader")
-        if not blind or blind["verdict"] not in PASSING_VERDICTS:
-            missing.append("blind-reader verdict=pass")
-        editor = reviews.get("chapter-editor")
-        if not editor or editor["verdict"] != "ready_for_editor_decision":
-            missing.append("chapter-editor verdict=ready_for_editor_decision")
+        missing = [
+            f"{role} verdict={required_verdict}"
+            for role, required_verdict in READY_REQUIRED_REVIEWS
+            if reviews.get(role, {}).get("verdict") != required_verdict
+        ]
         if missing:
             raise BookProjectError(
                 "进入 ready 的前置证据缺失：" + "；".join(missing)

@@ -129,6 +129,11 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
     with pytest.raises(BookProjectError):
         book_project.advance_state(tmp_path, "demo", 1, "ready")
     book_project.record_review(
+        tmp_path, "demo", 1, "texture-editor", _review_file(tmp_path, "texture-editor", "pass")
+    )
+    with pytest.raises(BookProjectError):
+        book_project.advance_state(tmp_path, "demo", 1, "ready")
+    book_project.record_review(
         tmp_path,
         "demo",
         1,
@@ -267,3 +272,15 @@ def test_adapter_sync_tools_requires_confirm_when_writing(tmp_path: Path, capsys
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
+
+
+def test_record_review_accepts_file_already_in_place(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    target = book_dir / "reviews/ch01-blind-reader.md"
+    target.write_text(
+        "# Review\n\n- chapter: ch01\n- role: blind-reader\n- verdict: pass\n- date: 2026-07-17\n",
+        encoding="utf-8",
+    )
+    result = book_project.record_review(tmp_path, "demo", 1, "blind-reader", target)
+    assert result["verdict"] == "pass"
+    assert target.exists()

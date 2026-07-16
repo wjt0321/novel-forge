@@ -44,6 +44,7 @@ CHAPTER_STATES: tuple[str, ...] = (
     "surface_checked",
     "causal_reviewed",
     "line_reviewed",
+    "texture_reviewed",
     "consistency_checked",
     "blind_read",
     "editorial_reviewed",
@@ -56,6 +57,7 @@ STATE_BLOCKED = "blocked"
 REVIEW_ROLES: tuple[str, ...] = (
     "causal-editor",
     "line-editor",
+    "texture-editor",
     "consistency-guard",
     "blind-reader",
     "chapter-editor",
@@ -65,10 +67,18 @@ REVIEW_ROLES: tuple[str, ...] = (
 REVIEW_STATE_FOR_ROLE: dict[str, str] = {
     "causal-editor": "causal_reviewed",
     "line-editor": "line_reviewed",
+    "texture-editor": "texture_reviewed",
     "consistency-guard": "consistency_checked",
     "blind-reader": "blind_read",
     "chapter-editor": "editorial_reviewed",
 }
+
+# Roles whose passing verdict is required before a chapter may enter `ready`.
+READY_REQUIRED_REVIEWS: tuple[tuple[str, str], ...] = (
+    ("texture-editor", "pass"),
+    ("blind-reader", "pass"),
+    ("chapter-editor", "ready_for_editor_decision"),
+)
 
 # chapter-editor issues an editorial verdict; the other roles pass/fail.
 EDITORIAL_VERDICTS: tuple[str, ...] = ("ready_for_editor_decision", "needs_revision")

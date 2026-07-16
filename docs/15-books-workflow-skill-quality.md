@@ -38,11 +38,13 @@ v3（docs/13）落地后，三本试验品暴露出六个系统性缺口：
 
 状态链扩展为：
 
-`planned → context_collected → scene_packaged → action_drafted → dialogue_planned → drafted → surface_checked → causal_reviewed → line_reviewed → consistency_checked → blind_read → editorial_reviewed → ready`
+`planned → context_collected → scene_packaged → action_drafted → dialogue_planned → drafted → surface_checked → causal_reviewed → line_reviewed → texture_reviewed → consistency_checked → blind_read → editorial_reviewed → ready`
 
 - 新角色 `blind-reader`：只读正文，严禁读规划材料；重建空间/身体/行动约束/情绪轨迹/对话动态 + ≥3 个带原文引用的可记忆画面；失败即 MUST。
+- 新角色 `texture-editor`（v3.1.1 增补）：文字肌理专审，只管句子与分句工艺——分句堆叠、排比、比喻密度、解释腔、句长方差、套话。设立原因：句号级机器规则测不到逗号级 AI 味，而这类问题又会在多维度审稿角色的注意力预算里漏网（实测教训，见 docs/15 后记）。`ready` 强制要求其 verdict=pass。
 - `chapter-editor` 升级为轻量 Editorial Memo：五维（叙事必要性/人物能动性/细节选择/因果链/prose 观察），每条必须附可定位原文证据，纯抽象赞扬判无效；输出 `ready_for_editor_decision / needs_revision`。
 - 审稿必须落盘到 `reviews/chXX-<role>.md`（模板 `reviews/review-template.md`）；chapter-state 证据表只存指针与 verdict。
+- 复审协议：任何角色复审时必须重读修订后的完整正文与 patch 记录，不得仅核对原 finding 是否被删除——"删过了"不等于"剩下的没问题"（修订残留实测教训）。
 - narrative_gate 新增书级材料门：`worldbuilding.md` 与 `research-boundaries.md` 必须填写或显式标注"无需"；voice-bible 缺失对 ch01 为 advisory、ch02 起为 blocking；exemplar_notes 自 ch02 起必填。
 - 进入 `ready` 强制校验：blind-reader verdict=pass 且 chapter-editor verdict=ready_for_editor_decision。
 
@@ -76,3 +78,21 @@ v3（docs/13）落地后，三本试验品暴露出六个系统性缺口：
 - 基于实测校准新增 lint `simile-density`（Kimi 1.6/千字 vs DeepSeek 3.5/千字，阈值 3.0）；实测否决了"感知动词密度"规则（两阵营无差异，不立项）。
 - 场景包模板新增 3b「锚定物象」字段（3-5 个可操作、可磨损、有价格或来历的实物）。
 - `books/` 目录现为空库，新书全部由 `init-novel-project` 生成。
+
+## 后记 2：texture-editor 增补（2026-07-17，v3.1.1）
+
+《拾骨人》ch01 全流程试写暴露：人工读者在 ready 章节中抓到两处逗号级 AI 味（"弯腰，笑，说了好一阵"式打点堆叠、"行里的规矩，拾骨不见天"式动作中段背条文），全部句号级机器规则与五个多维度审稿角色均未拦截。根因有二：
+
+1. **机器规则的盲区在分句级**：句长方差、机械三连等检测都以句号切分；"他输密码，六个数字，按得很慢"与"弯腰，笑，说了好一阵"表面指标几乎一致，正则无法可靠区分——这类判断需要语义理解，只能交给审稿角色。
+2. **多维度角色的注意力预算**：每个角色背 5-6 个维度，结构性大鱼吃光预算，肌理小鱼漏网。
+
+处置：新增专职 `texture-editor`（六维度聚焦句子工艺），钉入 `ready` 硬条件（`READY_REQUIRED_REVIEWS`）；line-editor 职责收窄为对白与信息流；增补复审协议（复审必须重读完整正文而非仅验证删除，防"修订残留"）；反模式文档补第 9 条（逗号级动作堆叠，含真实漏网原文）。增补后 texture-editor 首轮实战即独立抓回上述两处并挖出第三处（档册段讲解），修订后复审转 pass——全流程零人工逐字审稿。
+
+工具层另修两个狗食 bug：narrative_gate 表格误判正则（`\s` 跨行匹配表头/分隔行）、record-review 对已在位审稿文件的 SameFileError。
+
+## 后记 3：声音指纹与转述语域（2026-07-17，v3.1.2）
+
+方向来自用户的观察：LLM 讲大白话时语域自然——AI 味很大程度来自生成时调用的"文学表演"语域。两个落地机制：
+
+1. **转述语域（生成时）**：起草指令框架改为"把正在发生的事讲给一个具体的人听"，替代"写一章小说"。已写入 SKILL.md 单章流程起草步。
+2. **声音指纹（可测量的范文锚定）**：新模块 `voice_signature.py` 从范文提取 11 项风格指标（句长均值/方差、对白占比、碎段率、比喻密度、分句复杂度等），`--vs` 做漂移对比。实测：DeepSeek 章节对 Kimi 章节漂移 4/7 项（对白占比 0.09 vs 0.21、碎段率 0.27 vs 0.12、比喻 3.5‰ vs 0.6‰、分句复杂度 1.4 vs 2.8），自身对比零漂移——"像不像本书"从玄学变成距离。指纹贴在 voice-bible 的 exemplar_notes（ch02 起 narrative_gate 检查），texture-editor 的漂移检查用 `--vs` 执行。
