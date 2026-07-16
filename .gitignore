@@ -8,10 +8,7 @@ __pycache__/
 data/
 library/
 experiments/
-work/*/
-
-# Keep the workspace root README
-!work/README.md
+work/
 
 # Local tooling metadata and read-only third-party reference trees
 .reasonix/
