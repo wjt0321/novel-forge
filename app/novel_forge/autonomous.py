@@ -15,12 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.novel_forge.db import get_db_path, init_db
+from app.novel_forge.db import get_connection, get_db_path, init_db
 from app.novel_forge.models import (
     AcceptanceResult,
     AuditEvent,
     ChapterPlan,
     IterationRun,
+    NovelForgeError,
     Promise,
     PromiseStatus,
     ResearchEntry,
@@ -43,12 +44,8 @@ from app.novel_forge.repository import (
 )
 
 
-class AutonomousError(Exception):
-    """Base exception with a user-facing message."""
-
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.message = message
+class AutonomousError(NovelForgeError):
+    """Autonomous writing service exception."""
 
 
 class AutonomousWritingService:
@@ -62,15 +59,8 @@ class AutonomousWritingService:
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(str(get_db_path(self.root)))
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.row_factory = sqlite3.Row
-        try:
+        with get_connection(self.root) as conn:
             yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
 
     # ------------------------------------------------------------------
     # Research Ledger

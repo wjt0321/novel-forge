@@ -8,8 +8,8 @@ literary quality.
 Known limitations:
 - This script covers only hard surface gates such as em-dashes, ellipses, and negation flips.
 - It does not detect whether professional detail serves character action or whether a causal chain is complete.
-- It does not judge cross-paragraph near-duplicate meaning; use an independent line editor for that review.
-- It does not judge narrative structure; use a scene-level narrative review.
+- It does not judge cross-paragraph near-duplicate meaning; use line-editor for that review.
+- It does not judge narrative structure; use narrative_gate.py and independent editors.
 - A passing result does not mean the prose is literary, publishable, or user-approved.
 
 Usage:

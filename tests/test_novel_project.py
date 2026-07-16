@@ -34,18 +34,54 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "patches").is_dir()
     assert (book_dir / ".snapshots").is_dir()
     assert (book_dir / "tools" / "quality_check.py").exists()
+    assert (book_dir / "tools" / "narrative_gate.py").exists()
+    assert (book_dir / "planning" / "chapter-state").is_dir()
+    assert (book_dir / "planning" / "scene-package-template.md").exists()
+    assert (book_dir / "planning" / "action-draft-template.md").exists()
+    assert (book_dir / "planning" / "dialogue-ledger-template.md").exists()
+    assert (book_dir / "planning" / "chapter-state-template.md").exists()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
     assert (book_dir / ".claude" / "agents" / "consistency-guard.md").exists()
     assert (book_dir / ".claude" / "agents" / "chapter-editor.md").exists()
+    assert (book_dir / ".claude" / "agents" / "causal-editor.md").exists()
+    assert (book_dir / ".claude" / "agents" / "line-editor.md").exists()
+    assert (book_dir / ".claude" / "agents" / "orchestrator.md").exists()
 
     claude_md = (book_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "Test Book" in claude_md
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
+    assert "工作流版本" in claude_md
+    assert "v3" in claude_md
+    assert "严禁复制其他书的正文" in claude_md
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
+    assert "默认工作流: v3" in readme
+    assert "不得复制其他书的正文" in readme
 
+
+
+def test_generated_narrative_gate_rejects_unfilled_scene_package(tmp_path: Path):
+    result = init_book_project(tmp_path, "gate-book", "Gate Book", "悬疑")
+    book_dir = Path(result["book_dir"])
+    chapter = book_dir / "chapter.md"
+    chapter.write_text("# 第一章\n\n甲走进门。\n\n乙没有起身。\n\n雨停了。\n", encoding="utf-8")
+    package = book_dir / "planning" / "scene-package-ch01.md"
+    package.write_text(
+        (book_dir / "planning" / "scene-package-template.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    script = book_dir / "tools" / "narrative_gate.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), str(chapter), str(package)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "scene-package 缺少或未填写章节" in proc.stdout
 
 
 def test_init_book_project_does_not_overwrite_existing_files(tmp_path: Path):
@@ -143,10 +179,12 @@ def test_quality_check_script_detects_issues(tmp_path: Path):
         [sys.executable, str(script), str(sample)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
     output = proc.stdout
+    assert output is not None
     assert "quote-duplication" in output
     assert "question-mark-mismatch" in output
     assert "word-count-tic" in output
@@ -164,6 +202,7 @@ def test_quality_check_script_clean_file(tmp_path: Path):
         [sys.executable, str(script), str(sample)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert proc.returncode == 0, proc.stderr

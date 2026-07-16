@@ -84,6 +84,12 @@ _EXPLANATION_PATTERNS = [
     re.compile(r"不是结束，是"),
 ]
 
+# Combined regex for all explanation-tic patterns — single pass instead of
+# iterating 9 patterns per line.
+_EXPLANATION_COMBINED_RE = re.compile(
+    "|".join(p.pattern for p in _EXPLANATION_PATTERNS)
+)
+
 # Genuine word-count expressions only: an explicit quantifier immediately
 # before 字, with an optional 个/枚 classifier. Excludes ordinals (第...) and
 # classifier 行 (一行字 / 第一行字).
@@ -516,19 +522,18 @@ def lint_text(text: str) -> list[LintFinding]:
                 )
             )
 
-        # Explanation tics
+        # Explanation tics (single-pass combined regex instead of 9-pattern loop)
         severity, message = _RULES["explanation-tic"]
-        for pattern in _EXPLANATION_PATTERNS:
-            for m in pattern.finditer(line):
-                findings.append(
-                    LintFinding(
-                        rule_code="explanation-tic",
-                        severity=severity,
-                        line_number=idx,
-                        message=message,
-                        evidence=_truncate(line, m.start(), m.end()),
-                    )
+        for m in _EXPLANATION_COMBINED_RE.finditer(line):
+            findings.append(
+                LintFinding(
+                    rule_code="explanation-tic",
+                    severity=severity,
+                    line_number=idx,
+                    message=message,
+                    evidence=_truncate(line, m.start(), m.end()),
                 )
+            )
 
         # Word-count tics
         severity, message = _RULES["word-count-tic"]

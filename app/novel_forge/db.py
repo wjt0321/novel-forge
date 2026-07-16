@@ -1,11 +1,15 @@
 """SQLite connection, schema, and migrations for Novel Forge."""
 
-import shutil
 import sqlite3
+import shutil
+import logging
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 7
+logger = logging.getLogger(__name__)
+
+CURRENT_SCHEMA_VERSION = 8
 
 
 class UnsupportedSchemaVersionError(Exception):
@@ -484,9 +488,45 @@ CREATE INDEX IF NOT EXISTS blind_experience_reviews_chapter_revision
 """
 )
 
+# v8 schema: adds performance indices on frequently-queried columns.
+V8_SCHEMA = (
+    V7_SCHEMA
+    + """
+CREATE INDEX IF NOT EXISTS audit_events_book_created
+    ON audit_events(book_id, created_at);
+
+CREATE INDEX IF NOT EXISTS lint_findings_revision_severity_resolved
+    ON lint_findings(revision_id, severity, resolved);
+
+CREATE INDEX IF NOT EXISTS canon_facts_book
+    ON canon_facts(book_id);
+"""
+)
+
+
 def get_db_path(root: Path) -> Path:
     """Return the canonical SQLite path for a project root."""
     return root / "data" / "novel-forge.db"
+
+
+@contextmanager
+def get_connection(root: Path):
+    """Yield a sqlite3.Connection with foreign keys, Row factory, and auto commit/rollback.
+
+    This is the canonical connection manager shared by all services.
+    """
+    conn = sqlite3.connect(str(get_db_path(root)))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _get_user_version(conn: sqlite3.Connection) -> int:
@@ -911,6 +951,22 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """Add performance indices on audit_events, lint_findings, and canon_facts."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS audit_events_book_created "
+        "ON audit_events(book_id, created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS lint_findings_revision_severity_resolved "
+        "ON lint_findings(revision_id, severity, resolved)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS canon_facts_book "
+        "ON canon_facts(book_id)"
+    )
+
+
 def init_db(root: Path) -> sqlite3.Connection:
     """Create or migrate the SQLite database to the current schema version.
 
@@ -939,11 +995,15 @@ def init_db(root: Path) -> sqlite3.Connection:
 
         if version == 0 and is_fresh:
             # Fresh database: create current schema directly, no backup needed.
-            conn.executescript(V7_SCHEMA)
+            conn.executescript(V8_SCHEMA)
             _set_user_version(conn, CURRENT_SCHEMA_VERSION)
             conn.commit()
         elif version < CURRENT_SCHEMA_VERSION:
             # Legacy database: single backup before the full migration chain.
+            logger.info(
+                "Migrating database from v%d to v%d at %s",
+                version, CURRENT_SCHEMA_VERSION, db_path,
+            )
             backup_path = _backup_db(db_path, target_version=CURRENT_SCHEMA_VERSION)
             try:
                 if version < 2:
@@ -958,6 +1018,8 @@ def init_db(root: Path) -> sqlite3.Connection:
                     _migrate_v5_to_v6(conn)
                 if version < 7:
                     _migrate_v6_to_v7(conn)
+                if version < 8:
+                    _migrate_v7_to_v8(conn)
                 _set_user_version(conn, CURRENT_SCHEMA_VERSION)
                 conn.commit()
             except Exception:

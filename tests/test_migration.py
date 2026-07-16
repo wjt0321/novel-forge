@@ -85,7 +85,7 @@ def test_migration_from_v1_to_v5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
 
     # Backup was created.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 1
 
     # Original assets still exist.
@@ -146,7 +146,7 @@ def test_migration_is_idempotent(tmp_path: Path):
     sc = svc.get_scene_contract("test", 1)
     assert sc.current_revision_number == 1
 
-    first_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    first_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(first_backups) == 1
 
     # Re-running init_db on an up-to-date DB is a no-op and must not create
@@ -154,7 +154,7 @@ def test_migration_is_idempotent(tmp_path: Path):
     conn = init_db(tmp_path)
     conn.close()
 
-    second_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    second_backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(second_backups) == 1
 
     sc = svc.get_scene_contract("test", 1)
@@ -167,19 +167,19 @@ def test_migration_is_idempotent(tmp_path: Path):
         ).fetchone()["cnt"]
         assert rev_count == 1
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 7
+        assert version == 8
 
 
 def test_fresh_database_has_no_backup_and_version_5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
     svc.init_book("fresh", "Fresh Book")
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 0
 
     with sqlite3.connect(str(get_db_path(tmp_path))) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 7
+        assert version == 8
 
 
 def test_legacy_unversioned_v1_database_migrates_to_v5(tmp_path: Path):
@@ -191,13 +191,13 @@ def test_legacy_unversioned_v1_database_migrates_to_v5(tmp_path: Path):
     svc = NovelForgeService(tmp_path)
 
     # Exactly one backup created for the migration.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 1
 
     # Schema upgraded to v5.
     with sqlite3.connect(str(get_db_path(tmp_path))) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 7
+        assert version == 8
 
     # Old data preserved and usable through v5 metadata.
     ch = svc.get_chapter("test", 1)
@@ -231,7 +231,7 @@ def test_unknown_user_version_is_rejected(tmp_path: Path):
     assert str(CURRENT_SCHEMA_VERSION) in str(exc_info.value)
 
     # No backup should be created and the DB must remain untouched.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 0
 
     with sqlite3.connect(str(db_path)) as conn:
@@ -254,7 +254,7 @@ def test_backup_name_never_overwrites_existing(tmp_path: Path):
     assert second.exists()
     assert "-001-" in second.name or "-002-" in second.name or second.name != first.name
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 2
 
 
@@ -316,7 +316,7 @@ def test_migration_from_v3_to_v5(tmp_path: Path):
 
     svc = NovelForgeService(tmp_path)
 
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 1
 
     ch = svc.get_chapter("v3book", 1)
@@ -518,7 +518,7 @@ def test_migration_v6_to_v7_failure_restores_v5_backup(tmp_path: Path) -> None:
             init_db(tmp_path)
 
     # The backup file must still exist.
-    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v7.db"))
+    backups = list((tmp_path / "data").glob("novel-forge.backup-*-migration-to-v8.db"))
     assert len(backups) == 1
 
     # The on-disk database must be restored to the pre-migration v5 state.

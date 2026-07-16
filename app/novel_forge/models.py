@@ -8,6 +8,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+class NovelForgeError(Exception):
+    """Base exception with a user-facing message for all Novel Forge operations."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 class ReviewVerdict(str, Enum):
     APPROVE = "APPROVE"
     CONCERNS = "CONCERNS"

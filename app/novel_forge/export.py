@@ -4,6 +4,7 @@ import hashlib
 import shutil
 import subprocess
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from app.novel_forge.models import ExportManifest
@@ -69,7 +70,9 @@ def compile_markdown(
     return md_path, manifest_path, manifest
 
 
+@lru_cache(maxsize=1)
 def find_pandoc() -> str | None:
+    """Return the pandoc executable path, caching the result permanently."""
     return shutil.which("pandoc")
 
 

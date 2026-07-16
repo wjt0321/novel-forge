@@ -2,7 +2,7 @@
 name: novel-forge
 description: "当需要创建、策划、起草、修订、审阅、质检、审计或导出 Novel Forge 小说项目时使用。"
 metadata:
-  version: "2.1"
+  version: "2.2"
   entrypoint: "app.novel_forge.skill_adapter"
 ---
 
@@ -13,10 +13,10 @@ metadata:
 ## 路径与工作目录
 
 - **不要硬编码盘符或绝对根路径。** 一律从当前工作目录、调用参数，或项目根的相对结构推导路径。
-- 调用 adapter 时，以项目根为当前工作目录，并用 `--root .`：
+- 调用 adapter 时，`--root` 必须传入**仓库根目录的绝对路径**；不要传 `.`。从项目根启动时，可先由 shell 解析当前绝对路径：
 
 ```cmd
-set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . <operation> ...
+set "NOVEL_FORGE_ROOT=%CD%" && set PYTHONPATH=%NOVEL_FORGE_ROOT% && python -m app.novel_forge.skill_adapter --root "%NOVEL_FORGE_ROOT%" <operation> ...
 ```
 
 - `books/<slug>/` 是新项目的文件前台；`library/<slug>/` 是 legacy 审计工作流。
@@ -29,10 +29,10 @@ set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . <operation> 
 
 ## 新项目工作流：`books/<slug>/`
 
-用户明确要求创建后，以项目根为 cwd 执行：
+用户明确要求创建后，在仓库根目录执行（`--root` 使用绝对路径）：
 
 ```cmd
-set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . --confirm init-novel-project init-novel-project <slug> --title "<书名>" --genre "<类型>"
+set "NOVEL_FORGE_ROOT=%CD%" && set PYTHONPATH=%NOVEL_FORGE_ROOT% && python -m app.novel_forge.skill_adapter --root "%NOVEL_FORGE_ROOT%" --confirm init-novel-project init-novel-project <slug> --title "<书名>" --genre "<类型>"
 ```
 
 生成的核心文件：
@@ -41,20 +41,39 @@ set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . --confirm in
 - `chapters/eXX/ch-XX/正文.md`：章节唯一正文
 - `memory/`：既成事实、实体、世界规则和未来规划
 - `planning/`：故事发动机、研究边界、事件规划
-- `.claude/agents/`：`context-collector`、`consistency-guard`、`chapter-editor`
-- `tools/quality_check.py`：低成本表面质检
+- `.claude/agents/`：默认含 `context-collector`、`consistency-guard`、`chapter-editor`、`orchestrator`、`causal-editor`、`line-editor`
+- `planning/`：默认含 v3 的场景包、动作稿、对白账本和章节状态模板
+- `tools/quality_check.py` 与 `tools/narrative_gate.py`：分别承担表面质检与结构门禁
 
-### 单章最简流程
+### 长篇 v3 编排（Claude Code 兼容，默认可用）
+
+每个新项目默认具备以下资产；所有状态、记忆和审稿结果必须保留在**各自** `books/<slug>/` 内，不得放到 `books/` 顶层共享：
+
+- `.claude/agents/orchestrator.md`：单章状态机、门禁证据与回退决策；不写正文。
+- `planning/chapter-state/chXX.md`：记录章节状态、最小上下文预算、阻断项与下一步。
+- `planning/scene-package-chXX.md`、`action-draft-chXX.md`、`dialogue-ledger-chXX.md`：分别承载场景因果、动作底稿和关键对白意图。
+- `causal-editor` 审因果与信息责任，`line-editor` 审对白归属、重复与解释性行文；两者均不直接改写正文。
+
+推荐状态顺序：`planned → context_collected → scene_packaged → action_drafted → dialogue_planned → drafted → surface_checked → causal_reviewed → line_reviewed → consistency_checked → ready`。失败必须回退到对应材料层，而不是直接用措辞润色掩盖结构问题。
+
+即使模型支持 1M 上下文，writer 也应只加载当前场景、近场连续、相关人物/承诺及必要世界规则，保留剩余上下文用于推理和审稿；全书材料只用于季末或跨章审计。
+
+- **情感弧：** 场景包的可选情感弧记录开场、不可逆选择和章末残余状态；正文应用身体、注意力与选择呈现变化，不直接替角色命名情绪。
+- **跨章一致性：** `consistency-guard` 必读 `memory/future/00-index.md`，对承诺标记兑现、保持未回收、延后或“偏离：X”。
+- **patch：** 使用 `patches/ch-{章节号}-{功能}.md`，仅记录局部修订；应用后重跑 `quality_check.py`、`narrative_gate.py` 和受影响编辑审稿。
+
+### 单章 v3 流程
 
 1. **调研：** 写手自行检索与主题有关的现实素材，保留来源链接；区分已核验事实与虚构内容。不得仿写在世作家，只能使用可说明的文学技法。
 2. **故事发动机：** 在 `planning/` 写清主角欲望、阻力、不可逆选择、即时成本和一个尚未解答的承诺。
-3. **场景合同 v4：** 每章准备 Scene Contract v4，至少明确空间布局与路线、身体状态与接触、最多 5 个物体的可供性、环境约束因果链、以及覆盖不可逆选择或其前置动作的 3 步具身动作链。
-4. **上下文：** `context-collector` 只读必要记忆、规划、研究边界、Scene Contract v4 和上一章结尾；不得写正文。
-5. **起草：** 一名写手只写一章，从正在发生的行动开始，不批量生成后续章节。
-6. **质检：** 从书项目根运行 `python tools\quality_check.py chapters\eXX\ch-XX\正文.md`。
-7. **独立审稿：** `chapter-editor` 最多给五条可定位的 MUST/MAY；写手不得自审自批。
-8. **一次修订：** 只改必要局部，再跑质检，并由 `consistency-guard` 核对实体、时间线、角色认知与未回收承诺。
-9. **如实交付：** 质检通过不等于文学保证、市场保证或用户最终批准。
+3. **场景包：** 填写 `scene-package-chXX.md`，明确边界、目标、阻力、不可逆选择、情感弧、在场者状态、beat 因果链、信息账本与信息预算。
+4. **动作与对白：** 写 `action-draft-chXX.md`；有关键对白时写 `dialogue-ledger-chXX.md`。正文润色不得新增动作稿外的关键事件、设定、动机或谜团。
+5. **上下文：** `context-collector` 只读必要记忆、规划、研究边界、当前场景材料和上一章结尾；不得写正文。
+6. **起草：** 一名写手只写一章，从正在发生的行动开始，不批量生成后续章节。
+7. **门禁：** 从书项目根运行 `python tools/quality_check.py chapters/eXX/ch-XX/正文.md` 和 `python tools/narrative_gate.py chapters/eXX/ch-XX/正文.md planning/scene-package-chXX.md`。
+8. **独立审稿：** 依次运行 `causal-editor`、`line-editor`、`consistency-guard`；`chapter-editor` 仅作兼容审稿。写手不得自审自批。
+9. **一次修订：** 结构问题回退到场景包/动作稿；纯行文问题使用局部 patch，随后重跑受影响门禁和编辑。
+10. **如实交付：** 门禁通过不等于文学保证、市场保证或用户最终批准。
 
 ### 不可违反的写作规则
 
@@ -75,7 +94,7 @@ set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . --confirm in
 仅在确实需要审计状态、不可变 revision、Canon 或导出时使用：
 
 ```cmd
-set PYTHONPATH=.&& python -m app.novel_forge.skill_adapter --root . <operation> ...
+set "NOVEL_FORGE_ROOT=%CD%" && set PYTHONPATH=%NOVEL_FORGE_ROOT% && python -m app.novel_forge.skill_adapter --root "%NOVEL_FORGE_ROOT%" <operation> ...
 ```
 
 - 查看状态：`status <slug> [章节号]`
@@ -99,3 +118,4 @@ Git 是 `books/` 项目的历史层。建立检查点前先运行 `git status --
 - 独立编辑的 MUST/MAY 摘要
 - 尚存的事实或文学风险
 - 是否发生 Git 操作
+- 使用 v3 时的当前章节状态机位置与任何 blocking / advisory
