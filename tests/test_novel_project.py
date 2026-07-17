@@ -100,6 +100,8 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "aesthetic-does-not-override-facts" in claude_md
     assert "exploration-not-ready" in claude_md
     assert "role-name-not-independence" in claude_md
+    assert "world-not-protagonist-proof" in claude_md
+    assert "expertise-must-be-executable" in claude_md
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
@@ -121,6 +123,15 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "模型评分不是作者批准" in constitution
     assert "不得静默拼接全部候选" in constitution
     assert "不得仿写在世作者" in constitution
+
+    scene_template = (
+        book_dir / "planning" / "scene-package-template.md"
+    ).read_text(encoding="utf-8")
+    assert "## 1d. 认知与可证伪假设" in scene_template
+    assert "## 3c. 因果归属账本" in scene_template
+    assert "## 5b. 专业判断审计" in scene_template
+    assert "可推翻证据" in scene_template
+    assert "后果承担者" in scene_template
 
 
 

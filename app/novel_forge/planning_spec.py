@@ -14,14 +14,30 @@ from __future__ import annotations
 SCENE_PACKAGE_REQUIRED_SECTIONS: tuple[str, ...] = (
     "1. 场景压力",
     "1c. 决策问题",
+    "1d. 认知与可证伪假设",
     "2. 在场者状态",
     "3. Beat 因果链",
+    "3c. 因果归属账本",
     "4. 信息账本",
     "5. 信息预算",
+    "5b. 专业判断审计",
     "7. 场景余波",
 )
 BEAT_CHAIN_SECTION = "3. Beat 因果链"
+DECISION_QUESTION_SECTION = "1c. 决策问题"
+COGNITION_LEDGER_SECTION = "1d. 认知与可证伪假设"
+CAUSAL_RESPONSIBILITY_SECTION = "3c. 因果归属账本"
+EXPERTISE_AUDIT_SECTION = "5b. 专业判断审计"
+DECISION_QUESTION_FIELDS: tuple[tuple[str, ...], ...] = (
+    ("不能同时得到的两样东西",),
+    ("角色拒绝承认什么", "拒绝承认"),
+    ("角色误读了谁或什么", "误读"),
+    ("哪句话不能说出口", "不能说出口的话"),
+    ("最终接受的具体代价", "接受的代价"),
+)
+MIN_ACTIVE_DECISION_QUESTIONS = 2
 MIN_BEATS = 2
+MIN_CAUSAL_RESPONSIBILITY_ROWS = 1
 MIN_CHAPTER_PARAGRAPHS = 3
 MIN_FORMAL_CJK = 5000
 DRAFT_MODES: tuple[str, ...] = ("formal", "exploration")
@@ -141,6 +157,12 @@ HUMAN_NARRATIVE_POLICIES: dict[str, str] = {
     ),
     "role-name-not-independence": (
         "角色名不同不构成独立审稿；必须记录 reviewer/provider/model/context。"
+    ),
+    "world-not-protagonist-proof": (
+        "世界不得只为证明主角正确而排列线索；重要推断必须保留替代解释和可推翻条件。"
+    ),
+    "expertise-must-be-executable": (
+        "专业判断必须写清证据、未证前提、执行条件、成本与风险，不能只靠术语证明人物聪明。"
     ),
 }
 HUMAN_NARRATIVE_POLICY_IDS: tuple[str, ...] = tuple(

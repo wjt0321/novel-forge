@@ -15,15 +15,24 @@ from typing import Any
 
 from .planning_spec import (
     BEAT_CHAIN_SECTION,
+    CAUSAL_RESPONSIBILITY_SECTION,
+    COGNITION_LEDGER_SECTION,
+    DECISION_QUESTION_FIELDS,
+    DECISION_QUESTION_SECTION,
     DRAFT_MODES,
+    EXPERTISE_AUDIT_SECTION,
     MATERIAL_WAIVER_MARK,
+    MIN_ACTIVE_DECISION_QUESTIONS,
     MIN_BEATS,
+    MIN_CAUSAL_RESPONSIBILITY_ROWS,
     MIN_CHAPTER_PARAGRAPHS,
     MIN_FORMAL_CJK,
     PLACEHOLDER_TOKENS,
     SCENE_PACKAGE_REQUIRED_SECTIONS,
     TABLE_HEADER_CELLS,
 )
+
+_SECTION_WAIVER_PREFIXES = ("无需", "不适用")
 
 
 def section(text: str, heading: str) -> str | None:
@@ -90,13 +99,56 @@ def section_has_content(body: str) -> bool:
     return False
 
 
-def _material_filled(text: str) -> bool:
+def _explicit_section_waiver(body: str) -> bool:
+    """Return whether a section contains a human-readable explicit waiver."""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith((">", "|")):
+            continue
+        value = re.sub(r"^\s*[-*]\s*", "", stripped).replace("**", "").strip()
+        if value.startswith(_SECTION_WAIVER_PREFIXES):
+            return True
+    return False
+
+
+def _decision_field_values(body: str) -> dict[str, str]:
+    """Extract canonical decision-question fields from Markdown bullets."""
+    values: dict[str, str] = {}
+    for line in body.splitlines():
+        stripped = re.sub(r"^\s*[-*]\s*", "", line.strip()).replace("**", "")
+        if not stripped:
+            continue
+        parts = re.split(r"[：:]", stripped, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        label, value = (part.strip() for part in parts)
+        for aliases in DECISION_QUESTION_FIELDS:
+            if label in aliases:
+                values[aliases[0]] = value
+                break
+    return values
+
+
+def _active_decision_questions(body: str) -> int:
+    values = _decision_field_values(body)
+    active = 0
+    for aliases in DECISION_QUESTION_FIELDS:
+        value = values.get(aliases[0], "")
+        if not _meaningful(value):
+            continue
+        if re.match(r"^(?:无|无需|不适用)(?:$|[（(:：—-])", value):
+            continue
+        active += 1
+    return active
+
+
+def _material_filled(text: str, *, allow_waiver: bool = True) -> bool:
     """A memory/planning material file counts as filled when its template
     blanks have been replaced (or carry an explicit waiver mark outside of
     guidance blockquotes)."""
     lines = [l for l in text.splitlines() if not l.strip().startswith(">")]
     body = "\n".join(lines)
-    if MATERIAL_WAIVER_MARK in body:
+    if allow_waiver and MATERIAL_WAIVER_MARK in body:
         return True
     # Unreplaced template blanks ("__________") mean the file is untouched.
     if re.search(r"_{3,}", body):
@@ -138,12 +190,59 @@ def check_scene_package(
         body = section(package_text, heading)
         if body is None or not section_has_content(body):
             blocking.append(f"scene-package 缺少或未填写章节：{heading}")
+    decisions = section(package_text, DECISION_QUESTION_SECTION)
+    if (
+        decisions is not None
+        and _active_decision_questions(decisions) < MIN_ACTIVE_DECISION_QUESTIONS
+    ):
+        blocking.append(
+            f"决策问题至少填写 {MIN_ACTIVE_DECISION_QUESTIONS} 项真实摩擦；"
+            "章型不能把拒绝、误读、不能说出口的话与代价全部豁免"
+        )
+    cognition = section(package_text, COGNITION_LEDGER_SECTION)
+    if (
+        cognition is not None
+        and table_rows(cognition) < 1
+        and not _explicit_section_waiver(cognition)
+    ):
+        blocking.append(
+            f"{COGNITION_LEDGER_SECTION} 至少填写 1 条重要推断，"
+            "或明确说明本章不依赖推断推动关键行动"
+        )
+    responsibility = section(package_text, CAUSAL_RESPONSIBILITY_SECTION)
+    if (
+        responsibility is not None
+        and table_rows(responsibility) < MIN_CAUSAL_RESPONSIBILITY_ROWS
+    ):
+        blocking.append(
+            f"因果归属账本至少填写 {MIN_CAUSAL_RESPONSIBILITY_ROWS} 条"
+        )
+    expertise = section(package_text, EXPERTISE_AUDIT_SECTION)
+    if (
+        expertise is not None
+        and table_rows(expertise) < 1
+        and not _explicit_section_waiver(expertise)
+    ):
+        blocking.append(
+            f"{EXPERTISE_AUDIT_SECTION} 至少填写 1 条专业判断，"
+            "或明确说明本章没有依赖专业判断推动的关键行动"
+        )
     beats = section(package_text, BEAT_CHAIN_SECTION)
     if beats is None or table_rows(beats) < MIN_BEATS:
         blocking.append(f"Beat 因果链少于 {MIN_BEATS} 个可执行 beat")
-    if (
-        ledger_text is not None
-        and re.search(r"本场景是否有关键对白：\s*是", ledger_text)
+    package_without_bold = package_text.replace("**", "")
+    key_dialogue_declared = bool(
+        re.search(r"关键对白[：:]\s*是", package_without_bold)
+    )
+    ledger_declares_dialogue = bool(
+        ledger_text
+        and re.search(r"本场景是否有关键对白[：:]\s*是", ledger_text)
+    )
+    if key_dialogue_declared and ledger_text is None:
+        blocking.append("场景包声明有关键对白，但关键对白账本不存在")
+    elif (
+        (key_dialogue_declared or ledger_declares_dialogue)
+        and ledger_text is not None
         and table_rows(ledger_text) < 1
     ):
         blocking.append("关键对白账本未填写")
@@ -187,6 +286,16 @@ def check_project_materials(
             blocking.append(
                 f"{rel} 未填写；请填写世界规则/事实红线，或显式标注“{MATERIAL_WAIVER_MARK}”"
             )
+    story_engine = project_root / "planning/story-engine.md"
+    if not story_engine.exists():
+        blocking.append("缺少材料文件：planning/story-engine.md")
+    elif not _material_filled(
+        story_engine.read_text(encoding="utf-8-sig"), allow_waiver=False
+    ):
+        blocking.append(
+            "planning/story-engine.md 未填写；正式稿必须建立欲望、阻力、"
+            "不可逆选择、即时代价与未解承诺"
+        )
     voice = project_root / "memory" / "voice-bible.md"
     first_chapter = chapter_number in (None, 1)
     if not voice.exists():
