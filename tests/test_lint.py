@@ -76,6 +76,33 @@ def test_lint_rhythm_monotony_skips_varied_short_paragraphs():
     assert not any(f.rule_code == "rhythm-monotony" for f in findings)
 
 
+def test_lint_rhythm_monotony_skips_dialogue_runs():
+    # 对白连排： spoken lines are legitimately short and even; not a rhythm defect.
+    text = "\n\n".join([
+        '"吃了吗？"妈问。',
+        '"吃了。"',
+        '"票买了没有？"',
+        '"买了。"',
+        '"什么时候的？"',
+        '"后天。"',
+    ])
+    findings = lint_text(text)
+    assert not any(f.rule_code == "rhythm-monotony" for f in findings)
+
+
+def test_lint_rhythm_monotony_skips_uniform_medium_runs():
+    # 匀而不短：中等长度（均值≥25）的均匀短段是普通讲者陈述，不是打点。
+    text = "\n\n".join([
+        "他说完，笑了笑，端着那只搪瓷缸子慢悠悠回去了，百货大楼的侧门哐当一声关上。",
+        "陈驰站了一会儿，蹲下来，把马胜利目光停过的那块绒布角抚平，摆齐上面的镊子。",
+        "下午两点，日头偏过电线杆，摊位前来了一个穿灰中山装的老头。",
+        "老头在摊前站定，先没说话，把绒布上的工具看了一遍，又抬眼看了看立着的樟木箱。",
+        "表用手绢包着，一层，又一层，手绢是白的，洗得发黄，四个角对齐，包得方方正正。",
+    ])
+    findings = lint_text(text)
+    assert not any(f.rule_code == "rhythm-monotony" for f in findings)
+
+
 def test_lint_detects_mechanical_triplet():
     text = "没有施工记录。没有注浆量数据。没有复检报告。"
     findings = lint_text(text)
