@@ -292,3 +292,24 @@ def test_lint_simile_density_ignores_non_simile_words():
     text = _pad_cjk("他看着画像，想象着录像里的像素。", repeats=45)
     findings = lint_text(text)
     assert not any(f.rule_code == "simile-density" for f in findings)
+
+
+def test_not_is_flip_still_blocks_declarative_punchline():
+    findings = lint_text("他不是离开，是重生。")
+    assert any(f.rule_code == "not-is-flip" for f in findings)
+
+
+def test_not_is_flip_exempts_questions_and_irony():
+    # 剑来 ch01 同款：反讽疑问句是机锋，不是 AI 腔。
+    findings = lint_text("当时陈平安就纳闷，难道打铁这门活计，不是看臂力大小，而是看面相好坏？")
+    assert not any(f.rule_code == "not-is-flip" for f in findings)
+
+
+def test_not_is_flip_exempts_dialogue():
+    findings = lint_text('"你不是输了，是从来没上过牌桌。"她说。')
+    assert not any(f.rule_code == "not-is-flip" for f in findings)
+
+
+def test_not_is_flip_blocks_narration_flip():
+    findings = lint_text("屏幕亮起来的第一件事不是通讯录，是邮箱。")
+    assert any(f.rule_code == "not-is-flip" for f in findings)

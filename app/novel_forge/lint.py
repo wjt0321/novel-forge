@@ -655,9 +655,18 @@ def lint_text(text: str) -> list[LintFinding]:
                     )
                 )
 
-        # Not-is-flip
+        # Not-is-flip: blocking only in declarative narration. The pattern is
+        # legitimate rhetoric in questions, irony, and dialogue (剑来 ch01:
+        # "难道打铁这门活计，不是看臂力大小，而是看面相好坏？") — the AI tic
+        # is the declarative punchline ("他不是离开，是重生。").
+        in_question = "？" in line or "难道" in line
+        quote_spans = [m.span() for m in _QUOTE_SPAN_RE.finditer(line)]
         severity, message = _RULES["not-is-flip"]
         for m in _NOT_IS_FLIP_RE.finditer(line):
+            if in_question:
+                continue
+            if any(s <= m.start() < e for s, e in quote_spans):
+                continue
             findings.append(
                 LintFinding(
                     rule_code="not-is-flip",
