@@ -62,6 +62,20 @@ def test_lint_detects_rhythm_monotony():
     assert any(f.rule_code == "rhythm-monotony" for f in findings)
 
 
+def test_lint_rhythm_monotony_skips_varied_short_paragraphs():
+    # 剑来式连排短段：段落都短，但句长落差极大（高 CV），是人声不是打点。
+    text = "\n\n".join([
+        "二月二，龙抬头。",
+        "暮色里，小镇名叫泥瓶巷的僻静地方，有位孤苦伶仃的清瘦少年，此时他正按照习俗，一手持蜡烛，一手持桃枝。",
+        "星空璀璨。",
+        "少年至今仍然清晰记得，那个只肯认自己做半个徒弟的老师傅，姓姚，在去年暮秋时分的清晨，被人发现坐在一张小竹椅子上，正对着窑头方向，闭眼了。",
+        "如鼠见猫。",
+        "陈平安很早就让出道路，八个人大致分作五批，走向小镇深处。",
+    ])
+    findings = lint_text(text)
+    assert not any(f.rule_code == "rhythm-monotony" for f in findings)
+
+
 def test_lint_detects_mechanical_triplet():
     text = "没有施工记录。没有注浆量数据。没有复检报告。"
     findings = lint_text(text)

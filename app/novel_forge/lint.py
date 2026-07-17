@@ -37,7 +37,7 @@ _RULES = {
     ),
     "word-count-tic": (
         "advisory",
-        "正文内出现具体字数表述，建议改为非数字表达",
+        "正文内出现字数表述；若计数不对情节或画面负责，建议删去或改写",
     ),
     "rhythm-monotony": (
         "advisory",
@@ -250,9 +250,46 @@ def _is_noun_phrase_like(sentence: str) -> bool:
 def _detect_rhythm_monotony(
     paragraphs: list[tuple[list[int], str]],
 ) -> list[LintFinding]:
-    """Flag sequences of short paragraphs (<=2 sentences)."""
+    """Flag runs of short paragraphs (<=2 sentences) whose rhythm is uniform.
+
+    A run of short paragraphs is only a problem when the sentences inside it
+    are also uniform in length — the classic AI staccato. Human prose chains
+    one-sentence paragraphs too (the 剑来 benchmark runs 40+ of them with a
+    chapter CV of 0.67-0.90), but their lengths vary wildly, which reads as
+    alive. So a run is only flagged when its sentence-length CV falls below
+    MIN_CV; with too few measurable sentences the run is still flagged
+    (conservative default).
+    """
+    MIN_CV = 0.45
     findings: list[LintFinding] = []
-    severity, message = _RULES["rhythm-monotony"]
+    severity = _RULES["rhythm-monotony"][0]
+
+    def emit(run_start: int, run_len: int) -> None:
+        sentences: list[str] = []
+        for j in range(run_start, run_start + run_len):
+            sentences.extend(_split_sentences(paragraphs[j][1]))
+        lengths = [
+            _count_cjk_chars(s) for s in sentences if _count_cjk_chars(s) > 2
+        ]
+        if len(lengths) >= 4:
+            mean = statistics.fmean(lengths)
+            if mean > 0 and statistics.pstdev(lengths) / mean >= MIN_CV:
+                return
+        start_line = paragraphs[run_start][0][0]
+        evidence_lines = [
+            paragraphs[j][1][:30]
+            for j in range(run_start, min(run_start + 3, run_start + run_len))
+        ]
+        findings.append(
+            LintFinding(
+                rule_code="rhythm-monotony",
+                severity=severity,
+                line_number=start_line,
+                message=f"连续 {run_len} 个段落均为 ≤2 句的短段且句长缺少起伏，节奏可能过于均匀",
+                evidence=" | ".join(evidence_lines) + "...",
+            )
+        )
+
     run_start = 0
     run_len = 0
     for i, (line_nums, para_text) in enumerate(paragraphs):
@@ -263,36 +300,10 @@ def _detect_rhythm_monotony(
             run_len += 1
         else:
             if run_len >= 5:
-                start_line = paragraphs[run_start][0][0]
-                evidence_lines = [
-                    paragraphs[j][1][:30]
-                    for j in range(run_start, min(run_start + 3, i))
-                ]
-                findings.append(
-                    LintFinding(
-                        rule_code="rhythm-monotony",
-                        severity=severity,
-                        line_number=start_line,
-                        message=f"连续 {run_len} 个段落均为 ≤2 句的短段，节奏可能过于均匀",
-                        evidence=" | ".join(evidence_lines) + "...",
-                    )
-                )
+                emit(run_start, run_len)
             run_len = 0
     if run_len >= 5:
-        start_line = paragraphs[run_start][0][0]
-        evidence_lines = [
-            paragraphs[j][1][:30]
-            for j in range(run_start, min(run_start + 3, len(paragraphs)))
-        ]
-        findings.append(
-            LintFinding(
-                rule_code="rhythm-monotony",
-                severity=severity,
-                line_number=start_line,
-                message=f"连续 {run_len} 个段落均为 ≤2 句的短段，节奏可能过于均匀",
-                evidence=" | ".join(evidence_lines) + "...",
-            )
-        )
+        emit(run_start, run_len)
     return findings
 
 
