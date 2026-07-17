@@ -49,3 +49,18 @@ PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:/s-black-novel pro
 ```
 
 **不要忘的用户偏好**：5000 CJK 下限是硬性要求；他不想逐字审稿（审稿归子代理）；`books/` 不上 git；文档说人话，少术语。
+
+## 五、追记：语域地图落地与 ch02 开场实验（2026-07-17 晚）
+
+已落地：voice-bible 模板新增「语域地图」（在场度 0-3 分档 + 功能×在场度表 + 悬念合法化附则）；场景包 beat 表新增「语域」列；texture-editor 新增第七维「语域适配」；bone-picker 的 voice-bible 已按 ch01 填好示例。
+
+**开场实验协议**（可复用）：同一开场写 3-4 个语域变体 → texture-editor（判工艺纪律）与 blind-reader（判读者体验）独立盲评 → 分票时合成 → 复审确认。本次四轮结果：
+
+- A（目标前置）：均匀三句打点，末位。
+- B（讲者现身）：blind-reader 最爱（悬念勾人），但 texture-editor 判语域错配——全镇视角 + "他还不知道"式 dramatic irony 越过本书视角纪律。
+- C（混合式）：texture-editor 满分执行，但 blind-reader 指出"不用问，林国栋托人来说情了"把悬念拆了。
+- **D（合成版，胜者）**：C 的结构 + "他站在门口看了一会儿，没伸手"（悬念推迟半拍）+ 陈拾推断代替叙述者断言。双评审通过；texture-editor 警告：目标已到句 4，开场不得再加拍。
+
+**关键工艺规律（已写入 voice-bible 语域地图附则）**：悬念强度与视角纪律是两个独立的轴。B 靠越权换悬念，D 用人物认知内的手段（物件、迟疑、推断）追回大半——悬念必须合法制造。
+
+ch02 开场定为 D，已登记 `memory/future/00-index.md`。
