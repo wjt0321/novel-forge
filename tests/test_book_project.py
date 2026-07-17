@@ -168,6 +168,25 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
+def test_sync_tools_adds_memory_kernel_assets_without_touching_canon(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    memory_guide = book_dir / "memory/MEMORY.md"
+    record_template = book_dir / "memory/memory-record-template.md"
+    memory_guide.unlink()
+    record_template.unlink()
+    canon = book_dir / "memory/canon/facts/handwritten.md"
+    canon.parent.mkdir(parents=True, exist_ok=True)
+    canon.write_text("handwritten canon", encoding="utf-8")
+
+    result = book_project.sync_tools(tmp_path, "demo")
+
+    assert "memory/MEMORY.md" in result["created"]
+    assert "memory/memory-record-template.md" in result["created"]
+    assert memory_guide.exists()
+    assert record_template.exists()
+    assert canon.read_text(encoding="utf-8") == "handwritten canon"
+
+
 # --- adapter surface ------------------------------------------------------------
 
 

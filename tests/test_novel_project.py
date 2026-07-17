@@ -39,6 +39,15 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "memory" / "entities").is_dir()
     assert (book_dir / "memory" / "future").is_dir()
     assert (book_dir / "memory" / "context-cache").is_dir()
+    assert (book_dir / "memory" / "candidates").is_dir()
+    assert (book_dir / "memory" / "canon" / "entities").is_dir()
+    assert (book_dir / "memory" / "canon" / "facts").is_dir()
+    assert (book_dir / "memory" / "canon" / "events").is_dir()
+    assert (book_dir / "memory" / "canon" / "knowledge").is_dir()
+    assert (book_dir / "memory" / "canon" / "promises").is_dir()
+    assert (book_dir / ".novel-forge").is_dir()
+    assert (book_dir / "memory" / "MEMORY.md").exists()
+    assert (book_dir / "memory" / "memory-record-template.md").exists()
     assert (book_dir / "planning" / "events").is_dir()
     assert (book_dir / "reviews" / "archive").is_dir()
     assert (book_dir / "patches").is_dir()
@@ -64,11 +73,16 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "工作流版本" in claude_md
     assert "v3" in claude_md
     assert "严禁复制其他书的正文" in claude_md
+    assert "build-memory-context" in claude_md
+    assert "memory/canon" in claude_md
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
     assert "默认工作流: v3" in readme
     assert "不得复制其他书的正文" in readme
+
+    gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
+    assert ".novel-forge/" in gitignore
 
 
 

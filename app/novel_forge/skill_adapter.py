@@ -17,6 +17,13 @@ from typing import Any
 
 from app.novel_forge.autonomous import AutonomousError, AutonomousWritingService
 from app.novel_forge import book_project
+from app.novel_forge.book_memory import (
+    build_context_packet,
+    memory_status,
+    promote_candidate,
+    rebuild_memory_index,
+    record_candidate,
+)
 from app.novel_forge.models import ReviewFinding, ScenePlan
 from app.novel_forge.service import NovelForgeError, NovelForgeService
 
@@ -58,6 +65,10 @@ MUTATING_OPS = {
     "record-review",
     "advance-state",
     "sync-tools",
+    "record-memory-candidate",
+    "promote-memory-candidate",
+    "rebuild-memory-index",
+    "build-memory-context",
 }
 
 
@@ -526,6 +537,39 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("--dry-run", action="store_true", help="Only report what would change.")
+
+    p = sub.add_parser(
+        "memory-status",
+        help="Show whether a books/ project's derived memory index matches Markdown.",
+    )
+    p.add_argument("slug", help="Book slug.")
+
+    p = sub.add_parser(
+        "record-memory-candidate",
+        help="Validate and store a Markdown memory candidate without promoting it.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--file", required=True, type=Path, help="Absolute UTF-8 Markdown file.")
+
+    p = sub.add_parser(
+        "promote-memory-candidate",
+        help="Promote a candidate into canonical Markdown and rebuild the index.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("candidate_id", help="Candidate memory record ID.")
+
+    p = sub.add_parser(
+        "rebuild-memory-index",
+        help="Rebuild the disposable per-book SQLite memory index from Markdown.",
+    )
+    p.add_argument("slug", help="Book slug.")
+
+    p = sub.add_parser(
+        "build-memory-context",
+        help="Build a chapter-scoped context cache from a clean memory index.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("chapter", type=int, help="Target chapter number.")
 
     # Status: book or chapter. Use positional slug and optional number.
     # argparse does not easily support optional positional after required ones,
@@ -1019,6 +1063,25 @@ def run(argv: list[str] | None = None) -> int:
     if op == "sync-tools":
         data = book_project.sync_tools(root, slug, dry_run=args.dry_run)
         return _ok(op, data, state_changed=not args.dry_run)
+
+    if op == "memory-status":
+        return _ok(op, memory_status(root, slug))
+
+    if op == "record-memory-candidate":
+        data = record_candidate(root, slug, args.file)
+        return _ok(op, data, state_changed=True)
+
+    if op == "promote-memory-candidate":
+        data = promote_candidate(root, slug, args.candidate_id)
+        return _ok(op, data, state_changed=True)
+
+    if op == "rebuild-memory-index":
+        data = rebuild_memory_index(root, slug)
+        return _ok(op, data, state_changed=True)
+
+    if op == "build-memory-context":
+        data = build_context_packet(root, slug, args.chapter)
+        return _ok(op, data, state_changed=True)
 
     if op == "create-chapter":
         chapter = svc.create_chapter(slug, args.number, args.title)

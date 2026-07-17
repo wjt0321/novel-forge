@@ -119,7 +119,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- **工作流版本**: v3.1（场景包、动作稿、对白账本、双编辑、盲读者、宏观编辑与章节编排）
+- **工作流版本**: v3.2（v3.1 质量链 + Markdown 权威长篇记忆与可重建索引）
 
 ## 正文明确定义
 本书唯一正文入口：
@@ -141,7 +141,7 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 当接到“写下一章/场景”时，按以下顺序读取：
 1. `planning/story-engine.md` — 核心张力
 2. `memory/voice-bible.md` — 本书声音宪法：距离、节奏、语言指纹、感官调色板、范文锚定
-3. `memory/past.md` — 已发生事实
+3. `memory-status` 必须为 `clean`；随后用 `build-memory-context` 生成并读取本章记忆包
 4. `memory/worldbuilding.md` — 世界规则
 5. `planning/scene-package-chXX.md` — 目标、阻力、beat 因果链与信息账本
 6. `planning/action-draft-chXX.md` — 动作版因果底稿
@@ -152,6 +152,9 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 ## 严格边界
 - 禁止自动批量生成多章。
 - 禁止在未读 `memory/`（含 voice-bible）和 `planning/story-engine.md` 的情况下写正文。
+- 禁止在记忆索引非 `clean` 或未生成本章 `memory/context-cache/chXX-memory.md` 时写正文。
+- `memory/canon/**/*.md` 是权威记忆；`.novel-forge/index.sqlite3` 是可删除缓存。Agent 不得直接编辑 SQLite。
+- 正文产生的新事实、事件、认知变化与承诺必须先提交到 `memory/candidates/`；只有显式晋升后才可进入 Canon。
 - {mechanism}
 - 禁止 `——`、`……`、`不是X而是Y`、结论性旁白升华。
 - 正式章节不少于 5000 个 CJK 汉字；更短的只能标为实验片段。字数是底线不是目标：靠复述与注水凑字数的章同样不合格（见信息预算与 line-editor 重复簇审查）。
@@ -181,7 +184,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.1；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -193,18 +196,20 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 ## 目录
 - `chapters/` — 正文唯一入口
 - `memory/` — 人物、历史、世界设定、voice-bible
+- `memory/canon/` — Markdown 权威记忆；`memory/candidates/` — 待审增量
+- `.novel-forge/` — 可重建 SQLite 索引与 manifest（不入版本库）
 - `planning/` — 故事发动机、研究边界、场景包、章节状态
 - `reviews/` — 审稿记录（每个角色一份，含 verdict）
 - `patches/` — 局部修订 patch
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-1. `context-collector` 收集最小上下文，并建立章节状态。
+1. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
 2. 填写 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
 3. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，润色不得偷渡关键事件、设定或动机。
 4. 运行 `quality_check.py` 和 `narrative_gate.py`。
 5. 依次交 `causal-editor`、`line-editor`、`texture-editor`、`consistency-guard`、`blind-reader`、`chapter-editor` 审阅，结论落盘到 `reviews/`；由 `orchestrator` 记录门禁及回退。
-6. 修订：结构问题回到场景包/动作稿，纯行文问题才用局部 patch。
+6. `consistency-guard` 将新事实整理为 candidate；经明确晋升后重建索引。结构问题回到场景包/动作稿，纯行文问题才用局部 patch。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
 """
@@ -255,6 +260,65 @@ def _memory_future_index_md() -> str:
 
 ## 备用结局 / 分支
 - 仅供参考，不自动执行
+"""
+
+
+def _memory_guide_md() -> str:
+    return """# 长篇记忆内核
+
+## 权威源与缓存
+- `memory/canon/**/*.md` 是已批准事实的长期权威源。
+- `memory/candidates/chXX/*.md` 是待审增量，不会自动进入 Canon。
+- `.novel-forge/index.sqlite3` 与 `memory/context-cache/` 都是可删除缓存。
+- 禁止直接编辑 SQLite；修改 Markdown 后运行 `rebuild-memory-index`。
+
+## 五类记录
+- `entity`：人物、地点、组织、物件及别名。
+- `fact`：带 `valid_from` / `valid_to` 的状态事实。
+- `event`：已经发生的事件、参与者与地点。
+- `knowledge`：某角色知道、怀疑或误信什么。
+- `promise`：伏笔、悬念、债务与回收窗口。
+
+## 工作协议
+1. 从 `memory/memory-record-template.md` 复制候选记录到本书外的临时文件并填写。
+2. 用 `record-memory-candidate` 校验并存入候选区。
+3. 人工或编排 Agent 审核后，用 `promote-memory-candidate` 晋升。
+4. 状态变化必须填写 `supersedes`；例如死亡事实取代存活事实，旧事实有效期会闭合。
+5. 起草前运行 `memory-status`；仅在 `clean` 时生成 `build-memory-context`。
+
+所有记录必须引用本书内真实存在的 `source_path`，并提供可定位的短证据。正文或 Canon 改动都会使索引变为 stale，必须重建后才能生成上下文包。
+"""
+
+
+def _memory_record_template_md() -> str:
+    return """# 记忆候选：替换本标题
+
+> 复制本文件到书外临时位置后填写；不要把模板本身当作 Canon。
+> kind 可为 entity / fact / event / knowledge / promise，并按 MEMORY.md 补齐该类字段。
+
+<!-- novel-forge-memory:v1 -->
+```json
+{
+  "chapter": 1,
+  "evidence": "可定位的短证据",
+  "id": "fact.example.state.ch01",
+  "kind": "fact",
+  "object": "当前状态",
+  "predicate": "state",
+  "schema_version": 1,
+  "source_path": "chapters/e01/ch-01/正文.md",
+  "status": "candidate",
+  "subject": "entity.example",
+  "summary": "供上下文包使用的一句话摘要。",
+  "supersedes": null,
+  "tier": "hard",
+  "valid_from": 1,
+  "valid_to": null
+}
+```
+
+## 人工说明
+- 为什么这条记录值得进入长篇记忆：__________
 """
 
 
@@ -427,10 +491,10 @@ def _agent_context_collector_md() -> str:
 1. 读 `CLAUDE.md` 宪法。
 2. 读 `memory/voice-bible.md`（节奏蓝图与感官调色板）。
 3. 读 `planning/story-engine.md` 和 `planning/research-boundaries.md`。
-4. 读 `memory/past.md` 和 `memory/worldbuilding.md`。
-5. 读上一条 `chapters/eXX/ch-XX/正文.md` 的最后 20%。
-6. 读 `memory/future/00-index.md` 中的相关条目。
-7. 输出一份 **最小上下文摘要** 到 `memory/context-cache/`。
+4. 运行 `memory-status`；非 `clean` 时先请求 `rebuild-memory-index`，不得带病起草。
+5. 运行 `build-memory-context <slug> <X>`，读取生成的 `memory/context-cache/chXX-memory.md`。
+6. 读 `memory/worldbuilding.md`、上一章最后 20% 与当前场景材料。
+7. 将生成包压缩为本章 **最小上下文摘要**，不得自行补全缺失事实。
 
 ## 输出格式
 - 场景目标（1 句）
@@ -443,6 +507,8 @@ def _agent_context_collector_md() -> str:
 ## 边界
 - 不生成正文。
 - 不修改 `chapters/`。
+- 不直接修改 `memory/canon/` 或 `.novel-forge/index.sqlite3`。
+- 发现缺失或新事实时只提交 memory candidate，未经晋升不得当作 Canon。
 - 不调用外部搜索。
 """
 
@@ -456,10 +522,10 @@ def _agent_consistency_guard_md() -> str:
 ## 任务
 在完成一段正文后，读：
 1. 刚写的 `chapters/eXX/ch-XX/正文.md`
-2. `memory/past.md`
+2. 本章生成的 `memory/context-cache/chXX-memory.md`
 3. `memory/worldbuilding.md`
-4. `memory/entities/` 中相关实体卡（如存在）
-5. `memory/future/00-index.md`：未回收承诺与计划兑现窗口
+4. 上一章结尾与当前章相关实体的 Canon 记录
+5. Canon 中未回收承诺及计划兑现窗口
 
 ## 检查清单
 - [ ] 实体名称与已记录一致
@@ -469,6 +535,7 @@ def _agent_consistency_guard_md() -> str:
 - [ ] 本章内容与 `memory/future/00-index.md` 中的承诺及兑现窗口对齐；偏离时明确标记“偏离：X”并说明处理方式
 - [ ] 无现代语汇/网络用语出现在非现代背景
 - [ ] 无突兀背景卸货句
+- [ ] 正文产生的新事实、事件、知识变化与承诺已整理为 candidate；未批准项未写入 Canon
 
 ## 输出
 报告写入 `reviews/chXX-consistency-guard.md`（格式见 `reviews/review-template.md`）：
@@ -483,7 +550,7 @@ def _agent_consistency_guard_md() -> str:
 
 ## 边界
 - 不生成新正文。
-- 不修改 `chapters/` 与 `memory/`。
+- 不修改 `chapters/`、`memory/canon/` 与 SQLite；只可提交候选记录供晋升。
 """
 
 
@@ -491,6 +558,7 @@ def _dot_gitignore() -> str:
     return """# Per-book ignore rules for books/<slug>/
 .snapshots/
 memory/context-cache/
+.novel-forge/
 __pycache__/
 *.pyc
 """
@@ -866,6 +934,8 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "memory/worldbuilding.md": (_memory_worldbuilding_md, ()),
     "memory/voice-bible.md": (_memory_voice_bible_md, ("title", "genre")),
     "memory/future/00-index.md": (_memory_future_index_md, ()),
+    "memory/MEMORY.md": (_memory_guide_md, ()),
+    "memory/memory-record-template.md": (_memory_record_template_md, ()),
     "planning/story-engine.md": (_planning_story_engine_md, ()),
     "planning/research-boundaries.md": (_planning_research_boundaries_md, ()),
     "planning/scene-package-template.md": (_planning_scene_package_template_md, ()),
@@ -891,6 +961,13 @@ REQUIRED_DIRECTORIES = [
     "memory/entities",
     "memory/future",
     "memory/context-cache",
+    "memory/candidates",
+    "memory/canon/entities",
+    "memory/canon/facts",
+    "memory/canon/events",
+    "memory/canon/knowledge",
+    "memory/canon/promises",
+    ".novel-forge",
     "planning/events",
     "planning/chapter-state",
     "reviews/archive",
@@ -918,6 +995,8 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "planning/dialogue-ledger-template.md",
     "planning/chapter-state-template.md",
     "reviews/review-template.md",
+    "memory/MEMORY.md",
+    "memory/memory-record-template.md",
 )
 
 
