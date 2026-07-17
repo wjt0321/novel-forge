@@ -45,6 +45,7 @@ def _metadata(kind: str, record_id: str, **overrides) -> dict:
         "kind": kind,
         "status": "candidate",
         "tier": "hard",
+        "salience": "medium",
         "chapter": 1,
         "source_path": "chapters/e01/ch-01/正文.md",
         "evidence": "第一章井边场景",
@@ -112,6 +113,17 @@ def test_memory_markdown_round_trip_and_validation(tmp_path: Path):
     del missing["predicate"]
     with pytest.raises(BookMemoryError, match="predicate"):
         parse_memory_markdown(render_memory_markdown(missing))
+
+
+def test_memory_salience_defaults_for_legacy_records_and_validates_values():
+    metadata = _metadata("fact", "fact.legacy")
+    del metadata["salience"]
+
+    record = parse_memory_markdown(render_memory_markdown(metadata))
+
+    assert record.data["salience"] == "medium"
+    with pytest.raises(BookMemoryError, match="salience"):
+        render_memory_markdown({**metadata, "salience": "urgent"})
 
 
 def test_record_candidate_rejects_source_path_escape(tmp_path: Path):
@@ -353,6 +365,67 @@ def test_context_packet_uses_time_valid_facts_and_due_promises(tmp_path: Path):
     canon.write_text(canon.read_text(encoding="utf-8") + "\n变化。\n", encoding="utf-8")
     with pytest.raises(BookMemoryError, match="stale"):
         build_context_packet(tmp_path, "demo", 5)
+
+
+def test_context_packet_prioritizes_salience_within_memory_sections(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    _write_record(
+        book_dir / "memory/canon/events/event.low.md",
+        _metadata(
+            "event",
+            "event.low",
+            status="canonical",
+            tier="active",
+            salience="low",
+            summary="低显著性环境变化。",
+        ),
+    )
+    _write_record(
+        book_dir / "memory/canon/events/event.high.md",
+        _metadata(
+            "event",
+            "event.high",
+            status="canonical",
+            tier="active",
+            salience="high",
+            summary="高显著性关系断裂。",
+        ),
+    )
+    rebuild_memory_index(tmp_path, "demo")
+
+    packet = build_context_packet(tmp_path, "demo", 5)
+    text = (book_dir / packet["context_path"]).read_text(encoding="utf-8")
+
+    assert text.index("event.high") < text.index("event.low")
+    assert packet["counts"]["salience"]["high"] == 1
+
+
+def test_memory_status_warns_when_one_chapter_is_over_recorded(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    for number in range(16):
+        source = tmp_path / f"candidate-{number}.md"
+        _write_record(
+            source,
+            _metadata(
+                "event",
+                f"event.ch01.{number}",
+                summary=f"候选事件 {number}。",
+            ),
+        )
+        record_candidate(tmp_path, "demo", source)
+
+    status = memory_status(tmp_path, "demo")
+
+    assert status["candidate_records_by_chapter"]["1"] == 16
+    assert status["volume_warnings"] == [
+        {
+            "chapter": 1,
+            "candidate_records": 16,
+            "canonical_records": 0,
+            "threshold": 15,
+            "warning": "memory_volume_high",
+        }
+    ]
 
 
 def test_adapter_memory_operations_require_confirmation_and_hide_bodies(

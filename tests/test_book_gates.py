@@ -9,6 +9,7 @@ def _scene_package(
     *,
     decision: str | None = None,
     cognition: str | None = None,
+    falsification: str | None = None,
     responsibility: str | None = None,
     expertise: str | None = None,
 ) -> str:
@@ -23,6 +24,13 @@ def _scene_package(
         "| 观察事实 | 人物当前假设 | 替代解释 | 置信度 | 可推翻证据 | 本章状态 |\n"
         "|---|---|---|---|---|---|\n"
         "| 对方没有接过钥匙 | 对方准备拒绝交易 | 对方没有看见钥匙 | 中 | 对方稍后主动索要钥匙 | 未决 |\n"
+    )
+    falsification = falsification if falsification is not None else (
+        "- 时间/日历算术：无具体日期；只验证同夜先后顺序。\n"
+        "- 物理动作机制：先拿起听筒，再投币拨号，来电与去电不混用。\n"
+        "- 人物知识来源：钥匙用途来自管理员当面说明。\n"
+        "- 不可逆性反证：签收后责任登记到主角名下，不能当场归还撤销。\n"
+        "- 场景停止点：责任登记完成、下一次敲门响起时立即停。\n"
     )
     responsibility = responsibility if responsibility is not None else (
         "| 动作/条件 | 提出或执行者 | 对象 | 当场知情者 | 来源 beat | 后果承担者 |\n"
@@ -39,6 +47,8 @@ def _scene_package(
         f"{decision}\n"
         "## 1d. 认知与可证伪假设\n"
         f"{cognition}\n"
+        "## 1e. 规划反证与常识检查\n"
+        f"{falsification}\n"
         "## 2. 在场者状态\n"
         "| 人物 | 表面目标 |\n|---|---|\n| 甲 | 拿到钥匙 |\n\n"
         "## 3. Beat 因果链\n"
@@ -92,6 +102,22 @@ def test_formal_scene_package_requires_cognition_ledger_or_explicit_waiver():
     )
 
     assert any("1d. 认知与可证伪假设" in item for item in blocking)
+
+
+def test_formal_scene_package_requires_all_falsification_checks():
+    falsification = (
+        "- 时间/日历算术：2026-07-17 是星期五。\n"
+        "- 物理动作机制：先拿听筒再投币。\n"
+        "- 人物知识来源：管理员当面说明。\n"
+        "- 不可逆性反证：签收会登记责任。\n"
+        "- 场景停止点：\n"
+    )
+
+    blocking = check_scene_package(
+        _scene_package(falsification=falsification), None, mode="formal"
+    )
+
+    assert any("场景停止点" in item for item in blocking)
 
 
 def test_formal_scene_package_requires_causal_responsibility_row():

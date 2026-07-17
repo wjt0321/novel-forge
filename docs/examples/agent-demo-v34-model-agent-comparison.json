@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-17",
+  "purpose": "workflow_diagnostic_not_model_leaderboard",
+  "author_approval": false,
+  "publication_eligibility": false,
+  "samples": [
+    {
+      "slug": "mingyun",
+      "title": "命运摆渡人",
+      "user_attested": {
+        "model": "MiniMax-M2.7",
+        "agent_harness": "Claude Code"
+      },
+      "project_provenance": {
+        "generation_evidence_count": 0,
+        "confidence": "user_attested"
+      },
+      "prose": {
+        "path_before_deletion": "books/mingyun/chapters/e01/ch-01/正文.md",
+        "sha256": "b7796ec421c1bd33b80d5356528ad556d25df1307d7feed38ccf4a9acd3088ff",
+        "cjk": 6647,
+        "sentence_count": 387,
+        "sentence_len_mean": 17.2,
+        "sentence_len_cv": 0.735,
+        "dialogue_ratio": 0.005,
+        "paragraph_count": 145,
+        "paragraph_len_mean": 45.8,
+        "micro_paragraph_ratio": 0.241,
+        "simile_per_mille": 2.86,
+        "clauses_per_sentence": 2.17,
+        "question_ratio": 0.041,
+        "exclaim_ratio": 0.0
+      },
+      "workflow": {
+        "chapter_state": "planned",
+        "generation_bound": false,
+        "review_count": 0,
+        "ready": false,
+        "integrity_observations": [
+          "content_present_while_planned",
+          "generation_unrecorded"
+        ]
+      },
+      "runtime_observation": {
+        "source": "user_observed",
+        "elapsed_seconds_approx": 180,
+        "pause_count_observed": 0,
+        "review_rounds_observed": 0,
+        "token_count": null
+      },
+      "strengths": [
+        "urban objects and accounting details carry reality",
+        "counting and measurement create a recognizable protagonist habit",
+        "high throughput and fast task closure"
+      ],
+      "weaknesses": [
+        "near-zero dialogue leaves relationships inside introspection",
+        "repetitive explanatory cognition and early thematic conclusion",
+        "calendar weekday errors for 2026-07-17 and 2026-07-20",
+        "planning branch logic is not fully realized in prose",
+        "voice-bible and lint explanation-lead rules drifted"
+      ]
+    },
+    {
+      "slug": "shentong-90",
+      "title": "九零神瞳：从废品站开始捡漏",
+      "user_attested": {
+        "model": "MiniMax-M3",
+        "agent_harness": "Claude Code"
+      },
+      "project_provenance": {
+        "generation_evidence_count": 1,
+        "review_provider": "MiniMax",
+        "review_model": "MiniMax-M3",
+        "confidence": "mixed_attestation"
+      },
+      "prose": {
+        "path_before_deletion": "books/shentong-90/chapters/e01/ch-01/正文.md",
+        "sha256": "e931745ad96ca57108c44eb5038558eb298b7debac89f8ff5cc5309f74c603a4",
+        "cjk": 5507,
+        "sentence_count": 310,
+        "sentence_len_mean": 17.7,
+        "sentence_len_cv": 0.75,
+        "dialogue_ratio": 0.049,
+        "paragraph_count": 158,
+        "paragraph_len_mean": 34.8,
+        "micro_paragraph_ratio": 0.399,
+        "simile_per_mille": 1.63,
+        "clauses_per_sentence": 1.94,
+        "question_ratio": 0.006,
+        "exclaim_ratio": 0.0
+      },
+      "workflow": {
+        "chapter_state": null,
+        "generation_bound": false,
+        "review_count": 6,
+        "current_review_count": 0,
+        "ready": false,
+        "integrity_observations": [
+          "missing_chapter_state",
+          "reviews_stale_or_legacy_bound",
+          "markdown_wrapped_verdicts"
+        ]
+      },
+      "runtime_observation": {
+        "source": "user_observed",
+        "elapsed_seconds_lower_bound": 600,
+        "pause_count_observed": 1,
+        "pause_reason_observed": "asked_user_whether_to_review",
+        "review_rounds_observed": null,
+        "token_count": null
+      },
+      "strengths": [
+        "strongest tactile and material rendering of the three",
+        "restrained emotional narration",
+        "balanced simile density and paragraph pacing"
+      ],
+      "weaknesses": [
+        "rain stop time conflicts between 23:00 and 21:00",
+        "public phone action mechanics conflict",
+        "marked coin is referred to before introduction",
+        "scene continues past its intended endpoint",
+        "same-origin reviewers inherit contradictions from planning"
+      ]
+    },
+    {
+      "slug": "夜班怪谈",
+      "title": "规则怪谈：夜班便利店",
+      "user_attested": {
+        "model": "Kimi K3",
+        "agent_harness": "Kimi Code"
+      },
+      "project_provenance": {
+        "generation_evidence_count": 4,
+        "provider": "moonshot",
+        "model_exposed_to_agent": "kimi-code-cli (model identifier not exposed to agent)",
+        "confidence": "user_attested_model"
+      },
+      "prose": {
+        "path_before_deletion": "books/夜班怪谈/chapters/e01/ch-01/正文.md",
+        "sha256": "812ada1b1b38215fe0470dc23a229227fa6bc3d36a439c7ac190291ee778c1d8",
+        "cjk": 5142,
+        "sentence_count": 335,
+        "sentence_len_mean": 15.2,
+        "sentence_len_cv": 0.634,
+        "dialogue_ratio": 0.086,
+        "paragraph_count": 143,
+        "paragraph_len_mean": 36.0,
+        "micro_paragraph_ratio": 0.217,
+        "simile_per_mille": 0.39,
+        "clauses_per_sentence": 2.47,
+        "question_ratio": 0.039,
+        "exclaim_ratio": 0.0
+      },
+      "workflow": {
+        "chapter_state": "ready",
+        "generation_bound": true,
+        "review_count": 6,
+        "same_origin_review_count": 6,
+        "ready": true,
+        "benchmark_eligible": false,
+        "candidate_count_approx": 38,
+        "canonical_count_approx": 38,
+        "integrity_observations": [
+          "excessive_generation_cycles",
+          "all_reviews_same_origin",
+          "memory_over_atomized",
+          "placeholder_state_evidence"
+        ]
+      },
+      "runtime_observation": {
+        "source": "user_observed",
+        "elapsed_seconds_approx": 3000,
+        "pause_count_observed": null,
+        "review_rounds_observed_approx": 3,
+        "token_count": null,
+        "token_observation": "very_high"
+      },
+      "strengths": [
+        "clearest commercial genre structure",
+        "highest dialogue and event propulsion",
+        "best limited-cognition and consequence coverage",
+        "lowest decorative simile density"
+      ],
+      "weaknesses": [
+        "rule events risk becoming a sequential checklist",
+        "supporting characters remain functional",
+        "key acceptance is not strongly irreversible",
+        "four generations and repeated full reviews cost about fifty minutes",
+        "same-origin roles do not provide independent judgment",
+        "single-chapter memory was over-atomized"
+      ]
+    }
+  ],
+  "workflow_findings": {
+    "effective_constraints": [
+      "formal chapter length",
+      "surface punctuation and formatting",
+      "explicit desire obstacle cost and causal ownership",
+      "limited cognition and body-object rendering",
+      "hash-bound stale review detection",
+      "formal versus exploration separation"
+    ],
+    "remaining_gaps": [
+      "planning falsification for calendar mechanics knowledge and endpoint",
+      "review anchoring to planning intent",
+      "independent review confidence",
+      "chapter-state and verdict drift detection",
+      "rewrite cycle budget and human stop boundary",
+      "generation runtime token pause and lineage metrics",
+      "memory salience and per-chapter volume warning"
+    ],
+    "convergence_policy": {
+      "initial_review_batches": 1,
+      "consolidated_patch_batches": 1,
+      "final_full_rereads": 1,
+      "automatic_followup_generation_limit": 2,
+      "on_new_must_after_budget": "human_decision_required"
+    }
+  },
+  "deleted_project_targets": [
+    "books/mingyun",
+    "books/shentong-90",
+    "books/夜班怪谈"
+  ]
+}

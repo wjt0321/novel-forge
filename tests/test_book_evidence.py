@@ -217,6 +217,110 @@ def test_record_generation_verifies_content_hash_and_does_not_return_body(
         record_evidence(tmp_path, "demo", stale)
 
 
+def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
+    data = _base(
+        "generation",
+        "generation.ch01.metrics",
+        elapsed_seconds=3000,
+        input_tokens=12000,
+        output_tokens=8000,
+        total_tokens=20000,
+        metrics_source="user_observed",
+        pause_count=1,
+        interaction_count=2,
+        review_round=2,
+        parent_generation_id="generation.ch01.r2",
+        generation_stage="final",
+        provenance_confidence="user_attested",
+        content_sha256="0" * 64,
+    )
+
+    record = parse_evidence_markdown(render_evidence_markdown(data))
+
+    assert record.data["elapsed_seconds"] == 3000
+    assert record.data["review_round"] == 2
+    assert record.data["generation_stage"] == "final"
+
+    with pytest.raises(BookEvidenceError, match="elapsed_seconds"):
+        render_evidence_markdown({**data, "elapsed_seconds": -1})
+    with pytest.raises(BookEvidenceError, match="metrics_source"):
+        render_evidence_markdown({**data, "metrics_source": "guessed"})
+
+
+def test_evidence_status_reports_generation_convergence_budget(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    for number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+        source = tmp_path / f"generation-{number}.md"
+        _write_input(
+            source,
+            _base(
+                "generation",
+                f"generation.ch01.r{number}",
+                content_sha256=digest,
+                review_round=number - 1,
+                generation_stage=stage,
+                metrics_source="unknown",
+            ),
+        )
+        record_evidence(tmp_path, "demo", source)
+
+    status = evidence_status(tmp_path, "demo", chapter=1)
+
+    assert status["generation_count"] == 3
+    assert status["automatic_generation_limit"] == 3
+    assert status["review_cycle_status"] == "budget_exhausted"
+    assert status["another_generation_requires_human"] is True
+
+
+def test_book_wide_generation_status_does_not_merge_chapter_budgets(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter1 = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter2 = book_dir / "chapters/e01/ch-02/正文.md"
+    chapter2.parent.mkdir(parents=True, exist_ok=True)
+    chapter2.write_text("# 第二章\n\n门又响了。\n", encoding="utf-8")
+    for number, chapter_path in ((1, chapter1), (2, chapter2)):
+        source = tmp_path / f"generation-ch{number:02d}.md"
+        content_path = f"chapters/e01/ch-{number:02d}/正文.md"
+        _write_input(
+            source,
+            _base(
+                "generation",
+                f"generation.ch{number:02d}.raw",
+                chapter=number,
+                source_paths=[content_path],
+                content_path=content_path,
+                content_sha256=hashlib.sha256(
+                    chapter_path.read_bytes()
+                ).hexdigest(),
+            ),
+        )
+        record_evidence(tmp_path, "demo", source)
+
+    status = evidence_status(tmp_path, "demo")
+
+    assert status["generation_count"] == 2
+    assert status["review_cycle_status"] == "not_applicable"
+    assert status["another_generation_requires_human"] is False
+    assert status["generation_cycles"] == [
+        {
+            "chapter": 1,
+            "generation_count": 1,
+            "review_cycle_status": "initial",
+            "another_generation_requires_human": False,
+        },
+        {
+            "chapter": 2,
+            "generation_count": 1,
+            "review_cycle_status": "initial",
+            "another_generation_requires_human": False,
+        },
+    ]
+
+
 @pytest.mark.parametrize(
     "overrides, message",
     [

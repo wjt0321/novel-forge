@@ -319,6 +319,20 @@ def parse_review(text: str) -> dict[str, Any]:
         )
         return m.group(1).strip() if m and m.group(1).strip() else None
 
+    def _canonical_value(
+        value: str | None, allowed: tuple[str, ...]
+    ) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.replace("**", "").replace("`", "").strip()
+        for candidate in sorted(allowed, key=len, reverse=True):
+            if re.match(
+                rf"^{re.escape(candidate)}(?:$|[\s（(：:])",
+                cleaned,
+            ):
+                return candidate
+        return cleaned
+
     must_open = 0
     for line in text.splitlines():
         if not line.startswith("|"):
@@ -326,10 +340,14 @@ def parse_review(text: str) -> dict[str, Any]:
         cells = [c.strip().lower() for c in line.strip().strip("|").split("|")]
         if "must" in cells and ("open" in cells or "" in cells):
             must_open += 1
+    raw_verdict = _field("verdict")
     return {
         "chapter": _field("chapter"),
         "role": _field("role"),
-        "verdict": _field("verdict"),
+        "verdict": _canonical_value(
+            raw_verdict, EDITORIAL_VERDICTS + REVIEW_VERDICTS
+        ),
+        "raw_verdict": raw_verdict,
         "date": _field("date"),
         "source_fingerprint": _field("source_fingerprint"),
         "chapter_sha256": _field("chapter_sha256"),
@@ -340,7 +358,10 @@ def parse_review(text: str) -> dict[str, Any]:
         "reviewer_id": _field("reviewer_id"),
         "provider": _field("provider"),
         "model": _field("model"),
-        "context_scope": _field("context_scope"),
+        "context_scope": _canonical_value(
+            _field("context_scope"),
+            ("prose_only", "full_review_context", "candidate_prose_only"),
+        ),
         "independence_note": _field("independence_note"),
         "must_open": must_open,
     }
@@ -362,6 +383,12 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
         parsed = parse_review(path.read_text(encoding="utf-8-sig"))
         parsed["file"] = f"reviews/{path.name}"
         parsed["role"] = parsed["role"] or m.group(2)
+        valid_verdicts = (
+            EDITORIAL_VERDICTS
+            if parsed["role"] == "chapter-editor"
+            else REVIEW_VERDICTS
+        )
+        parsed["verdict_valid"] = parsed["verdict"] in valid_verdicts
         try:
             number = int(m.group(1).removeprefix("ch"))
             current_binding = _review_binding_for_book(book_dir, number)
@@ -661,28 +688,109 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         "publication_eligibility": False,
     }
     state_dir = book_dir / "planning" / "chapter-state"
-    chapters: list[dict[str, Any]] = []
+    chapter_numbers: set[int] = set()
     if state_dir.is_dir():
-        for path in sorted(state_dir.glob("ch*.md")):
-            parsed = parse_chapter_state(path.read_text(encoding="utf-8-sig"))
-            parsed["chapter"] = path.stem
-            parsed["generation_stale"] = False
-            if parsed["generation_id"] != "unrecorded":
-                try:
-                    chapter_number = int(path.stem.removeprefix("ch"))
-                    _validate_current_generation(
-                        root,
-                        book_dir,
-                        chapter_number,
-                        parsed["generation_id"],
-                        parsed["draft_mode"],
-                    )
-                except (NovelForgeError, ValueError):
-                    parsed["generation_stale"] = True
-            chapters.append(parsed)
+        for path in state_dir.glob("ch*.md"):
+            match = re.fullmatch(r"ch(\d+)", path.stem)
+            if match:
+                chapter_numbers.add(int(match.group(1)))
+    chapters_dir = book_dir / "chapters"
+    if chapters_dir.is_dir():
+        for path in chapters_dir.glob("e*/ch-*/正文.md"):
+            match = re.fullmatch(r"ch-(\d+)", path.parent.name)
+            if match:
+                chapter_numbers.add(int(match.group(1)))
     if number is not None:
-        ch_id = _chapter_id(number)
-        chapters = [c for c in chapters if c["chapter"] == ch_id]
+        chapter_numbers = {number} if number in chapter_numbers else set()
+
+    chapters: list[dict[str, Any]] = []
+    integrity_blockers: list[dict[str, Any]] = []
+    integrity_warnings: list[dict[str, Any]] = []
+
+    def _issue(
+        target: list[dict[str, Any]],
+        chapter_number: int,
+        code: str,
+        detail: str,
+    ) -> None:
+        target.append(
+            {
+                "chapter": _chapter_id(chapter_number),
+                "code": code,
+                "detail": detail,
+            }
+        )
+
+    for chapter_number in sorted(chapter_numbers):
+        state_path, state_text, missing_state = _read_chapter_state(
+            book_dir, chapter_number
+        )
+        parsed = parse_chapter_state(state_text)
+        parsed["chapter"] = _chapter_id(chapter_number)
+        parsed["state_file"] = state_path.relative_to(book_dir).as_posix()
+        parsed["missing_chapter_state"] = missing_state
+        parsed["generation_stale"] = False
+        chapter_file: Path | None = None
+        try:
+            chapter_file = find_chapter_file(book_dir, chapter_number)
+        except BookProjectError:
+            pass
+        parsed["chapter_file"] = (
+            chapter_file.relative_to(book_dir).as_posix()
+            if chapter_file
+            else None
+        )
+        if missing_state:
+            _issue(
+                integrity_blockers,
+                chapter_number,
+                "missing_chapter_state",
+                "正文或章节编号存在，但缺少 planning/chapter-state 状态文件。",
+            )
+        if chapter_file and (parsed["status"] or "planned") == "planned":
+            _issue(
+                integrity_blockers,
+                chapter_number,
+                "content_present_while_planned",
+                "正文已经存在，但章节状态仍为 planned。",
+            )
+        if chapter_file and parsed["generation_id"] == "unrecorded":
+            _issue(
+                integrity_warnings,
+                chapter_number,
+                "generation_unrecorded",
+                "正文存在但尚未绑定 generation evidence。",
+            )
+        if parsed["generation_id"] != "unrecorded":
+            try:
+                _validate_current_generation(
+                    root,
+                    book_dir,
+                    chapter_number,
+                    parsed["generation_id"],
+                    parsed["draft_mode"],
+                )
+            except NovelForgeError:
+                parsed["generation_stale"] = True
+                _issue(
+                    integrity_blockers,
+                    chapter_number,
+                    "generation_stale",
+                    "绑定的 generation 与当前正文、模式或路径不一致。",
+                )
+        if any(
+            row["state"] != "planned" and row["evidence"] in {"", "-"}
+            for row in parsed["evidence"]
+        ):
+            _issue(
+                integrity_warnings,
+                chapter_number,
+                "placeholder_state_evidence",
+                "已推进状态仍使用空值或 '-' 作为证据指针。",
+            )
+        chapters.append(parsed)
+
+    if number is not None:
         chapter_file: Path | None = None
         try:
             chapter_file = find_chapter_file(book_dir, number)
@@ -701,6 +809,25 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["reviews"] = list_reviews(
         book_dir, _chapter_id(number) if number is not None else None
     )
+    for review in data["reviews"]:
+        try:
+            review_number = int(review["chapter"].removeprefix("ch"))
+        except (AttributeError, ValueError):
+            review_number = number or 0
+        if not review.get("verdict_valid", False):
+            _issue(
+                integrity_blockers,
+                review_number,
+                "invalid_review_verdict",
+                f"{review['file']} 的 verdict 不是该角色允许的标准值。",
+            )
+        if review.get("stale"):
+            _issue(
+                integrity_warnings,
+                review_number,
+                "stale_review",
+                f"{review['file']} 未绑定当前正文与规划。",
+            )
     data["review_warnings"] = [
         {
             "role": review["role"],
@@ -709,7 +836,67 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         for review in data["reviews"]
         if review.get("same_provider_model_as_generation")
     ]
+    current_reviews = [
+        review
+        for review in data["reviews"]
+        if not review.get("stale") and review.get("verdict_valid")
+    ]
+    independent_values = [
+        review.get("independent")
+        for review in current_reviews
+        if review.get("independent") is not None
+    ]
+    if not independent_values:
+        review_confidence = "unassessed"
+    elif all(independent_values):
+        review_confidence = "independent"
+    elif not any(independent_values):
+        review_confidence = "single_origin"
+    else:
+        review_confidence = "mixed_origin"
+    critical = {review["role"]: review for review in current_reviews}
+    benchmark_requirements = {
+        "blind-reader": "pass",
+        "chapter-editor": "ready_for_editor_decision",
+    }
+    benchmark_missing = [
+        role
+        for role, verdict in benchmark_requirements.items()
+        if critical.get(role, {}).get("verdict") != verdict
+        or critical.get(role, {}).get("independent") is not True
+    ]
+    data["review_confidence"] = review_confidence
+    data["benchmark_eligible"] = not benchmark_missing
+    data["benchmark_missing"] = benchmark_missing
     data["evidence"] = evidence_status(root, slug, number)
+    for cycle in data["evidence"]["generation_cycles"]:
+        if cycle["review_cycle_status"] not in {
+            "budget_exhausted",
+            "budget_exceeded",
+        }:
+            continue
+        target = (
+            integrity_blockers
+            if cycle["review_cycle_status"] == "budget_exceeded"
+            else integrity_warnings
+        )
+        _issue(
+            target,
+            cycle["chapter"],
+            cycle["review_cycle_status"],
+            "自动 generation 预算已耗尽；下一次完整回炉需要明确人工决定。",
+        )
+    data["workflow_integrity"] = {
+        "status": (
+            "blocked"
+            if integrity_blockers
+            else "warning"
+            if integrity_warnings
+            else "clean"
+        ),
+        "blockers": integrity_blockers,
+        "warnings": integrity_warnings,
+    }
     return data
 
 

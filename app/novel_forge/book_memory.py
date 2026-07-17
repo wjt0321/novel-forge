@@ -18,11 +18,13 @@ from .models import NovelForgeError
 
 
 MEMORY_SCHEMA_VERSION = 1
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
 MARKER = "<!-- novel-forge-memory:v1 -->"
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 KINDS = {"entity", "fact", "event", "knowledge", "promise"}
 TIERS = {"hard", "active", "soft"}
+SALIENCE_LEVELS = {"high", "medium", "low"}
+MEMORY_RECORDS_PER_CHAPTER_WARNING = 15
 CANDIDATE_STATUSES = {"candidate", "promoted", "rejected"}
 ALL_STATUSES = CANDIDATE_STATUSES | {"canonical"}
 KNOWLEDGE_STATES = {"known", "suspected", "false_belief"}
@@ -87,6 +89,10 @@ class MemoryRecord:
         return self.data["tier"]
 
     @property
+    def salience(self) -> str:
+        return self.data["salience"]
+
+    @property
     def chapter(self) -> int:
         return self.data["chapter"]
 
@@ -116,6 +122,7 @@ def _optional_chapter(data: Mapping[str, Any], field: str) -> None:
 
 def _validate_record_data(raw: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(raw)
+    data.setdefault("salience", "medium")
     for field in COMMON_REQUIRED:
         if field not in data:
             raise BookMemoryError(f"记忆记录缺少字段：{field}")
@@ -132,6 +139,11 @@ def _validate_record_data(raw: Mapping[str, Any]) -> dict[str, Any]:
         raise BookMemoryError(f"未知记忆 status：{data['status']}")
     if data["tier"] not in TIERS:
         raise BookMemoryError(f"未知记忆 tier：{data['tier']}")
+    if data["salience"] not in SALIENCE_LEVELS:
+        raise BookMemoryError(
+            f"未知记忆 salience：{data['salience']}；"
+            "合法值为 high / medium / low。"
+        )
     _optional_chapter(data, "chapter")
     if data["chapter"] is None:
         raise BookMemoryError("记忆记录字段 chapter 必须是正整数。")
@@ -382,6 +394,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             kind TEXT NOT NULL,
             tier TEXT NOT NULL,
+            salience TEXT NOT NULL,
             chapter INTEGER NOT NULL,
             summary TEXT NOT NULL,
             source_path TEXT NOT NULL,
@@ -454,13 +467,14 @@ def _insert_record(
     )
     conn.execute(
         """INSERT INTO records(
-               id, kind, tier, chapter, summary, source_path, evidence,
+               id, kind, tier, salience, chapter, summary, source_path, evidence,
                source_sha256, supersedes, superseded_by, data_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record.id,
             record.kind,
             record.tier,
+            record.salience,
             record.chapter,
             data["summary"],
             data["source_path"],
@@ -668,12 +682,41 @@ def memory_status(root: Path, slug: str) -> dict[str, Any]:
 
     pending = 0
     invalid_candidates: list[str] = []
+    candidate_records_by_chapter: dict[int, int] = {}
     for path in _candidate_files(book_dir):
         try:
-            if parse_memory_markdown(path.read_text(encoding="utf-8-sig")).status == "candidate":
+            record = parse_memory_markdown(
+                path.read_text(encoding="utf-8-sig")
+            )
+            candidate_records_by_chapter[record.chapter] = (
+                candidate_records_by_chapter.get(record.chapter, 0) + 1
+            )
+            if record.status == "candidate":
                 pending += 1
         except (BookMemoryError, OSError, UnicodeDecodeError):
             invalid_candidates.append(path.relative_to(book_dir).as_posix())
+    canonical_records_by_chapter: dict[int, int] = {}
+    for path in _canonical_files(book_dir):
+        record = parse_memory_markdown(path.read_text(encoding="utf-8-sig"))
+        canonical_records_by_chapter[record.chapter] = (
+            canonical_records_by_chapter.get(record.chapter, 0) + 1
+        )
+    volume_warnings = [
+        {
+            "chapter": chapter,
+            "candidate_records": candidate_records_by_chapter.get(chapter, 0),
+            "canonical_records": canonical_records_by_chapter.get(chapter, 0),
+            "threshold": MEMORY_RECORDS_PER_CHAPTER_WARNING,
+            "warning": "memory_volume_high",
+        }
+        for chapter in sorted(
+            set(candidate_records_by_chapter) | set(canonical_records_by_chapter)
+        )
+        if candidate_records_by_chapter.get(chapter, 0)
+        > MEMORY_RECORDS_PER_CHAPTER_WARNING
+        or canonical_records_by_chapter.get(chapter, 0)
+        > MEMORY_RECORDS_PER_CHAPTER_WARNING
+    ]
     return {
         "state": state,
         "index_path": ".novel-forge/index.sqlite3",
@@ -682,6 +725,15 @@ def memory_status(root: Path, slug: str) -> dict[str, Any]:
         "changed_sources": changed,
         "changed_evidence_sources": changed_evidence,
         "invalid_candidates": invalid_candidates,
+        "candidate_records_by_chapter": {
+            str(chapter): count
+            for chapter, count in sorted(candidate_records_by_chapter.items())
+        },
+        "canonical_records_by_chapter": {
+            str(chapter): count
+            for chapter, count in sorted(canonical_records_by_chapter.items())
+        },
+        "volume_warnings": volume_warnings,
     }
 
 
@@ -880,21 +932,23 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         fact_rows = conn.execute(
-            """SELECT r.id, r.summary, r.source_path, r.evidence, r.tier
+            """SELECT r.id, r.summary, r.source_path, r.evidence, r.tier,
+                      r.salience
                FROM facts f JOIN records r ON r.id = f.record_id
                WHERE f.valid_from <= ? AND (f.valid_to IS NULL OR f.valid_to >= ?)
                ORDER BY r.id""",
             (chapter, chapter),
         ).fetchall()
         knowledge_rows = conn.execute(
-            """SELECT r.id, r.summary, r.source_path, r.evidence, r.tier
+            """SELECT r.id, r.summary, r.source_path, r.evidence, r.tier,
+                      r.salience
                FROM knowledge k JOIN records r ON r.id = k.record_id
                WHERE r.chapter <= ? ORDER BY r.id""",
             (chapter,),
         ).fetchall()
         promise_rows = conn.execute(
             """SELECT r.id, r.summary, r.source_path, r.evidence, r.tier,
-                      p.promise_status, p.target_chapter
+                      r.salience, p.promise_status, p.target_chapter
                FROM promises p JOIN records r ON r.id = p.record_id
                WHERE p.planted_chapter <= ?
                  AND p.promise_status NOT IN ('paid_off', 'abandoned')
@@ -903,13 +957,13 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
             (chapter,),
         ).fetchall()
         event_rows = conn.execute(
-            """SELECT id, summary, source_path, evidence, tier FROM records
+            """SELECT id, summary, source_path, evidence, tier, salience FROM records
                WHERE kind = 'event' AND chapter <= ?
                ORDER BY chapter DESC, id LIMIT 12""",
             (chapter,),
         ).fetchall()
         entity_rows = conn.execute(
-            """SELECT id, summary, source_path, evidence, tier FROM records
+            """SELECT id, summary, source_path, evidence, tier, salience FROM records
                WHERE kind = 'entity' ORDER BY id"""
         ).fetchall()
 
@@ -922,6 +976,7 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
     hard = [row for row in all_rows if row["tier"] == "hard"]
     active = [row for row in all_rows if row["tier"] == "active"]
     soft = [row for row in all_rows if row["tier"] == "soft"]
+    salience_rank = {"high": 0, "medium": 1, "low": 2}
 
     def section(title: str, rows: list[sqlite3.Row]) -> list[str]:
         lines = [f"## {title}", ""]
@@ -929,7 +984,13 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
             lines.append("- 无")
         else:
             seen: set[str] = set()
-            for row in rows:
+            for row in sorted(
+                rows,
+                key=lambda item: (
+                    salience_rank.get(item["salience"], 1),
+                    item["id"],
+                ),
+            ):
                 if row["id"] in seen:
                     continue
                 seen.add(row["id"])
@@ -986,6 +1047,16 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
             "hard": len({row["id"] for row in hard}),
             "active": len({row["id"] for row in active}),
             "soft": len({row["id"] for row in soft}),
+            "salience": {
+                level: len(
+                    {
+                        row["id"]
+                        for row in all_rows
+                        if row["salience"] == level
+                    }
+                )
+                for level in ("high", "medium", "low")
+            },
         },
         "record_ids": sorted({row["id"] for row in all_rows}),
     }

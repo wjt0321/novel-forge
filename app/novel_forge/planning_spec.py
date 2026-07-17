@@ -15,6 +15,7 @@ SCENE_PACKAGE_REQUIRED_SECTIONS: tuple[str, ...] = (
     "1. 场景压力",
     "1c. 决策问题",
     "1d. 认知与可证伪假设",
+    "1e. 规划反证与常识检查",
     "2. 在场者状态",
     "3. Beat 因果链",
     "3c. 因果归属账本",
@@ -26,6 +27,7 @@ SCENE_PACKAGE_REQUIRED_SECTIONS: tuple[str, ...] = (
 BEAT_CHAIN_SECTION = "3. Beat 因果链"
 DECISION_QUESTION_SECTION = "1c. 决策问题"
 COGNITION_LEDGER_SECTION = "1d. 认知与可证伪假设"
+PLANNING_FALSIFICATION_SECTION = "1e. 规划反证与常识检查"
 CAUSAL_RESPONSIBILITY_SECTION = "3c. 因果归属账本"
 EXPERTISE_AUDIT_SECTION = "5b. 专业判断审计"
 DECISION_QUESTION_FIELDS: tuple[tuple[str, ...], ...] = (
@@ -36,12 +38,20 @@ DECISION_QUESTION_FIELDS: tuple[tuple[str, ...], ...] = (
     ("最终接受的具体代价", "接受的代价"),
 )
 MIN_ACTIVE_DECISION_QUESTIONS = 2
+PLANNING_FALSIFICATION_FIELDS: tuple[tuple[str, ...], ...] = (
+    ("时间/日历算术", "时间与日历", "时间算术"),
+    ("物理动作机制", "动作机制"),
+    ("人物知识来源", "知识来源"),
+    ("不可逆性反证", "不可逆选择反证"),
+    ("场景停止点", "停止点"),
+)
 MIN_BEATS = 2
 MIN_CAUSAL_RESPONSIBILITY_ROWS = 1
 MIN_CHAPTER_PARAGRAPHS = 3
 MIN_FORMAL_CJK = 5000
 DRAFT_MODES: tuple[str, ...] = ("formal", "exploration")
 ARC_AUDIT_INTERVAL = 5
+MAX_AUTOMATIC_GENERATIONS = 3
 
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})
@@ -117,6 +127,23 @@ EDITORIAL_VERDICTS: tuple[str, ...] = ("ready_for_editor_decision", "needs_revis
 REVIEW_VERDICTS: tuple[str, ...] = ("pass", "needs_revision")
 PASSING_VERDICTS = frozenset({"pass", "ready_for_editor_decision"})
 
+# Shared lint/template language. These remain advisory at the lint layer;
+# contextual severity belongs to the line/texture review gates.
+EXPLANATION_TIC_PATTERNS: tuple[str, ...] = (
+    r"这意味着",
+    r"真正重要的是",
+    r"最重要的是",
+    r"[他她](?:突然)?意识到",
+    r"[他她]终于明白",
+    r"[他她]终于懂得",
+    r"这一切说明",
+    r"这一切表明",
+    r"归根结底",
+    r"说到底",
+    r"不是告别，是",
+    r"不是结束，是",
+)
+
 # --- Creative evidence --------------------------------------------------------
 
 EVIDENCE_KINDS: tuple[str, ...] = (
@@ -165,6 +192,19 @@ HUMAN_NARRATIVE_POLICIES: dict[str, str] = {
         "专业判断必须写清证据、未证前提、执行条件、成本与风险，不能只靠术语证明人物聪明。"
     ),
 }
+
+GENERATION_METRICS_SOURCES: tuple[str, ...] = (
+    "harness_reported",
+    "user_observed",
+    "unknown",
+)
+GENERATION_STAGES: tuple[str, ...] = ("raw", "revised", "final")
+PROVENANCE_CONFIDENCE_LEVELS: tuple[str, ...] = (
+    "harness_exposed",
+    "mixed_attestation",
+    "user_attested",
+    "unknown",
+)
 HUMAN_NARRATIVE_POLICY_IDS: tuple[str, ...] = tuple(
     HUMAN_NARRATIVE_POLICIES
 )

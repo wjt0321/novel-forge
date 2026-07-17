@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.novel_forge.lint import lint_text
 
 
@@ -22,6 +24,14 @@ def test_lint_detects_explanation_tic():
     text = "他终于明白，这才是最好的选择。"
     findings = lint_text(text)
     assert any(f.rule_code == "explanation-tic" for f in findings)
+
+
+@pytest.mark.parametrize("text", ["他突然意识到门没锁。", "她意识到自己来晚了。"])
+def test_lint_detects_consciousness_explanation_leads(text: str):
+    findings = lint_text(text)
+
+    match = next(f for f in findings if f.rule_code == "explanation-tic")
+    assert match.severity == "advisory"
 
 
 def test_lint_detects_word_count_tic():

@@ -128,10 +128,39 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         book_dir / "planning" / "scene-package-template.md"
     ).read_text(encoding="utf-8")
     assert "## 1d. 认知与可证伪假设" in scene_template
+    assert "## 1e. 规划反证与常识检查" in scene_template
     assert "## 3c. 因果归属账本" in scene_template
     assert "## 5b. 专业判断审计" in scene_template
     assert "可推翻证据" in scene_template
     assert "后果承担者" in scene_template
+    assert "物理动作机制" in scene_template
+
+    generation_template = (
+        book_dir / "evaluation" / "generation-template.md"
+    ).read_text(encoding="utf-8")
+    assert '"elapsed_seconds"' in generation_template
+    assert '"review_round"' in generation_template
+    assert '"generation_stage"' in generation_template
+    assert '"provenance_confidence"' in generation_template
+
+    memory_template = (
+        book_dir / "memory" / "memory-record-template.md"
+    ).read_text(encoding="utf-8")
+    assert '"salience": "medium"' in memory_template
+
+    causal_editor = (
+        book_dir / ".claude" / "agents" / "causal-editor.md"
+    ).read_text(encoding="utf-8")
+    chapter_editor = (
+        book_dir / ".claude" / "agents" / "chapter-editor.md"
+    ).read_text(encoding="utf-8")
+    orchestrator = (
+        book_dir / ".claude" / "agents" / "orchestrator.md"
+    ).read_text(encoding="utf-8")
+    assert "先只读正文" in causal_editor
+    assert "先只读正文" in chapter_editor
+    assert "不得询问是否开始审核" in orchestrator
+    assert "第三份 generation" in orchestrator
 
 
 

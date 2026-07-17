@@ -42,6 +42,12 @@ def _make_book(tmp_path: Path, slug: str = "demo") -> Path:
         "| 观察事实 | 人物当前假设 | 替代解释 | 置信度 | 可推翻证据 | 本章状态 |\n"
         "|---|---|---|---|---|---|\n"
         "| 对方沉默 | 对方准备拒绝 | 对方没有听清 | 中 | 对方稍后主动答应 | 未决 |\n\n"
+        "## 1e. 规划反证与常识检查\n"
+        "- 时间/日历算术：无具体日期；只核对先后顺序。\n"
+        "- 物理动作机制：先开门，再把钥匙交给对方。\n"
+        "- 人物知识来源：对方当面说明钥匙用途。\n"
+        "- 不可逆性反证：交钥匙后门锁立即更换，无法撤回。\n"
+        "- 场景停止点：钥匙交出且门锁响起时停止。\n\n"
         "## 2. 在场者状态\n| 人物 | 表面目标 |\n|---|---|\n| 甲 | 乙 |\n\n"
         "## 3. Beat 因果链\n| # | 触发 |\n|---|---|\n| 1 | a |\n| 2 | b |\n\n"
         "## 3c. 因果归属账本\n"
@@ -125,10 +131,11 @@ def _record_generation(
     *,
     provider: str = "writer-provider",
     model: str = "writer-model",
+    generation_id: str = "generation.ch01.current",
+    **metrics,
 ) -> str:
     chapter = book_dir / "chapters/e01/ch-01/正文.md"
-    generation_id = "generation.ch01.current"
-    source = tmp_path / "generation-current.md"
+    source = tmp_path / f"{generation_id}.md"
     source.write_text(
         render_evidence_markdown(
             {
@@ -146,6 +153,7 @@ def _record_generation(
                 "model": model,
                 "content_path": "chapters/e01/ch-01/正文.md",
                 "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
+                **metrics,
             }
         ),
         encoding="utf-8",
@@ -164,6 +172,12 @@ def test_project_status_reads_progress_and_states(tmp_path: Path):
     assert data["slug"] == "demo"
     assert data["title"] == "演示书"
     assert data["genre"] == "都市神豪系统流"
+    assert data["chapters"][0]["chapter"] == "ch01"
+    assert data["chapters"][0]["missing_chapter_state"] is True
+    assert any(
+        item["code"] == "content_present_while_planned"
+        for item in data["workflow_integrity"]["blockers"]
+    )
     detail = book_project.project_status(tmp_path, "demo", 1)
     assert detail["cjk"] and detail["cjk"] > 1000
     assert detail["chapter_file"] == "chapters/e01/ch-01/正文.md"
@@ -400,6 +414,74 @@ def test_same_origin_blind_review_requires_note_and_stays_visible(tmp_path: Path
     review = next(r for r in status["reviews"] if r["role"] == "blind-reader")
     assert review["same_provider_model_as_generation"] is True
     assert review["independent"] is False
+
+
+def test_review_parser_normalizes_markdown_wrapped_verdicts():
+    parsed = book_project.parse_review(
+        "- verdict: **needs_revision**（一处问题）\n"
+        "- context_scope: **prose_only**（仅正文）\n"
+    )
+
+    assert parsed["verdict"] == "needs_revision"
+    assert parsed["context_scope"] == "prose_only"
+
+
+def test_project_status_separates_ready_evidence_from_benchmark_independence(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    _record_generation(tmp_path, book_dir)
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "blind-reader",
+        _review_file(
+            tmp_path,
+            "blind-reader",
+            "pass",
+            provider="independent-provider",
+            model="reader-model",
+        ),
+    )
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "chapter-editor",
+        _review_file(
+            tmp_path,
+            "chapter-editor",
+            "ready_for_editor_decision",
+            provider="independent-provider",
+            model="editor-model",
+        ),
+    )
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+
+    assert status["review_confidence"] == "independent"
+    assert status["benchmark_eligible"] is True
+    assert status["author_approval"] is False
+
+
+def test_project_status_reports_generation_budget_exhaustion(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    for round_number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+        _record_generation(
+            tmp_path,
+            book_dir,
+            generation_id=f"generation.ch01.r{round_number}",
+            review_round=round_number - 1,
+            generation_stage=stage,
+            metrics_source="user_observed",
+        )
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+
+    assert status["evidence"]["generation_count"] == 3
+    assert status["evidence"]["review_cycle_status"] == "budget_exhausted"
+    assert status["evidence"]["another_generation_requires_human"] is True
 
 
 def test_advance_state_rejects_non_adjacent_forward_jump(tmp_path: Path):

@@ -17,6 +17,10 @@ from .planning_spec import (
     DRAFT_MODES,
     EVIDENCE_DIRECTORIES,
     EVIDENCE_KINDS,
+    GENERATION_METRICS_SOURCES,
+    GENERATION_STAGES,
+    MAX_AUTOMATIC_GENERATIONS,
+    PROVENANCE_CONFIDENCE_LEVELS,
 )
 
 
@@ -84,6 +88,24 @@ def _require_chapter(data: Mapping[str, Any], field: str = "chapter") -> int:
     return value
 
 
+def _optional_nonnegative_int(data: Mapping[str, Any], field: str) -> None:
+    value = data.get(field)
+    if value is not None and (
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+    ):
+        raise BookEvidenceError(f"generation.{field} 必须是非负整数或 null。")
+
+
+def _optional_nonnegative_number(data: Mapping[str, Any], field: str) -> None:
+    value = data.get(field)
+    if value is not None and (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or value < 0
+    ):
+        raise BookEvidenceError(f"generation.{field} 必须是非负数或 null。")
+
+
 def _validate_common(raw: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(raw)
     for forbidden in FORBIDDEN_CLAIMS:
@@ -124,6 +146,52 @@ def _validate_generation(data: dict[str, Any]) -> None:
     digest = _require_string(data, "content_sha256")
     if not SHA256_RE.fullmatch(digest):
         raise BookEvidenceError("generation.content_sha256 必须是 SHA-256。")
+    _optional_nonnegative_number(data, "elapsed_seconds")
+    for field in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "pause_count",
+        "interaction_count",
+        "review_round",
+    ):
+        _optional_nonnegative_int(data, field)
+    metrics_source = data.get("metrics_source")
+    if (
+        metrics_source is not None
+        and metrics_source not in GENERATION_METRICS_SOURCES
+    ):
+        raise BookEvidenceError(
+            "generation.metrics_source 必须是 "
+            + "、".join(GENERATION_METRICS_SOURCES)
+            + "。"
+        )
+    stage = data.get("generation_stage")
+    if stage is not None and stage not in GENERATION_STAGES:
+        raise BookEvidenceError(
+            "generation.generation_stage 必须是 "
+            + "、".join(GENERATION_STAGES)
+            + "。"
+        )
+    confidence = data.get("provenance_confidence")
+    if (
+        confidence is not None
+        and confidence not in PROVENANCE_CONFIDENCE_LEVELS
+    ):
+        raise BookEvidenceError(
+            "generation.provenance_confidence 必须是 "
+            + "、".join(PROVENANCE_CONFIDENCE_LEVELS)
+            + "。"
+        )
+    parent = data.get("parent_generation_id")
+    if parent is not None and (
+        not isinstance(parent, str)
+        or not ID_RE.fullmatch(parent)
+        or parent == data["id"]
+    ):
+        raise BookEvidenceError(
+            "generation.parent_generation_id 必须是另一条合法 generation id 或 null。"
+        )
 
 
 def _validate_branch(data: dict[str, Any]) -> None:
@@ -616,6 +684,58 @@ def evidence_status(
         and not stale_by_id[record.id]
         for record, _ in records
     )
+    generation_records = [
+        record for record, _ in records if record.kind == "generation"
+    ]
+
+    def _review_cycle(count: int) -> str:
+        if count == 0:
+            return "unrecorded"
+        if count == 1:
+            return "initial"
+        if count < MAX_AUTOMATIC_GENERATIONS:
+            return "consolidated_patch"
+        if count == MAX_AUTOMATIC_GENERATIONS:
+            return "budget_exhausted"
+        return "budget_exceeded"
+
+    generations_by_chapter: dict[int, list[EvidenceRecord]] = {}
+    for record in generation_records:
+        generations_by_chapter.setdefault(record.data["chapter"], []).append(
+            record
+        )
+    generation_cycles = [
+        {
+            "chapter": generation_chapter,
+            "generation_count": len(chapter_records),
+            "review_cycle_status": _review_cycle(len(chapter_records)),
+            "another_generation_requires_human": (
+                len(chapter_records) >= MAX_AUTOMATIC_GENERATIONS
+            ),
+        }
+        for generation_chapter, chapter_records in sorted(
+            generations_by_chapter.items()
+        )
+    ]
+    generation_count = len(generation_records)
+    review_cycle_status = (
+        _review_cycle(generation_count)
+        if chapter is not None
+        else "not_applicable"
+    )
+    metric_fields = (
+        "elapsed_seconds",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "metrics_source",
+        "pause_count",
+        "interaction_count",
+        "review_round",
+        "parent_generation_id",
+        "generation_stage",
+        "provenance_confidence",
+    )
     return {
         "slug": slug,
         "chapter": chapter,
@@ -643,6 +763,25 @@ def evidence_status(
             record.id for record in recent_preferences
         ],
         "provenance_warnings": provenance_warnings,
+        "generation_count": generation_count,
+        "automatic_generation_limit": MAX_AUTOMATIC_GENERATIONS,
+        "review_cycle_status": review_cycle_status,
+        "another_generation_requires_human": (
+            chapter is not None
+            and generation_count >= MAX_AUTOMATIC_GENERATIONS
+        ),
+        "generation_cycles": generation_cycles,
+        "generation_metrics": [
+            {
+                "id": record.id,
+                **{
+                    field: record.data.get(field)
+                    for field in metric_fields
+                    if field in record.data
+                },
+            }
+            for record in generation_records
+        ],
         "arc_audit_due": arc_audit_due,
         "arc_audit_satisfied": arc_audit_satisfied,
         "arc_audit_interval": ARC_AUDIT_INTERVAL,

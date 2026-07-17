@@ -27,6 +27,8 @@ from .planning_spec import (
     MIN_CAUSAL_RESPONSIBILITY_ROWS,
     MIN_CHAPTER_PARAGRAPHS,
     MIN_FORMAL_CJK,
+    PLANNING_FALSIFICATION_FIELDS,
+    PLANNING_FALSIFICATION_SECTION,
     PLACEHOLDER_TOKENS,
     SCENE_PACKAGE_REQUIRED_SECTIONS,
     TABLE_HEADER_CELLS,
@@ -129,6 +131,26 @@ def _decision_field_values(body: str) -> dict[str, str]:
     return values
 
 
+def _labeled_field_values(
+    body: str, fields: tuple[tuple[str, ...], ...]
+) -> dict[str, str]:
+    """Extract labeled Markdown bullets using canonical names and aliases."""
+    values: dict[str, str] = {}
+    for line in body.splitlines():
+        stripped = re.sub(r"^\s*[-*]\s*", "", line.strip()).replace("**", "")
+        if not stripped:
+            continue
+        parts = re.split(r"[：:]", stripped, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        label, value = (part.strip() for part in parts)
+        for aliases in fields:
+            if label in aliases:
+                values[aliases[0]] = value
+                break
+    return values
+
+
 def _active_decision_questions(body: str) -> int:
     values = _decision_field_values(body)
     active = 0
@@ -209,6 +231,17 @@ def check_scene_package(
             f"{COGNITION_LEDGER_SECTION} 至少填写 1 条重要推断，"
             "或明确说明本章不依赖推断推动关键行动"
         )
+    falsification = section(package_text, PLANNING_FALSIFICATION_SECTION)
+    if falsification is not None:
+        values = _labeled_field_values(
+            falsification, PLANNING_FALSIFICATION_FIELDS
+        )
+        for aliases in PLANNING_FALSIFICATION_FIELDS:
+            canonical = aliases[0]
+            if not _meaningful(values.get(canonical, "")):
+                blocking.append(
+                    f"{PLANNING_FALSIFICATION_SECTION} 未填写：{canonical}"
+                )
     responsibility = section(package_text, CAUSAL_RESPONSIBILITY_SECTION)
     if (
         responsibility is not None

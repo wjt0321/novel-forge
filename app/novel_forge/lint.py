@@ -10,6 +10,8 @@ import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
+from .planning_spec import EXPLANATION_TIC_PATTERNS
+
 
 @dataclass
 class LintFinding:
@@ -81,26 +83,10 @@ _RULES = {
     ),
 }
 
-_EXPLANATION_PATTERNS = [
-    re.compile(r"这意味着"),
-    re.compile(r"真正重要的是"),
-    re.compile(r"最重要的是"),
-    re.compile(r"他终于明白"),
-    re.compile(r"她终于明白"),
-    re.compile(r"他终于懂得"),
-    re.compile(r"她终于懂得"),
-    re.compile(r"这一切说明"),
-    re.compile(r"这一切表明"),
-    re.compile(r"归根结底"),
-    re.compile(r"说到底"),
-    re.compile(r"不是告别，是"),
-    re.compile(r"不是结束，是"),
-]
-
 # Combined regex for all explanation-tic patterns — single pass instead of
 # iterating 9 patterns per line.
 _EXPLANATION_COMBINED_RE = re.compile(
-    "|".join(p.pattern for p in _EXPLANATION_PATTERNS)
+    "|".join(f"(?:{pattern})" for pattern in EXPLANATION_TIC_PATTERNS)
 )
 
 # Genuine word-count expressions only: an explicit quantifier immediately

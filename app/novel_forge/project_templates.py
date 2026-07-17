@@ -130,7 +130,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- **工作流版本**: v3.4（质量链 + Markdown 权威记忆 + 有限认知与因果归属）
+- **工作流版本**: v3.5（质量链 + 规划反证 + 审稿收敛 + 基准独立性）
 
 ## 正文明确定义
 本书唯一正文入口：
@@ -169,7 +169,7 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - {mechanism}
 - 禁止 `——`、`……`、`不是X而是Y`、结论性旁白升华。
 - 正式章节不少于 5000 个 CJK 汉字；更短的只能标为实验片段。字数是底线不是目标：靠复述与注水凑字数的章同样不合格（见信息预算与 line-editor 重复簇审查）。
-- 起草前完成本章场景包和动作稿；存在关键对白时完成对白账本。认知账本必须区分观察事实、人物假设、替代解释与可推翻证据；因果归属账本必须写清谁提出条件、谁知情、谁承担后果。
+- 起草前完成本章场景包和动作稿；存在关键对白时完成对白账本。认知账本必须区分观察事实、人物假设、替代解释与可推翻证据；因果归属账本必须写清谁提出条件、谁知情、谁承担后果；规划反证必须核对时间/日历、动作机制、知识来源、不可逆性与停止点。
 - 专业能力只能通过可执行判断体现：写清证据、未证前提、执行条件、成本与风险；不得用术语、履历回忆或微表情解码替人物证明聪明。
 - 正文润色不得新增动作稿外的关键事件、设定、人物动机或长线谜团。
 - 起草前按 voice-bible 的写前仪式写一段角色独白（不进入正文），并用 exemplar_notes 的范文段落校准本章目标声音。
@@ -187,6 +187,9 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 
 - 开始章节前用 `set-draft-mode` 明确 `formal` 或 `exploration`；模式写入 chapter-state，命令行参数不能临时覆盖。
 - 正式稿必须先记录并绑定 generation evidence；正文或规划变化后，旧审稿自动失效。
+- generation evidence 应如实记录可得的耗时、token、暂停、交互、review_round、父 generation、阶段与来源置信度；未知就写 unknown/null，不得猜测。
+- 正式模式在门禁通过后自动执行预先声明的一批六角色审核，不在“是否开始审核”处再次暂停。自动链只允许初稿、一次合并 patch 和一次终审版本；第三份 generation 后再回炉必须先取得人工决定。
+- `ready` 与 `benchmark_eligible` 分离：同源六角色可完成本地生产链，但只有异源 blind-reader 与 chapter-editor 的当前通过证据才具备模型比较资格。
 - 用 `evidence-status` 检查当前章的生成证据与五章检查点；用 `record-evidence` 提交 UTF-8 Markdown 证据文件。
 - 分支实验的候选正文放在 `evaluation/experiments/<experiment-id>/candidates/`，不得写进正式正文目录；选择后仅胜者可进入下一步。
 - 第 5、10、15……章进入 `ready` 前必须有当前 checkpoint arc audit，且 `open_must=0`；卷终另做 `scope=volume` 审计。
@@ -208,7 +211,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.4；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.5；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -232,10 +235,10 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 ## 默认工作流
 1. 用 `set-draft-mode` 选择 `formal` 或 `exploration`；探索稿永远不能进入 `ready`。
 2. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
-3. 正式稿填写含决策摩擦、可证伪假设、因果归属、专业判断审计与场景余波的 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
+3. 正式稿填写含决策摩擦、可证伪假设、规划反证、因果归属、专业判断审计与场景余波的 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
 4. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，记录 generation evidence 并绑定当前章。
 5. 运行 `quality_check.py` 和 `narrative_gate.py`；需要比较方案时做单胜者分支实验与盲评，禁止把候选静默拼接。
-6. 依次交六个审稿角色审阅，记录真实 reviewer/provider/model/context；由 `orchestrator` 推进相邻状态。
+6. 依次交六个审稿角色完成一批审阅，记录真实 reviewer/provider/model/context；合并去重 findings 后只做一次集中 patch，再全文终审。第三份 generation 后不得自动继续回炉。
 7. `consistency-guard` 将新事实整理为 candidate；经明确晋升后重建索引。每五章做 checkpoint audit，卷终另做 volume audit。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
@@ -338,6 +341,7 @@ def _memory_record_template_md() -> str:
   "subject": "entity.example",
   "summary": "供上下文包使用的一句话摘要。",
   "supersedes": null,
+  "salience": "medium",
   "tier": "hard",
   "valid_from": 1,
   "valid_to": null
@@ -618,7 +622,18 @@ def _evaluation_generation_template_md() -> str:
   "provider": "provider-name",
   "model": "model-name",
   "content_path": "chapters/e01/ch-01/正文.md",
-  "content_sha256": "替换为正文文件的64位sha256"
+  "content_sha256": "替换为正文文件的64位sha256",
+  "elapsed_seconds": null,
+  "input_tokens": null,
+  "output_tokens": null,
+  "total_tokens": null,
+  "metrics_source": "unknown",
+  "pause_count": null,
+  "interaction_count": null,
+  "review_round": 0,
+  "parent_generation_id": null,
+  "generation_stage": "raw",
+  "provenance_confidence": "unknown"
 }
 ```
 """
@@ -894,9 +909,13 @@ def _agent_chapter_editor_md() -> str:
 宏观独立编辑（轻量 Editorial Memo）。最后一个审稿环节，只审读，不重写正文。
 
 ## 输入
-1. 当前 `chapters/eXX/ch-XX/正文.md`
-2. `planning/scene-package-chXX.md` 与 `planning/action-draft-chXX.md`
-3. 本章 `reviews/` 下已有的全部审稿记录
+1. 第一遍先只读正文，不读规划和既有审稿；独立写出事件链、人物选择、代价、停止点与三个最可记忆画面。
+2. 保存第一遍重建后，再读 `planning/scene-package-chXX.md` 与 `planning/action-draft-chXX.md`，逐项比较“规划意图”与“正文实际交付”。
+3. 最后读取本章 `reviews/` 下已有记录；不得用多数意见覆盖第一遍重建失败。
+
+## 反锚定协议
+- 必须先只读正文完成独立重建，再打开规划。计划里写过的目标、不可逆选择或因果链，不能作为正文已经呈现的证据。
+- 输出增加“prose-only reconstruction”小节，保留第一遍判断；若与规划冲突，以正文读者实际可见内容为准。
 
 ## 五维审稿（每维一条，每条必须附可定位的原文证据）
 1. **叙事必要性**：这一章删掉，读者会失去什么？（答“推动剧情”判无效）
@@ -1029,6 +1048,16 @@ def _planning_scene_package_template_md() -> str:
 | 观察事实 | 人物当前假设 | 替代解释 | 置信度（低/中/高） | 可推翻证据 | 本章状态（未决/证实/推翻/误判） |
 |---|---|---|---|---|---|
 |  |  |  |  |  |  |
+
+## 1e. 规划反证与常识检查
+> 每项都要给可审计答案。没有具体日期或专业装置时可写“无需：<具体原因>”，
+> 但不能留空；本节只证明已做反证，不自动认证答案正确。
+
+- **时间/日历算术：** 日期、星期、时长、先后与期限是否互相成立？
+- **物理动作机制：** 电话、门锁、车辆、工具、支付、伤势等动作按什么顺序才可执行？
+- **人物知识来源：** 角色凭什么知道这一点？来自观察、他人告知、Canon 记忆还是仍为假设？
+- **不可逆性反证：** 选择能否轻易退回、归还、撤销或不承担责任？真正锁死它的条件是什么？
+- **场景停止点：** 哪个动作/信息/关系变化一发生就停？之后哪些解释必须留到下一场？
 
 ## 2. 在场者状态
 > “不肯说/尚不知道”列必须填写真秘密；没有秘密的人物不必列表。
@@ -1231,10 +1260,14 @@ def _agent_causal_editor_md() -> str:
 叙事因果编辑。只审读，不重写正文。
 
 ## 输入
-1. `planning/scene-package-chXX.md`
-2. `planning/action-draft-chXX.md`
-3. `planning/dialogue-ledger-chXX.md`（如有）
-4. 当前 `正文.md`、上一章末尾与必要 `memory/` 事实
+1. 第一遍先只读正文，独立重建 beat 因果、知识来源、动作机制、不可逆条件与停止点。
+2. 保存重建结果后，再读 `planning/scene-package-chXX.md`、`planning/action-draft-chXX.md` 与 `planning/dialogue-ledger-chXX.md`（如有）。
+3. 最后读取上一章末尾与必要 `memory/` 事实，核对连续性边界。
+
+## 反锚定协议
+- 必须先只读正文；不得因为场景包写了“不可逆”就认定正文选择已经不可逆。
+- 报告先列“prose-only reconstruction”，再列“planning delta”。正文缺失与规划错误分开归责。
+- 特别复核规划反证五项：时间/日历、动作机制、知识来源、不可逆性与场景停止点。
 
 ## MUST
 - 场景包缺少目标、阻力、人物摩擦或立即后果；“立章”不能把决策问题全部豁免。
@@ -1321,6 +1354,16 @@ def _agent_orchestrator_md() -> str:
 - 开始起草前持久化 `formal` / `exploration` 模式；探索稿不得推进到 `ready`。
 - 正式稿绑定 generation evidence 后再审稿；正文、规划、模式或 generation 变化会使旧审稿失效。
 - 分支实验只允许一个胜者；每五章检查 checkpoint arc audit，卷终另做 volume audit。
+
+## 正式模式自动审核
+- 用户选择 `formal` 并开始本章后，quality/narrative gate 通过即自动运行预先声明的一批六角色审核；不得询问是否开始审核。
+- 只有作者取舍、来源不确定、事实冲突、覆盖风险、外部发布，或返工预算耗尽后出现新 MUST 时才暂停请求人工决定。
+- 审稿角色先独立落盘，orchestrator 再对 findings 去重、合并同源问题并确定唯一回退层级；不得让六个角色分别触发六次改稿。
+
+## 回炉预算
+- 第一份 generation 是初稿；第二份只允许来自一次合并 patch；第三份 generation 是终审版本。
+- 第三份 generation 完成后只做一次全文终审。若仍出现新 MUST，写入 `human_decision_required` 并进入 blocked，不得自动产生第四份 generation。
+- MAY 不触发整章回炉；优先保留为编辑建议。局部问题不得升级为无范围的全文重写。
 
 ## 不可绕过的策略
 {policy_lines}
