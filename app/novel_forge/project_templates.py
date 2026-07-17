@@ -130,7 +130,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- **工作流版本**: v3.5（质量链 + 规划反证 + 审稿收敛 + 基准独立性）
+- **工作流版本**: v3.6（Harness 完整性 + 语义生成计数 + 章际交接）
 
 ## 正文明确定义
 本书唯一正文入口：
@@ -185,9 +185,10 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 
 {policy_lines}
 
-- 开始章节前用 `set-draft-mode` 明确 `formal` 或 `exploration`；模式写入 chapter-state，命令行参数不能临时覆盖。
+- 开始章节前用 `set-draft-mode` 明确 `formal`、`exploration` 或 `degraded_exploration`；模式写入 chapter-state，命令行参数不能临时覆盖。工具或沙箱能力受限时必须使用降级模式并填写 `evaluation/degraded-run-template.md`，不得伪装成完整正式运行。
 - 正式稿必须先记录并绑定 generation evidence；正文或规划变化后，旧审稿自动失效。
-- generation evidence 应如实记录可得的耗时、token、暂停、交互、review_round、父 generation、阶段与来源置信度；未知就写 unknown/null，不得猜测。
+- generation evidence 应如实记录 run_id、Agent harness、推理强度、沙箱、工具能力/失败、耗时、token、暂停、交互、review_round、父 generation、阶段与来源置信度；未知就写 unknown/null，不得猜测。同章同正文 SHA-256 只能算一个 generation。
+- 第 2 章起，scene-package 的 `0b. 章际交接` 必须绑定上一章路径、SHA-256、原文短引以及时间/地点/动作转移；上一章变化后，本章 consistency/chapter review 自动 stale。
 - 正式模式在门禁通过后自动执行预先声明的一批六角色审核，不在“是否开始审核”处再次暂停。自动链只允许初稿、一次合并 patch 和一次终审版本；第三份 generation 后再回炉必须先取得人工决定。
 - `ready` 与 `benchmark_eligible` 分离：同源六角色可完成本地生产链，但只有异源 blind-reader 与 chapter-editor 的当前通过证据才具备模型比较资格。
 - 用 `evidence-status` 检查当前章的生成证据与五章检查点；用 `record-evidence` 提交 UTF-8 Markdown 证据文件。
@@ -211,7 +212,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.5；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.6；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -233,7 +234,7 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-1. 用 `set-draft-mode` 选择 `formal` 或 `exploration`；探索稿永远不能进入 `ready`。
+1. 用 `set-draft-mode` 选择 `formal`、`exploration` 或 `degraded_exploration`；非正式稿永远不能进入 `ready`。
 2. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
 3. 正式稿填写含决策摩擦、可证伪假设、规划反证、因果归属、专业判断审计与场景余波的 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
 4. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，记录 generation evidence 并绑定当前章。
@@ -599,6 +600,9 @@ def _evaluation_generation_template_md() -> str:
 
 > provider、model、外层 Agent/harness 与上下文清单必须按实际运行填写。
 > 来源不明或元数据与真实运行不一致的样本不得进入跨模型比较。
+> 第四个及后续不同正文 SHA-256 需要 author/human_delegate 明确授权，并额外填写
+> `"human_regeneration_authorized": true` 与 `"human_decision_reference": "<决定引用>"`；
+> 前三代或未授权记录不得填写这两个字段。
 
 <!-- novel-forge-evidence:v1 -->
 ```json
@@ -633,9 +637,59 @@ def _evaluation_generation_template_md() -> str:
   "review_round": 0,
   "parent_generation_id": null,
   "generation_stage": "raw",
-  "provenance_confidence": "unknown"
+  "provenance_confidence": "unknown",
+  "run_id": "unknown",
+  "agent_harness": "unknown",
+  "reasoning_effort": "unknown",
+  "sandbox_profile": "unknown",
+  "tool_capabilities": [],
+  "tool_failures": []
 }
 ```
+"""
+
+
+def _evaluation_degraded_run_template_md() -> str:
+    return """# Degraded Exploration Run
+
+> 仅用于 Shell、adapter、子代理或其他关键工具不可用时。
+> 必须如实记录缺失能力和失败，不得把本记录升级为 formal 完成证据；
+> `degraded_exploration` 不得进入 ready 或 benchmark_eligible。
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "generation.ch01.degraded.unique-id",
+  "kind": "generation",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "agent",
+  "source_paths": ["chapters/e01/ch-01/正文.md"],
+  "summary": "工具受限条件下完成的探索正文。",
+  "chapter": 1,
+  "draft_mode": "degraded_exploration",
+  "writer_type": "agent",
+  "provider": "provider-name",
+  "model": "model-name",
+  "content_path": "chapters/e01/ch-01/正文.md",
+  "content_sha256": "替换为正文文件的64位sha256",
+  "metrics_source": "unknown",
+  "review_round": 0,
+  "generation_stage": "raw",
+  "provenance_confidence": "unknown",
+  "run_id": "unknown",
+  "agent_harness": "harness-name",
+  "reasoning_effort": "unknown",
+  "sandbox_profile": "no_shell",
+  "tool_capabilities": ["read_file", "write_file"],
+  "tool_failures": ["shell: 记录真实错误或限制"]
+}
+```
+
+## 恢复正式流程
+- [ ] 外层 Harness 已建立标准项目结构。
+- [ ] 已补齐 formal 场景包、记忆上下文与 generation 证据。
+- [ ] 已重新运行全部正式门禁和审稿；没有沿用降级运行的 pass。
 """
 
 
@@ -859,6 +913,7 @@ def _agent_consistency_guard_md() -> str:
 4. 上一章结尾与当前章相关实体的 Canon 记录
 5. Canon 中未回收承诺及计划兑现窗口
 6. `planning/scene-package-chXX.md` 的认知账本与因果归属账本
+7. 第 2 章起核对 `0b. 章际交接`，并用 review-binding 的上一章正文 SHA-256 锁定来源
 
 ## 检查清单
 - [ ] 实体名称与已记录一致
@@ -867,6 +922,7 @@ def _agent_consistency_guard_md() -> str:
 - [ ] 重要条件的提出者、执行者、知情者与后果承担者和因果归属账本一致
 - [ ] 已标记“未决/误判”的假设没有被后文旁白提前认证为正确
 - [ ] 时间线无矛盾
+- [ ] 上一章结尾短引、本章开头短引、时间/地点/动作与转场类型彼此一致
 - [ ] 已埋承诺有回收或明确未回收
 - [ ] 本章内容与 `memory/future/00-index.md` 中的承诺及兑现窗口对齐；偏离时明确标记“偏离：X”并说明处理方式
 - [ ] 无现代语汇/网络用语出现在非现代背景
@@ -880,6 +936,7 @@ def _agent_consistency_guard_md() -> str:
 - 建议修订方向
 - 承诺状态：兑现 / 保持未回收 / 延后 / **偏离：X**
 - verdict: pass / needs_revision
+- `evidence_quote` 必须逐字存在于本章正文；第 2 章起 `previous_chapter_quote` 必须逐字存在于上一章正文
 
 ## 复审协议
 复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的不一致，而不是仅核对原 finding 是否被删除。
@@ -910,7 +967,7 @@ def _agent_chapter_editor_md() -> str:
 
 ## 输入
 1. 第一遍先只读正文，不读规划和既有审稿；独立写出事件链、人物选择、代价、停止点与三个最可记忆画面。
-2. 保存第一遍重建后，再读 `planning/scene-package-chXX.md` 与 `planning/action-draft-chXX.md`，逐项比较“规划意图”与“正文实际交付”。
+2. 保存第一遍重建后，再读 `planning/scene-package-chXX.md` 与 `planning/action-draft-chXX.md`，逐项比较“规划意图”与“正文实际交付”；第 2 章起同时核对上一章正文 SHA-256 与章际交接。
 3. 最后读取本章 `reviews/` 下已有记录；不得用多数意见覆盖第一遍重建失败。
 
 ## 反锚定协议
@@ -926,6 +983,7 @@ def _agent_chapter_editor_md() -> str:
 
 ## 输出（写入 `reviews/chXX-chapter-editor.md`）
 - 五维逐条：位置、原文证据、读者效果、修订意图。
+- `evidence_quote` 必须逐字存在于本章正文；第 2 章起填写逐字存在于上一章的 `previous_chapter_quote`。
 - MUST 总数 ≤ 6；存在未关闭 MUST 时不得给出通过 verdict。
 - 纯抽象赞扬（“写得好”“画面感强”而无原文证据）判为无效审稿，必须重写。
 - verdict: `ready_for_editor_decision` / `needs_revision`
@@ -986,9 +1044,12 @@ def _reviews_review_template_md() -> str:
 - date: YYYY-MM-DD
 - source_fingerprint: <review-binding source_fingerprint>
 - chapter_sha256: <review-binding chapter_sha256>
+- previous_chapter_sha256: <review-binding previous_chapter_sha256；ch01 填 not_applicable>
 - planning_sha256: <review-binding planning_sha256>
-- draft_mode: <formal|exploration>
+- draft_mode: <formal|exploration|degraded_exploration>
 - generation_id: <generation evidence id or unrecorded>
+- evidence_quote: <关键审稿必须逐字存在于当前正文>
+- previous_chapter_quote: <ch02+ consistency/chapter-editor 必填；ch01 填 not_applicable>
 - reviewer_type: <human|agent|model>
 - reviewer_id: <stable reviewer/session id>
 - provider: <provider or not_applicable>
@@ -1016,6 +1077,22 @@ def _planning_scene_package_template_md() -> str:
 - 本场景从何处开始、在何处停止：
 - 允许新增的长线谜团（默认至多 1 条）：
 - 不得在本场景解决的问题：
+
+## 0b. 章际交接（第 2 章起必填）
+> ch01 可保留空模板。短引必须逐字存在于对应正文。转场类型只能是
+> `same_day_continuous` / `cross_day` / `flashback` / `parallel`。
+
+- **上一章正文路径：**
+- **上一章正文 SHA-256：**
+- **上一章结尾原文：**
+- **本章开头原文：**
+- **上一章结束时间：**
+- **本章开始时间：**
+- **上一章结束地点：**
+- **本章开始地点：**
+- **上一章结束动作：**
+- **本章开始动作：**
+- **转场类型：**
 
 ## 1. 场景压力
 - **视角角色此刻想要什么：**
@@ -1352,6 +1429,7 @@ def _agent_orchestrator_md() -> str:
 - 每次只推进一个状态，并写入证据、结果和下一步。
 - 审稿结论必须落盘到 `reviews/chXX-<role>.md`，证据表只存指针与 verdict。
 - 开始起草前持久化 `formal` / `exploration` 模式；探索稿不得推进到 `ready`。
+- Shell、adapter 或子代理不可用时改用 `degraded_exploration`，填写 degraded run 证据并继续保留真实失败；不得自行猜造完整项目或 formal pass。
 - 正式稿绑定 generation evidence 后再审稿；正文、规划、模式或 generation 变化会使旧审稿失效。
 - 分支实验只允许一个胜者；每五章检查 checkpoint arc audit，卷终另做 volume audit。
 
@@ -1361,9 +1439,14 @@ def _agent_orchestrator_md() -> str:
 - 审稿角色先独立落盘，orchestrator 再对 findings 去重、合并同源问题并确定唯一回退层级；不得让六个角色分别触发六次改稿。
 
 ## 回炉预算
+- 预算按同章不同正文 SHA-256 计数，不按 evidence 文件数量计数；换 ID、阶段或 review_round 不能制造新 generation。
 - 第一份 generation 是初稿；第二份只允许来自一次合并 patch；第三份 generation 是终审版本。
-- 第三份 generation 完成后只做一次全文终审。若仍出现新 MUST，写入 `human_decision_required` 并进入 blocked，不得自动产生第四份 generation。
+- 第三份 generation 完成后只做一次全文终审。若仍出现新 MUST，写入 `human_decision_required` 并进入 blocked；只有 author/human_delegate 提交 `human_regeneration_authorized=true` 与 `human_decision_reference` 后才能记录第四份 generation。
 - MAY 不触发整章回炉；优先保留为编辑建议。局部问题不得升级为无范围的全文重写。
+
+## 推理预算
+- Max/长思考优先用于写前反证、章际交接、因果归属与合并 findings，不用于重复生成目录、模板或同一正文的多份证据。
+- 第 2 章起，任何审核批次开始前先确认上一章正文 SHA-256 与 `0b. 章际交接` 当前有效。
 
 ## 不可绕过的策略
 {policy_lines}
@@ -1389,6 +1472,10 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "evaluation/experiment-template.md": (_evaluation_experiment_template_md, ()),
     "evaluation/rule-registry.md": (_evaluation_rule_registry_md, ()),
     "evaluation/generation-template.md": (_evaluation_generation_template_md, ()),
+    "evaluation/degraded-run-template.md": (
+        _evaluation_degraded_run_template_md,
+        (),
+    ),
     "evaluation/branch-decision-template.md": (_evaluation_branch_template_md, ()),
     "evaluation/blind-evaluation-template.md": (_evaluation_blind_template_md, ()),
     "evaluation/preference-template.md": (_evaluation_preference_template_md, ()),
@@ -1462,6 +1549,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "evaluation/case-template.md",
     "evaluation/experiment-template.md",
     "evaluation/generation-template.md",
+    "evaluation/degraded-run-template.md",
     "evaluation/branch-decision-template.md",
     "evaluation/blind-evaluation-template.md",
     "evaluation/preference-template.md",

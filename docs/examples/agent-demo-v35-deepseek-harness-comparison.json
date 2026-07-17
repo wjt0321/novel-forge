@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "experiment_id": "deepseek-v4pro-harness-a-vs-b-2026-07-17",
+  "recorded_at": "2026-07-17",
+  "comparison_scope": "harness_behavior_not_model_leaderboard",
+  "user_attested_model": "DeepSeek-V4-Pro",
+  "samples": [
+    {
+      "slug": "silent-era",
+      "agent_label": "Agent A",
+      "harness_type": "dedicated_writing_harness",
+      "reasoning_effort": "unknown",
+      "sandbox_profile": "no_shell",
+      "file_count": 8,
+      "total_bytes": 29725,
+      "chapters": [
+        {
+          "chapter": 1,
+          "path": "chapters/e01/ch-01/正文.md",
+          "sha256": "0ab90944bc85d2ab87ca2f1334729881c059d38ec86eb33015a0b89ea5c4b3fb",
+          "cjk": 5746,
+          "bytes": 20136,
+          "voice_signature": {
+            "sentence_count": 418,
+            "sentence_len_mean": 13.7,
+            "sentence_len_cv": 0.648,
+            "dialogue_ratio": 0.155,
+            "paragraph_count": 151,
+            "paragraph_len_mean": 38.0,
+            "micro_paragraph_ratio": 0.338,
+            "simile_per_mille": 4.18,
+            "clauses_per_sentence": 1.86,
+            "question_ratio": 0.026,
+            "exclaim_ratio": 0.0
+          },
+          "quality_gate": {
+            "blocking": 3,
+            "advisory": 14
+          },
+          "narrative_gate": {
+            "blocking": 10,
+            "advisory": 2
+          }
+        }
+      ],
+      "strengths": [
+        "preserved core writing task without shell",
+        "strong embodied scene pressure",
+        "limited cognition and independent supporting characters"
+      ],
+      "weaknesses": [
+        "scene contract overrun",
+        "room number continuity conflict",
+        "three blocking not-is-flip findings",
+        "high simile density",
+        "no auditable formal workflow"
+      ]
+    },
+    {
+      "slug": "reborn-1998",
+      "agent_label": "Agent B",
+      "harness_type": "dedicated_programming_harness",
+      "reasoning_effort": "max",
+      "sandbox_profile": "tool_enabled",
+      "file_count": 78,
+      "total_bytes": 223501,
+      "chapters": [
+        {
+          "chapter": 1,
+          "path": "chapters/e01/ch-01/正文.md",
+          "sha256": "d31c2617b156490edfce0fa733fcd53f60a0061244327dd16f9aca19f5b07788",
+          "cjk": 6468,
+          "bytes": 22695,
+          "voice_signature": {
+            "sentence_count": 295,
+            "sentence_len_mean": 21.8,
+            "sentence_len_cv": 0.623,
+            "dialogue_ratio": 0.159,
+            "paragraph_count": 172,
+            "paragraph_len_mean": 37.6,
+            "micro_paragraph_ratio": 0.267,
+            "simile_per_mille": 2.63,
+            "clauses_per_sentence": 2.51,
+            "question_ratio": 0.119,
+            "exclaim_ratio": 0.02
+          },
+          "quality_gate": {
+            "blocking": 0,
+            "advisory": 6
+          },
+          "narrative_gate": {
+            "blocking": 0,
+            "advisory": 0
+          }
+        },
+        {
+          "chapter": 2,
+          "path": "chapters/e02/ch-02/正文.md",
+          "sha256": "9d3e105d8857fd7f2fdb432bc180693626280efdcbdceaf8bad5c5575afdb253",
+          "cjk": 7103,
+          "bytes": 24693,
+          "voice_signature": {
+            "sentence_count": 330,
+            "sentence_len_mean": 21.5,
+            "sentence_len_cv": 0.607,
+            "dialogue_ratio": 0.183,
+            "paragraph_count": 147,
+            "paragraph_len_mean": 48.3,
+            "micro_paragraph_ratio": 0.17,
+            "simile_per_mille": 1.13,
+            "clauses_per_sentence": 2.41,
+            "question_ratio": 0.082,
+            "exclaim_ratio": 0.012
+          },
+          "quality_gate": {
+            "blocking": 0,
+            "advisory": 13
+          },
+          "narrative_gate": {
+            "blocking": 0,
+            "advisory": 0
+          }
+        }
+      ],
+      "process_anomalies": {
+        "generation_records_per_chapter": 4,
+        "distinct_content_hashes_per_chapter": 1,
+        "duplicate_review_files": 12,
+        "sample_claimed_provider": "anthropic",
+        "sample_claimed_model": "claude-opus-4-5",
+        "sample_claimed_date": "2025-01-20",
+        "user_attested_provider_family": "DeepSeek",
+        "unsupported_review_quote": "我靠",
+        "cross_chapter_time_conflict": true
+      },
+      "strengths": [
+        "complete-looking project scaffolding",
+        "two formal-length chapters",
+        "clear commercial web-fiction goals"
+      ],
+      "weaknesses": [
+        "same-day timeline reset between chapters",
+        "protagonist-proof supporting cast",
+        "duplicate evidence and reviews",
+        "false provenance metadata",
+        "self-review confirmation loop"
+      ]
+    }
+  ],
+  "required_changes": [
+    "count generations by distinct chapter content hash",
+    "reject duplicate semantic generation evidence",
+    "enforce authority and provenance confidence consistency",
+    "record harness, reasoning, sandbox and tool capability metadata",
+    "support degraded_exploration without claiming ready",
+    "bind chapter handoffs and reviews to previous chapter hashes",
+    "verify critical review quotations against source prose",
+    "report duplicate non-canonical review artifacts",
+    "exercise ch05 checkpoint audit in the next serial test"
+  ],
+  "author_approval": false,
+  "publication_eligibility": false
+}
+

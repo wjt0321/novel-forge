@@ -8,6 +8,7 @@ shell script.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -16,6 +17,9 @@ from typing import Any
 from .planning_spec import (
     BEAT_CHAIN_SECTION,
     CAUSAL_RESPONSIBILITY_SECTION,
+    CHAPTER_HANDOFF_FIELDS,
+    CHAPTER_HANDOFF_SECTION,
+    CHAPTER_HANDOFF_TRANSITIONS,
     COGNITION_LEDGER_SECTION,
     DECISION_QUESTION_FIELDS,
     DECISION_QUESTION_SECTION,
@@ -205,7 +209,7 @@ def check_scene_package(
     """Blocking problems in the scene package (and dialogue ledger)."""
     if mode not in DRAFT_MODES:
         raise ValueError(f"unknown draft mode: {mode}")
-    if mode == "exploration":
+    if mode != "formal":
         return []
     blocking: list[str] = []
     for heading in SCENE_PACKAGE_REQUIRED_SECTIONS:
@@ -286,6 +290,8 @@ def check_chapter_text(chapter_text: str, mode: str = "formal") -> list[str]:
     """Blocking problems in the chapter body itself."""
     if mode not in DRAFT_MODES:
         raise ValueError(f"unknown draft mode: {mode}")
+    if mode == "degraded_exploration":
+        return []
     blocking: list[str] = []
     if mode == "formal":
         cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", chapter_text))
@@ -300,6 +306,155 @@ def check_chapter_text(chapter_text: str, mode: str = "formal") -> list[str]:
     ]
     if len(paragraphs) < MIN_CHAPTER_PARAGRAPHS:
         blocking.append("正文段落不足，无法验证场景推进")
+    return blocking
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _chinese_number(value: str) -> int | None:
+    digits = {
+        "零": 0,
+        "〇": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if value in digits:
+        return digits[value]
+    if value == "十":
+        return 10
+    if "十" in value:
+        left, right = value.split("十", 1)
+        tens = digits.get(left, 1) if left else 1
+        ones = digits.get(right, 0) if right else 0
+        return tens * 10 + ones
+    return None
+
+
+def _time_rank(value: str) -> int | None:
+    """Return an approximate minute-of-day rank for common Chinese times."""
+    match = re.search(r"(?<!\d)([01]?\d|2[0-3])[:：](\d{2})", value)
+    if match:
+        return int(match.group(1)) * 60 + int(match.group(2))
+    hour: int | None = None
+    numeric = re.search(r"(?<!\d)(\d{1,2})点", value)
+    if numeric:
+        hour = int(numeric.group(1))
+    else:
+        chinese = re.search(r"([零〇一二两三四五六七八九十]{1,3})点", value)
+        if chinese:
+            hour = _chinese_number(chinese.group(1))
+    if hour is not None:
+        if any(token in value for token in ("下午", "傍晚", "晚上", "夜里")):
+            if hour < 12:
+                hour += 12
+        elif "中午" in value and hour < 11:
+            hour += 12
+        elif "深夜" in value and hour < 6:
+            hour += 24
+        return hour * 60
+    period_ranks = (
+        ("凌晨", 2 * 60),
+        ("清晨", 6 * 60),
+        ("早上", 7 * 60),
+        ("上午", 9 * 60),
+        ("中午", 12 * 60),
+        ("下午", 15 * 60),
+        ("傍晚", 18 * 60),
+        ("晚上", 20 * 60),
+        ("夜里", 21 * 60),
+        ("深夜", 23 * 60),
+    )
+    return next((rank for token, rank in period_ranks if token in value), None)
+
+
+def check_chapter_handoff(
+    project_root: Path,
+    chapter_path: Path,
+    package_text: str,
+    chapter_text: str,
+    chapter_number: int | None,
+) -> list[str]:
+    """Validate the explicit previous-to-current chapter continuity contract."""
+    if chapter_number is None or chapter_number <= 1:
+        return []
+    body = section(package_text, CHAPTER_HANDOFF_SECTION)
+    if body is None:
+        return [f"scene-package 缺少章节：{CHAPTER_HANDOFF_SECTION}"]
+    values = _labeled_field_values(body, CHAPTER_HANDOFF_FIELDS)
+    blocking = [
+        f"{CHAPTER_HANDOFF_SECTION} 未填写：{aliases[0]}"
+        for aliases in CHAPTER_HANDOFF_FIELDS
+        if not _meaningful(values.get(aliases[0], ""))
+    ]
+    if blocking:
+        return blocking
+    transition = values["转场类型"]
+    if transition not in CHAPTER_HANDOFF_TRANSITIONS:
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 转场类型必须是 "
+            + "、".join(CHAPTER_HANDOFF_TRANSITIONS)
+        )
+    previous_matches = sorted(
+        (project_root / "chapters").glob(
+            f"e*/ch-{chapter_number - 1:02d}/正文.md"
+        )
+    )
+    if not previous_matches:
+        blocking.append(f"找不到上一章正文：ch-{chapter_number - 1:02d}")
+        return blocking
+    previous_path = previous_matches[0]
+    expected_path = previous_path.relative_to(project_root).as_posix()
+    if values["上一章正文路径"].replace("\\", "/") != expected_path:
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 上一章正文路径与实际文件不一致"
+        )
+    if values["上一章正文 SHA-256"].lower() != _sha256(previous_path):
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 上一章正文 SHA-256 与当前文件不一致"
+        )
+    previous_text = previous_path.read_text(encoding="utf-8-sig")
+    previous_quote = values["上一章结尾原文"]
+    previous_quote_at = previous_text.rfind(previous_quote)
+    if previous_quote_at < 0:
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 上一章结尾原文未在上一章正文中找到"
+        )
+    elif previous_quote_at + len(previous_quote) < int(len(previous_text) * 0.8):
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 上一章结尾原文不在上一章结尾 20% 内"
+        )
+    current_quote = values["本章开头原文"]
+    current_quote_at = chapter_text.find(current_quote)
+    if current_quote_at < 0:
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 本章开头原文未在当前正文中找到"
+        )
+    elif current_quote_at > int(len(chapter_text) * 0.2):
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 本章开头原文不在当前章开头 20% 内"
+        )
+    if transition == "same_day_continuous":
+        previous_rank = _time_rank(values["上一章结束时间"])
+        current_rank = _time_rank(values["本章开始时间"])
+        if (
+            previous_rank is not None
+            and current_rank is not None
+            and current_rank < previous_rank
+        ):
+            blocking.append(
+                f"{CHAPTER_HANDOFF_SECTION} 同日连续场景发生时间倒退："
+                f"{values['上一章结束时间']} → {values['本章开始时间']}"
+            )
     return blocking
 
 
@@ -377,6 +532,8 @@ def narrative_report(
     ledger = (
         ledger_path.read_text(encoding="utf-8-sig") if ledger_path.exists() else None
     )
+    project_root = _derive_project_root(chapter_path)
+    chapter_number = _chapter_number(chapter_path, package_path)
     blocking = check_scene_package(package, ledger, mode=mode)
     blocking.extend(check_chapter_text(chapter, mode=mode))
     if ledger is None:
@@ -384,13 +541,25 @@ def narrative_report(
     else:
         advisory = []
     if mode == "formal":
-        project_root = _derive_project_root(chapter_path)
-        chapter_number = _chapter_number(chapter_path, package_path)
+        blocking.extend(
+            check_chapter_handoff(
+                project_root,
+                chapter_path,
+                package,
+                chapter,
+                chapter_number,
+            )
+        )
         mat_blocking, mat_advisory = check_project_materials(
             project_root, chapter_number
         )
         blocking.extend(mat_blocking)
         advisory.extend(mat_advisory)
+    elif mode == "degraded_exploration":
+        advisory.append(
+            "降级运行：工具或沙箱能力受限；本稿仅作探索样本，"
+            "必须记录 tool_capabilities/tool_failures，且不得进入 ready。"
+        )
     return {"blocking": blocking, "advisory": advisory}
 
 

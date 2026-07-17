@@ -98,7 +98,27 @@ def _review_file(
     independence_note: str = "",
 ) -> Path:
     number = int(chapter.removeprefix("ch"))
-    binding = book_project.review_binding(tmp_path, "demo", number)
+    binding = book_project.review_binding(
+        tmp_path, "demo", number, role=role
+    )
+    book_dir = tmp_path / "books/demo"
+    chapter_path = book_project.find_chapter_file(book_dir, number)
+    chapter_text = chapter_path.read_text(encoding="utf-8-sig")
+    evidence_quote = next(
+        line.strip()[:24]
+        for line in chapter_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    previous_quote = "not_applicable"
+    if number > 1:
+        previous_text = book_project.find_chapter_file(
+            book_dir, number - 1
+        ).read_text(encoding="utf-8-sig")
+        previous_quote = next(
+            line.strip()[-24:]
+            for line in previous_text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
     path = tmp_path / f"review-{role}.md"
     path.write_text(
         f"# Review — {chapter} / {role}\n\n"
@@ -108,9 +128,12 @@ def _review_file(
         "- date: 2026-07-16\n\n"
         f"- source_fingerprint: {binding['source_fingerprint']}\n"
         f"- chapter_sha256: {binding['chapter_sha256']}\n"
+        f"- previous_chapter_sha256: {binding['previous_chapter_sha256']}\n"
         f"- planning_sha256: {binding['planning_sha256']}\n"
         f"- draft_mode: {binding['draft_mode']}\n"
         f"- generation_id: {binding['generation_id']}\n\n"
+        f"- evidence_quote: {evidence_quote}\n"
+        f"- previous_chapter_quote: {previous_quote}\n\n"
         "- reviewer_type: model\n"
         f"- reviewer_id: {role}-instance\n"
         f"- provider: {provider}\n"
@@ -132,9 +155,14 @@ def _record_generation(
     provider: str = "writer-provider",
     model: str = "writer-model",
     generation_id: str = "generation.ch01.current",
+    chapter_number: int = 1,
     **metrics,
 ) -> str:
-    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter = book_project.find_chapter_file(book_dir, chapter_number)
+    content_path = chapter.relative_to(book_dir).as_posix()
+    state = book_project.project_status(
+        tmp_path, "demo", chapter_number
+    )["chapters"][0]
     source = tmp_path / f"{generation_id}.md"
     source.write_text(
         render_evidence_markdown(
@@ -144,14 +172,14 @@ def _record_generation(
                 "kind": "generation",
                 "created_at": "2026-07-17T12:00:00Z",
                 "authority": "agent",
-                "source_paths": ["chapters/e01/ch-01/正文.md"],
+                "source_paths": [content_path],
                 "summary": "当前正式稿生成来源。",
-                "chapter": 1,
-                "draft_mode": "formal",
+                "chapter": chapter_number,
+                "draft_mode": state["draft_mode"],
                 "writer_type": "agent",
                 "provider": provider,
                 "model": model,
-                "content_path": "chapters/e01/ch-01/正文.md",
+                "content_path": content_path,
                 "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
                 **metrics,
             }
@@ -159,7 +187,9 @@ def _record_generation(
         encoding="utf-8",
     )
     record_evidence(tmp_path, "demo", source)
-    book_project.bind_generation(tmp_path, "demo", 1, generation_id)
+    book_project.bind_generation(
+        tmp_path, "demo", chapter_number, generation_id
+    )
     return generation_id
 
 
@@ -238,6 +268,49 @@ def test_saved_review_becomes_stale_after_chapter_change(tmp_path: Path):
     status = book_project.project_status(tmp_path, "demo", 1)
     saved = next(r for r in status["reviews"] if r["role"] == "blind-reader")
     assert saved["stale"] is True
+
+
+def test_directly_written_invalid_review_cannot_enter_benchmark(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    _record_generation(tmp_path, book_dir)
+    reviews_dir = book_dir / "reviews"
+    for role, verdict in (
+        ("blind-reader", "pass"),
+        ("chapter-editor", "ready_for_editor_decision"),
+    ):
+        source = _review_file(
+            tmp_path,
+            role,
+            verdict,
+            provider="independent-provider",
+            model=f"{role}-model",
+        )
+        text = source.read_text(encoding="utf-8")
+        if role == "blind-reader":
+            text = text.replace(
+                "- evidence_quote: 他沿着街慢慢走",
+                "- evidence_quote: 正文不存在的伪造引文",
+            )
+        (reviews_dir / f"ch01-{role}.md").write_text(
+            text,
+            encoding="utf-8",
+        )
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+    blind = next(
+        review
+        for review in status["reviews"]
+        if review["role"] == "blind-reader"
+    )
+
+    assert blind["validation_valid"] is False
+    assert status["benchmark_eligible"] is False
+    assert any(
+        item["code"] == "invalid_review_record"
+        for item in status["workflow_integrity"]["blockers"]
+    )
 
 
 def test_stale_generation_cannot_be_reused_for_new_review(tmp_path: Path):
@@ -367,6 +440,132 @@ def test_exploration_chapter_cannot_enter_ready(tmp_path: Path):
         book_project.advance_state(tmp_path, "demo", 1, "ready")
 
 
+def test_degraded_exploration_reports_tool_limit_and_cannot_enter_ready(
+    tmp_path: Path,
+):
+    _make_book(tmp_path)
+    book_project.set_draft_mode(
+        tmp_path, "demo", 1, "degraded_exploration"
+    )
+
+    gates = book_project.run_gates(tmp_path, "demo", 1)
+
+    assert gates["mode"] == "degraded_exploration"
+    assert gates["ready_eligible"] is False
+    assert not gates["narrative"]["blocking"]
+    assert any("降级运行" in item for item in gates["narrative"]["advisory"])
+    status = book_project.project_status(tmp_path, "demo", 1)
+    assert "degraded_exploration" in status["benchmark_missing"]
+    with pytest.raises(BookProjectError, match="formal"):
+        book_project.advance_state(tmp_path, "demo", 1, "ready")
+
+
+def test_critical_review_rejects_quote_not_found_in_prose(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(tmp_path, "blind-reader", "pass")
+    text = review.read_text(encoding="utf-8")
+    review.write_text(
+        text.replace(
+            "- evidence_quote: 他沿着街慢慢走",
+            "- evidence_quote: 正文里从未出现的句子",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BookProjectError, match="evidence_quote"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_previous_chapter_change_stales_next_chapter_consistency_review(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter2 = book_dir / "chapters/e01/ch-02/正文.md"
+    chapter2.parent.mkdir(parents=True)
+    chapter2.write_text(
+        "# 第二章\n\n"
+        + "次日下午，他仍记得昨夜关门的声音。"
+        * 80,
+        encoding="utf-8",
+    )
+    source_package = book_dir / "planning/scene-package-ch01.md"
+    (book_dir / "planning/scene-package-ch02.md").write_text(
+        source_package.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    review = _review_file(
+        tmp_path, "consistency-guard", "pass", chapter="ch02"
+    )
+    book_project.record_review(
+        tmp_path, "demo", 2, "consistency-guard", review
+    )
+
+    chapter1 = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter1.write_text(
+        chapter1.read_text(encoding="utf-8") + "\n上一章结尾改变。\n",
+        encoding="utf-8",
+    )
+    status = book_project.project_status(tmp_path, "demo", 2)
+    saved = next(
+        item
+        for item in status["reviews"]
+        if item["role"] == "consistency-guard"
+    )
+
+    assert saved["stale"] is True
+
+
+def test_previous_chapter_change_does_not_stale_local_only_review(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter2 = book_dir / "chapters/e01/ch-02/正文.md"
+    chapter2.parent.mkdir(parents=True)
+    chapter2.write_text(
+        "# 第二章\n\n" + "次日，他继续向前走。" * 80,
+        encoding="utf-8",
+    )
+    (book_dir / "planning/scene-package-ch02.md").write_text(
+        (book_dir / "planning/scene-package-ch01.md").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    review = _review_file(tmp_path, "line-editor", "pass", chapter="ch02")
+    book_project.record_review(
+        tmp_path, "demo", 2, "line-editor", review
+    )
+
+    chapter1 = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter1.write_text(
+        chapter1.read_text(encoding="utf-8") + "\n前章变化。\n",
+        encoding="utf-8",
+    )
+    status = book_project.project_status(tmp_path, "demo", 2)
+    saved = next(
+        item for item in status["reviews"] if item["role"] == "line-editor"
+    )
+
+    assert saved["stale"] is False
+
+
+def test_project_status_flags_nested_duplicate_review_artifact(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    duplicate = book_dir / "reviews/ch01/blind-reader.md"
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text("# duplicate review\n", encoding="utf-8")
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+
+    assert status["benchmark_eligible"] is False
+    assert any(
+        item["code"] == "duplicate_review_artifact"
+        for item in status["workflow_integrity"]["warnings"]
+    )
+
+
 def test_checkpoint_chapter_requires_arc_audit_before_other_ready_evidence(
     tmp_path: Path,
 ):
@@ -468,6 +667,12 @@ def test_project_status_separates_ready_evidence_from_benchmark_independence(
 def test_project_status_reports_generation_budget_exhaustion(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     for round_number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+        chapter = book_dir / "chapters/e01/ch-01/正文.md"
+        chapter.write_text(
+            chapter.read_text(encoding="utf-8")
+            + f"\n第 {round_number} 轮修订。\n",
+            encoding="utf-8",
+        )
         _record_generation(
             tmp_path,
             book_dir,

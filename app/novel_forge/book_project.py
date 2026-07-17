@@ -232,8 +232,22 @@ def _set_fields(text: str, **fields: str) -> str:
 # --- review files ------------------------------------------------------------
 
 
-def _review_binding_for_book(book_dir: Path, number: int) -> dict[str, str]:
+SERIAL_REVIEW_ROLES = {"consistency-guard", "chapter-editor"}
+
+
+def _review_binding_for_book(
+    book_dir: Path, number: int, role: str | None = None
+) -> dict[str, str]:
     chapter = find_chapter_file(book_dir, number)
+    if number == 1:
+        previous_chapter_sha256 = "not_applicable"
+    else:
+        try:
+            previous_chapter_sha256 = _sha256_path(
+                find_chapter_file(book_dir, number - 1)
+            )
+        except BookProjectError:
+            previous_chapter_sha256 = "missing"
     _, state_text, _ = _read_chapter_state(book_dir, number)
     state = parse_chapter_state(state_text)
     ch_id = _chapter_id(number)
@@ -259,17 +273,36 @@ def _review_binding_for_book(book_dir: Path, number: int) -> dict[str, str]:
         "draft_mode": state["draft_mode"],
         "generation_id": state["generation_id"],
     }
+    fingerprint_data = dict(binding_data)
+    if number > 1 and role in SERIAL_REVIEW_ROLES:
+        fingerprint_data["previous_chapter_sha256"] = (
+            previous_chapter_sha256
+        )
     source_fingerprint = hashlib.sha256(
         json.dumps(
-            binding_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            fingerprint_data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    return {**binding_data, "source_fingerprint": source_fingerprint}
+    return {
+        **binding_data,
+        "previous_chapter_sha256": previous_chapter_sha256,
+        "source_fingerprint": source_fingerprint,
+    }
 
 
-def review_binding(root: Path, slug: str, number: int) -> dict[str, str]:
+def review_binding(
+    root: Path,
+    slug: str,
+    number: int,
+    role: str | None = None,
+) -> dict[str, str]:
     """Return hashes and state identity a review must bind to."""
-    return _review_binding_for_book(book_dir_for(root, slug), number)
+    if role is not None and role not in REVIEW_ROLES:
+        raise BookProjectError(f"未知审稿角色：{role!r}")
+    return _review_binding_for_book(book_dir_for(root, slug), number, role)
 
 
 def _validate_current_generation(
@@ -351,9 +384,12 @@ def parse_review(text: str) -> dict[str, Any]:
         "date": _field("date"),
         "source_fingerprint": _field("source_fingerprint"),
         "chapter_sha256": _field("chapter_sha256"),
+        "previous_chapter_sha256": _field("previous_chapter_sha256"),
         "planning_sha256": _field("planning_sha256"),
         "draft_mode": _field("draft_mode"),
         "generation_id": _field("generation_id"),
+        "evidence_quote": _field("evidence_quote"),
+        "previous_chapter_quote": _field("previous_chapter_quote"),
         "reviewer_type": _field("reviewer_type"),
         "reviewer_id": _field("reviewer_id"),
         "provider": _field("provider"),
@@ -365,6 +401,120 @@ def parse_review(text: str) -> dict[str, Any]:
         "independence_note": _field("independence_note"),
         "must_open": must_open,
     }
+
+
+def _review_validation_errors(
+    root: Path,
+    book_dir: Path,
+    number: int,
+    role: str,
+    parsed: dict[str, Any],
+) -> list[str]:
+    """Return all structural/source errors for one canonical review."""
+    if role not in REVIEW_ROLES:
+        return [f"未知审稿角色：{role!r}"]
+    errors: list[str] = []
+    if parsed["role"] and parsed["role"] != role:
+        errors.append(
+            f"审稿文件 role={parsed['role']} 与参数 {role} 不一致。"
+        )
+    valid_verdicts = (
+        EDITORIAL_VERDICTS if role == "chapter-editor" else REVIEW_VERDICTS
+    )
+    if parsed["verdict"] not in valid_verdicts:
+        errors.append(
+            f"审稿文件缺少合法 verdict（{role} 允许："
+            f"{', '.join(valid_verdicts)}）。"
+        )
+    ch_id = _chapter_id(number)
+    if parsed["chapter"] and parsed["chapter"] != ch_id:
+        errors.append(
+            f"审稿文件 chapter={parsed['chapter']} 与目标 {ch_id} 不一致。"
+        )
+
+    try:
+        current_binding = _review_binding_for_book(book_dir, number, role)
+    except BookProjectError as exc:
+        return [*errors, str(exc)]
+    if parsed["source_fingerprint"] != current_binding["source_fingerprint"]:
+        errors.append(
+            "审稿来源指纹与当前章节不一致；正文或规划材料已经变化，"
+            "请重读全文后复审。"
+        )
+    binding_fields = [
+        "chapter_sha256",
+        "planning_sha256",
+        "draft_mode",
+        "generation_id",
+    ]
+    if number > 1 and role in SERIAL_REVIEW_ROLES:
+        binding_fields.append("previous_chapter_sha256")
+    for field in binding_fields:
+        if parsed[field] != current_binding[field]:
+            errors.append(
+                f"审稿字段 {field} 与当前章节不一致，请基于当前材料重新审稿。"
+            )
+
+    generation = None
+    if parsed["generation_id"] != "unrecorded":
+        try:
+            generation, _ = _validate_current_generation(
+                root,
+                book_dir,
+                number,
+                parsed["generation_id"],
+                parsed["draft_mode"],
+            )
+        except NovelForgeError as exc:
+            errors.append(str(exc))
+
+    if role in {"blind-reader", "consistency-guard", "chapter-editor"}:
+        evidence_quote = parsed["evidence_quote"]
+        if not evidence_quote:
+            errors.append(f"{role} 关键审稿缺少 evidence_quote。")
+        else:
+            chapter_text = find_chapter_file(
+                book_dir, number
+            ).read_text(encoding="utf-8-sig")
+            if evidence_quote not in chapter_text:
+                errors.append(
+                    f"{role} 的 evidence_quote 未在当前正文中找到。"
+                )
+    if number > 1 and role in SERIAL_REVIEW_ROLES:
+        previous_quote = parsed["previous_chapter_quote"]
+        if not previous_quote:
+            errors.append(f"{role} 缺少 previous_chapter_quote。")
+        else:
+            previous_text = find_chapter_file(
+                book_dir, number - 1
+            ).read_text(encoding="utf-8-sig")
+            if previous_quote not in previous_text:
+                errors.append(
+                    f"{role} 的 previous_chapter_quote 未在上一章正文中找到。"
+                )
+    if role in {"blind-reader", "chapter-editor"}:
+        for field in (
+            "reviewer_type",
+            "reviewer_id",
+            "provider",
+            "model",
+            "context_scope",
+        ):
+            if not parsed[field]:
+                errors.append(f"关键审稿缺少来源字段：{field}")
+        if role == "blind-reader" and parsed["context_scope"] != "prose_only":
+            errors.append("blind-reader 的 context_scope 必须是 prose_only。")
+        if generation is not None:
+            same_origin = (
+                parsed["provider"] == generation.data["provider"]
+                and parsed["model"] == generation.data["model"]
+            )
+            if same_origin and not parsed["independence_note"]:
+                errors.append(
+                    "同 provider/model 的关键审稿必须填写 independence_note；"
+                    "角色名不同不等于独立评审。"
+                )
+    return errors
 
 
 def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any]]:
@@ -391,13 +541,25 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
         parsed["verdict_valid"] = parsed["verdict"] in valid_verdicts
         try:
             number = int(m.group(1).removeprefix("ch"))
-            current_binding = _review_binding_for_book(book_dir, number)
+            current_binding = _review_binding_for_book(
+                book_dir, number, parsed["role"]
+            )
             parsed["stale"] = (
                 parsed["source_fingerprint"]
                 != current_binding["source_fingerprint"]
             )
+            validation_errors = _review_validation_errors(
+                book_dir.parents[1],
+                book_dir,
+                number,
+                parsed["role"],
+                parsed,
+            )
         except (BookProjectError, ValueError):
             parsed["stale"] = True
+            validation_errors = ["无法解析或绑定审稿章节。"]
+        parsed["validation_errors"] = validation_errors
+        parsed["validation_valid"] = not validation_errors
         parsed["same_provider_model_as_generation"] = False
         parsed["independent"] = None
         generation_id = parsed.get("generation_id")
@@ -408,11 +570,14 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
                 )
                 same_origin = (
                     generation.kind == "generation"
+                    and bool(parsed.get("provider"))
+                    and bool(parsed.get("model"))
                     and parsed.get("provider") == generation.data["provider"]
                     and parsed.get("model") == generation.data["model"]
                 )
                 parsed["same_provider_model_as_generation"] = same_origin
-                parsed["independent"] = not same_origin
+                if parsed.get("provider") and parsed.get("model"):
+                    parsed["independent"] = not same_origin
             except NovelForgeError:
                 parsed["stale"] = True
         out.append(parsed)
@@ -438,70 +603,13 @@ def record_review(
         raise BookProjectError(f"审稿文件不是有效 UTF-8：{review_file} ({exc})")
 
     parsed = parse_review(text)
-    if parsed["role"] and parsed["role"] != role:
-        raise BookProjectError(
-            f"审稿文件 role={parsed['role']} 与参数 {role} 不一致。"
-        )
-    valid_verdicts = EDITORIAL_VERDICTS if role == "chapter-editor" else REVIEW_VERDICTS
-    if parsed["verdict"] not in valid_verdicts:
-        raise BookProjectError(
-            f"审稿文件缺少合法 verdict（{role} 允许：{', '.join(valid_verdicts)}）。"
-        )
-    ch_id = _chapter_id(number)
-    if parsed["chapter"] and parsed["chapter"] != ch_id:
-        raise BookProjectError(
-            f"审稿文件 chapter={parsed['chapter']} 与目标 {ch_id} 不一致。"
-        )
-    current_binding = _review_binding_for_book(book_dir, number)
-    if parsed["source_fingerprint"] != current_binding["source_fingerprint"]:
-        raise BookProjectError(
-            "审稿来源指纹与当前章节不一致；正文或规划材料已经变化，请重读全文后复审。"
-        )
-    for field in (
-        "chapter_sha256",
-        "planning_sha256",
-        "draft_mode",
-        "generation_id",
-    ):
-        if parsed[field] != current_binding[field]:
-            raise BookProjectError(
-                f"审稿字段 {field} 与当前章节不一致，请基于当前材料重新审稿。"
-            )
-    generation = None
-    if parsed["generation_id"] != "unrecorded":
-        generation, _ = _validate_current_generation(
-            root,
-            book_dir,
-            number,
-            parsed["generation_id"],
-            parsed["draft_mode"],
-        )
-    if role in {"blind-reader", "chapter-editor"}:
-        for field in (
-            "reviewer_type",
-            "reviewer_id",
-            "provider",
-            "model",
-            "context_scope",
-        ):
-            if not parsed[field]:
-                raise BookProjectError(f"关键审稿缺少来源字段：{field}")
-        if role == "blind-reader" and parsed["context_scope"] != "prose_only":
-            raise BookProjectError(
-                "blind-reader 的 context_scope 必须是 prose_only。"
-            )
-        if parsed["generation_id"] != "unrecorded":
-            assert generation is not None
-            same_origin = (
-                parsed["provider"] == generation.data["provider"]
-                and parsed["model"] == generation.data["model"]
-            )
-            if same_origin and not parsed["independence_note"]:
-                raise BookProjectError(
-                    "同 provider/model 的关键审稿必须填写 independence_note；"
-                    "角色名不同不等于独立评审。"
-                )
+    validation_errors = _review_validation_errors(
+        root, book_dir, number, role, parsed
+    )
+    if validation_errors:
+        raise BookProjectError(validation_errors[0])
 
+    ch_id = _chapter_id(number)
     target = book_dir / "reviews" / _review_filename(ch_id, role)
     target.parent.mkdir(parents=True, exist_ok=True)
     # The review may already sit at its canonical location (reviewers write
@@ -553,7 +661,8 @@ def advance_state(
 
         if current["draft_mode"] != "formal":
             raise BookProjectError(
-                "exploration 稿不能进入 ready；请切换为 formal 并重跑全部正式门禁。"
+                f"{current['draft_mode']} 稿属于非 formal 模式，不能进入 ready；"
+                "请切换为 formal 并重跑全部正式门禁。"
             )
         audit = evidence_status(root, slug, number)
         if audit["arc_audit_due"] and not audit["arc_audit_satisfied"]:
@@ -577,6 +686,7 @@ def advance_state(
             for role, required_verdict in READY_REQUIRED_REVIEWS
             if reviews.get(role, {}).get("verdict") != required_verdict
             or reviews.get(role, {}).get("stale", True)
+            or not reviews.get(role, {}).get("validation_valid", False)
         ]
         if missing:
             raise BookProjectError(
@@ -809,6 +919,38 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["reviews"] = list_reviews(
         book_dir, _chapter_id(number) if number is not None else None
     )
+    duplicate_review_artifacts: list[str] = []
+    reviews_dir = book_dir / "reviews"
+    if reviews_dir.is_dir():
+        for path in sorted(reviews_dir.rglob("*.md")):
+            if path.parent == reviews_dir:
+                continue
+            relative = path.relative_to(reviews_dir)
+            chapter_match = next(
+                (
+                    re.fullmatch(r"ch-?(\d+)", part)
+                    for part in relative.parts
+                    if re.fullmatch(r"ch-?(\d+)", part)
+                ),
+                None,
+            )
+            if chapter_match is None:
+                continue
+            review_number = int(chapter_match.group(1))
+            if number is not None and review_number != number:
+                continue
+            role = re.sub(r"^ch\d+-", "", path.stem)
+            if role not in REVIEW_ROLES:
+                continue
+            artifact = f"reviews/{relative.as_posix()}"
+            duplicate_review_artifacts.append(artifact)
+            _issue(
+                integrity_warnings,
+                review_number,
+                "duplicate_review_artifact",
+                f"{artifact} 位于非权威嵌套目录；"
+                "审稿唯一入口应为 reviews/chXX-<role>.md。",
+            )
     for review in data["reviews"]:
         try:
             review_number = int(review["chapter"].removeprefix("ch"))
@@ -820,6 +962,14 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
                 review_number,
                 "invalid_review_verdict",
                 f"{review['file']} 的 verdict 不是该角色允许的标准值。",
+            )
+        if not review.get("validation_valid", False):
+            _issue(
+                integrity_blockers,
+                review_number,
+                "invalid_review_record",
+                f"{review['file']} 未通过完整审稿校验："
+                + "；".join(review.get("validation_errors", [])),
             )
         if review.get("stale"):
             _issue(
@@ -839,7 +989,9 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     current_reviews = [
         review
         for review in data["reviews"]
-        if not review.get("stale") and review.get("verdict_valid")
+        if not review.get("stale")
+        and review.get("verdict_valid")
+        and review.get("validation_valid")
     ]
     independent_values = [
         review.get("independent")
@@ -866,6 +1018,14 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         or critical.get(role, {}).get("independent") is not True
     ]
     data["review_confidence"] = review_confidence
+    if any(
+        chapter["draft_mode"] == "degraded_exploration"
+        for chapter in chapters
+    ):
+        benchmark_missing.append("degraded_exploration")
+    if duplicate_review_artifacts:
+        benchmark_missing.append("duplicate_review_artifact")
+    data["duplicate_review_artifacts"] = duplicate_review_artifacts
     data["benchmark_eligible"] = not benchmark_missing
     data["benchmark_missing"] = benchmark_missing
     data["evidence"] = evidence_status(root, slug, number)
@@ -939,7 +1099,7 @@ def run_gates(
         ),
         "quality": quality,
     }
-    if package.exists() or mode == "exploration":
+    if package.exists() or mode != "formal":
         result["narrative"] = book_gates.narrative_report(
             chapter_file, package, mode=mode
         )

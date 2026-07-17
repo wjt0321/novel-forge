@@ -30,6 +30,26 @@ COGNITION_LEDGER_SECTION = "1d. 认知与可证伪假设"
 PLANNING_FALSIFICATION_SECTION = "1e. 规划反证与常识检查"
 CAUSAL_RESPONSIBILITY_SECTION = "3c. 因果归属账本"
 EXPERTISE_AUDIT_SECTION = "5b. 专业判断审计"
+CHAPTER_HANDOFF_SECTION = "0b. 章际交接"
+CHAPTER_HANDOFF_FIELDS: tuple[tuple[str, ...], ...] = (
+    ("上一章正文路径",),
+    ("上一章正文 SHA-256", "上一章正文SHA-256"),
+    ("上一章结尾原文",),
+    ("本章开头原文",),
+    ("上一章结束时间",),
+    ("本章开始时间",),
+    ("上一章结束地点",),
+    ("本章开始地点",),
+    ("上一章结束动作",),
+    ("本章开始动作",),
+    ("转场类型",),
+)
+CHAPTER_HANDOFF_TRANSITIONS: tuple[str, ...] = (
+    "same_day_continuous",
+    "cross_day",
+    "flashback",
+    "parallel",
+)
 DECISION_QUESTION_FIELDS: tuple[tuple[str, ...], ...] = (
     ("不能同时得到的两样东西",),
     ("角色拒绝承认什么", "拒绝承认"),
@@ -49,7 +69,11 @@ MIN_BEATS = 2
 MIN_CAUSAL_RESPONSIBILITY_ROWS = 1
 MIN_CHAPTER_PARAGRAPHS = 3
 MIN_FORMAL_CJK = 5000
-DRAFT_MODES: tuple[str, ...] = ("formal", "exploration")
+DRAFT_MODES: tuple[str, ...] = (
+    "formal",
+    "exploration",
+    "degraded_exploration",
+)
 ARC_AUDIT_INTERVAL = 5
 MAX_AUTOMATIC_GENERATIONS = 3
 
@@ -204,6 +228,18 @@ PROVENANCE_CONFIDENCE_LEVELS: tuple[str, ...] = (
     "mixed_attestation",
     "user_attested",
     "unknown",
+)
+GENERATION_REASONING_EFFORTS: tuple[str, ...] = (
+    "unknown",
+    "standard",
+    "high",
+    "max",
+)
+GENERATION_SANDBOX_PROFILES: tuple[str, ...] = (
+    "unknown",
+    "full",
+    "restricted",
+    "no_shell",
 )
 HUMAN_NARRATIVE_POLICY_IDS: tuple[str, ...] = tuple(
     HUMAN_NARRATIVE_POLICIES

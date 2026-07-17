@@ -18,6 +18,8 @@ from .planning_spec import (
     EVIDENCE_DIRECTORIES,
     EVIDENCE_KINDS,
     GENERATION_METRICS_SOURCES,
+    GENERATION_REASONING_EFFORTS,
+    GENERATION_SANDBOX_PROFILES,
     GENERATION_STAGES,
     MAX_AUTOMATIC_GENERATIONS,
     PROVENANCE_CONFIDENCE_LEVELS,
@@ -106,6 +108,17 @@ def _optional_nonnegative_number(data: Mapping[str, Any], field: str) -> None:
         raise BookEvidenceError(f"generation.{field} 必须是非负数或 null。")
 
 
+def _optional_string_list(data: Mapping[str, Any], field: str) -> None:
+    value = data.get(field)
+    if value is not None and (
+        not isinstance(value, list)
+        or not all(isinstance(item, str) and item.strip() for item in value)
+    ):
+        raise BookEvidenceError(
+            f"generation.{field} 必须是非空字符串组成的数组或 null。"
+        )
+
+
 def _validate_common(raw: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(raw)
     for forbidden in FORBIDDEN_CLAIMS:
@@ -137,7 +150,9 @@ def _validate_common(raw: Mapping[str, Any]) -> dict[str, Any]:
 def _validate_generation(data: dict[str, Any]) -> None:
     _require_chapter(data)
     if data.get("draft_mode") not in DRAFT_MODES:
-        raise BookEvidenceError("generation.draft_mode 必须是 formal 或 exploration。")
+        raise BookEvidenceError(
+            "generation.draft_mode 必须是 " + "、".join(DRAFT_MODES) + "。"
+        )
     if data.get("writer_type") not in {"human", "agent", "model"}:
         raise BookEvidenceError("generation.writer_type 必须是 human、agent 或 model。")
     _require_string(data, "provider")
@@ -183,6 +198,65 @@ def _validate_generation(data: dict[str, Any]) -> None:
             + "、".join(PROVENANCE_CONFIDENCE_LEVELS)
             + "。"
         )
+    if confidence == "user_attested" and data.get("authority") not in {
+        "author",
+        "human_delegate",
+    }:
+        raise BookEvidenceError(
+            "generation.provenance_confidence=user_attested 时，"
+            "authority 必须是 author 或 human_delegate。"
+        )
+    reasoning_effort = data.get("reasoning_effort")
+    if (
+        reasoning_effort is not None
+        and reasoning_effort not in GENERATION_REASONING_EFFORTS
+    ):
+        raise BookEvidenceError(
+            "generation.reasoning_effort 必须是 "
+            + "、".join(GENERATION_REASONING_EFFORTS)
+            + "。"
+        )
+    sandbox_profile = data.get("sandbox_profile")
+    if (
+        sandbox_profile is not None
+        and sandbox_profile not in GENERATION_SANDBOX_PROFILES
+    ):
+        raise BookEvidenceError(
+            "generation.sandbox_profile 必须是 "
+            + "、".join(GENERATION_SANDBOX_PROFILES)
+            + "。"
+        )
+    _optional_string_list(data, "tool_capabilities")
+    _optional_string_list(data, "tool_failures")
+    if data.get("draft_mode") == "degraded_exploration":
+        _require_string(data, "agent_harness")
+        if sandbox_profile not in {"restricted", "no_shell"}:
+            raise BookEvidenceError(
+                "degraded_exploration generation.sandbox_profile "
+                "必须是 restricted 或 no_shell。"
+            )
+        _require_string_list(data, "tool_capabilities")
+        _require_string_list(data, "tool_failures")
+    human_authorized = data.get("human_regeneration_authorized")
+    if human_authorized is not None and human_authorized is not True:
+        raise BookEvidenceError(
+            "generation.human_regeneration_authorized 只能为 true 或省略。"
+        )
+    if human_authorized is True:
+        if data.get("authority") not in {"author", "human_delegate"}:
+            raise BookEvidenceError(
+                "人工回炉授权的 authority 必须是 author 或 human_delegate。"
+            )
+        _require_string(data, "human_decision_reference")
+    if confidence == "harness_exposed":
+        _require_string(data, "run_id")
+        _require_string(data, "agent_harness")
+        _require_string_list(data, "tool_capabilities")
+        if metrics_source != "harness_reported":
+            raise BookEvidenceError(
+                "harness_exposed generation 的 metrics_source "
+                "必须是 harness_reported。"
+            )
     parent = data.get("parent_generation_id")
     if parent is not None and (
         not isinstance(parent, str)
@@ -565,12 +639,47 @@ def record_evidence(root: Path, slug: str, source_file: Path) -> dict[str, Any]:
     record = parse_evidence_markdown(text)
     _validate_book_sources(book_dir, record)
 
+    existing_generation_hashes: set[str] = set()
     for existing in _all_evidence_paths(book_dir):
         existing_record = parse_evidence_markdown(
             existing.read_text(encoding="utf-8-sig")
         )
         if existing_record.id == record.id:
             raise BookEvidenceError(f"证据 id 已存在，不得覆盖：{record.id}")
+        if (
+            record.kind == "generation"
+            and existing_record.kind == "generation"
+            and existing_record.data["chapter"] == record.data["chapter"]
+            and existing_record.data["content_sha256"]
+            == record.data["content_sha256"]
+        ):
+            raise BookEvidenceError(
+                "相同正文版本已有 generation 证据："
+                f"{existing_record.id}；不得通过更换 id 重复计入生成轮次。"
+            )
+        if (
+            record.kind == "generation"
+            and existing_record.kind == "generation"
+            and existing_record.data["chapter"] == record.data["chapter"]
+        ):
+            existing_generation_hashes.add(
+                existing_record.data["content_sha256"]
+            )
+    if (
+        record.kind == "generation"
+        and len(existing_generation_hashes) >= MAX_AUTOMATIC_GENERATIONS
+        and not (
+            record.data.get("human_regeneration_authorized") is True
+            and record.data.get("authority") in {"author", "human_delegate"}
+            and isinstance(record.data.get("human_decision_reference"), str)
+            and record.data["human_decision_reference"].strip()
+        )
+    ):
+        raise BookEvidenceError(
+            f"第 {MAX_AUTOMATIC_GENERATIONS + 1} 个不同正文版本需要明确人工授权；"
+            "请由 author/human_delegate 设置 human_regeneration_authorized=true "
+            "并填写 human_decision_reference。"
+        )
 
     directory = EVIDENCE_DIRECTORIES[record.kind]
     target = book_dir / "evidence" / directory / f"{record.id}.md"
@@ -687,6 +796,36 @@ def evidence_status(
     generation_records = [
         record for record, _ in records if record.kind == "generation"
     ]
+    generation_groups: dict[
+        tuple[int, str], list[EvidenceRecord]
+    ] = {}
+    for record in generation_records:
+        generation_groups.setdefault(
+            (record.data["chapter"], record.data["content_sha256"]), []
+        ).append(record)
+    semantic_generation_records = [
+        sorted(group, key=lambda record: record.id)[0]
+        for group in generation_groups.values()
+    ]
+    semantic_generation_records.sort(
+        key=lambda record: (
+            record.data["chapter"],
+            record.data["content_sha256"],
+            record.id,
+        )
+    )
+    duplicate_generation_groups = [
+        {
+            "chapter": generation_chapter,
+            "content_sha256": content_sha256,
+            "record_ids": sorted(record.id for record in group),
+        }
+        for (
+            generation_chapter,
+            content_sha256,
+        ), group in sorted(generation_groups.items())
+        if len(group) > 1
+    ]
 
     def _review_cycle(count: int) -> str:
         if count == 0:
@@ -700,7 +839,7 @@ def evidence_status(
         return "budget_exceeded"
 
     generations_by_chapter: dict[int, list[EvidenceRecord]] = {}
-    for record in generation_records:
+    for record in semantic_generation_records:
         generations_by_chapter.setdefault(record.data["chapter"], []).append(
             record
         )
@@ -717,7 +856,8 @@ def evidence_status(
             generations_by_chapter.items()
         )
     ]
-    generation_count = len(generation_records)
+    generation_record_count = len(generation_records)
+    generation_count = len(semantic_generation_records)
     review_cycle_status = (
         _review_cycle(generation_count)
         if chapter is not None
@@ -735,6 +875,14 @@ def evidence_status(
         "parent_generation_id",
         "generation_stage",
         "provenance_confidence",
+        "run_id",
+        "agent_harness",
+        "reasoning_effort",
+        "sandbox_profile",
+        "tool_capabilities",
+        "tool_failures",
+        "human_regeneration_authorized",
+        "human_decision_reference",
     )
     return {
         "slug": slug,
@@ -763,7 +911,9 @@ def evidence_status(
             record.id for record in recent_preferences
         ],
         "provenance_warnings": provenance_warnings,
+        "generation_record_count": generation_record_count,
         "generation_count": generation_count,
+        "duplicate_generation_groups": duplicate_generation_groups,
         "automatic_generation_limit": MAX_AUTOMATIC_GENERATIONS,
         "review_cycle_status": review_cycle_status,
         "another_generation_requires_human": (

@@ -64,6 +64,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evaluation" / "experiment-template.md").exists()
     assert (book_dir / "evaluation" / "rule-registry.md").exists()
     assert (book_dir / "evaluation" / "generation-template.md").exists()
+    assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
     assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
     assert (book_dir / "evaluation" / "preference-template.md").exists()
@@ -87,7 +88,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v3" in claude_md
+    assert "v3.6" in claude_md
     assert "严禁复制其他书的正文" in claude_md
     assert "build-memory-context" in claude_md
     assert "memory/canon" in claude_md
@@ -128,6 +129,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         book_dir / "planning" / "scene-package-template.md"
     ).read_text(encoding="utf-8")
     assert "## 1d. 认知与可证伪假设" in scene_template
+    assert "## 0b. 章际交接" in scene_template
+    assert "上一章正文 SHA-256" in scene_template
+    assert "same_day_continuous" in scene_template
     assert "## 1e. 规划反证与常识检查" in scene_template
     assert "## 3c. 因果归属账本" in scene_template
     assert "## 5b. 专业判断审计" in scene_template
@@ -142,6 +146,26 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert '"review_round"' in generation_template
     assert '"generation_stage"' in generation_template
     assert '"provenance_confidence"' in generation_template
+    assert '"run_id"' in generation_template
+    assert '"agent_harness"' in generation_template
+    assert '"reasoning_effort"' in generation_template
+    assert '"sandbox_profile"' in generation_template
+    assert '"tool_capabilities"' in generation_template
+    assert '"tool_failures"' in generation_template
+
+    degraded_template = (
+        book_dir / "evaluation" / "degraded-run-template.md"
+    ).read_text(encoding="utf-8")
+    assert "degraded_exploration" in degraded_template
+    assert "tool_failures" in degraded_template
+    assert "不得进入 ready" in degraded_template
+
+    review_template = (
+        book_dir / "reviews" / "review-template.md"
+    ).read_text(encoding="utf-8")
+    assert "previous_chapter_sha256" in review_template
+    assert "evidence_quote" in review_template
+    assert "previous_chapter_quote" in review_template
 
     memory_template = (
         book_dir / "memory" / "memory-record-template.md"
@@ -161,6 +185,12 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "先只读正文" in chapter_editor
     assert "不得询问是否开始审核" in orchestrator
     assert "第三份 generation" in orchestrator
+    assert "degraded_exploration" in orchestrator
+    assert "不同正文 SHA-256" in orchestrator
+    assert "上一章正文 SHA-256" in (
+        book_dir / ".claude" / "agents" / "consistency-guard.md"
+    ).read_text(encoding="utf-8")
+    assert "previous_chapter_quote" in chapter_editor
 
 
 
@@ -338,6 +368,20 @@ def test_skill_frontmatter_has_required_fields():
     frontmatter = text.split("---", 2)[1]
     assert re.search(r"^name:\s*novel-forge\s*$", frontmatter, re.MULTILINE)
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
+
+
+def test_skill_documents_v36_harness_and_serial_integrity():
+    text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "v3.6" in text
+    assert "degraded_exploration" in text
+    assert "同章同正文 SHA-256" in text
+    assert "0b. 章际交接" in text
+    assert "previous_chapter_sha256" in text
+    assert "tool_capabilities" in text
+    assert "tool_failures" in text
 
 
 def test_review_template_lists_every_canonical_role(tmp_path: Path):

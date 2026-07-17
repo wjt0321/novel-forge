@@ -221,6 +221,7 @@ def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
     data = _base(
         "generation",
         "generation.ch01.metrics",
+        authority="human_delegate",
         elapsed_seconds=3000,
         input_tokens=12000,
         output_tokens=8000,
@@ -247,11 +248,204 @@ def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
         render_evidence_markdown({**data, "metrics_source": "guessed"})
 
 
-def test_evidence_status_reports_generation_convergence_budget(tmp_path: Path):
+def test_generation_requires_consistent_authority_and_runtime_identity():
+    user_attested_agent = _base(
+        "generation",
+        "generation.ch01.user-attested-agent",
+        authority="agent",
+        content_sha256="0" * 64,
+        provenance_confidence="user_attested",
+    )
+    with pytest.raises(BookEvidenceError, match="user_attested.*authority"):
+        render_evidence_markdown(user_attested_agent)
+
+    harness_exposed = _base(
+        "generation",
+        "generation.ch01.harness",
+        content_sha256="0" * 64,
+        metrics_source="harness_reported",
+        provenance_confidence="harness_exposed",
+        run_id="run-agent-a-001",
+        agent_harness="deepseek-writer-a",
+        reasoning_effort="standard",
+        sandbox_profile="no_shell",
+        tool_capabilities=["read_file", "write_file"],
+        tool_failures=["shell: sandbox denied"],
+    )
+    record = parse_evidence_markdown(render_evidence_markdown(harness_exposed))
+
+    assert record.data["run_id"] == "run-agent-a-001"
+    assert record.data["sandbox_profile"] == "no_shell"
+    assert record.data["tool_failures"] == ["shell: sandbox denied"]
+
+    with pytest.raises(BookEvidenceError, match="run_id"):
+        render_evidence_markdown({**harness_exposed, "run_id": None})
+    with pytest.raises(BookEvidenceError, match="reasoning_effort"):
+        render_evidence_markdown(
+            {**harness_exposed, "reasoning_effort": "ultra"}
+        )
+    with pytest.raises(BookEvidenceError, match="sandbox_profile"):
+        render_evidence_markdown(
+            {**harness_exposed, "sandbox_profile": "mystery"}
+        )
+
+
+def test_record_generation_rejects_duplicate_content_version(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"
     digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+
+    first = tmp_path / "generation-first.md"
+    _write_input(
+        first,
+        _base(
+            "generation",
+            "generation.ch01.raw",
+            content_sha256=digest,
+            generation_stage="raw",
+        ),
+    )
+    record_evidence(tmp_path, "demo", first)
+
+    duplicate = tmp_path / "generation-duplicate.md"
+    _write_input(
+        duplicate,
+        _base(
+            "generation",
+            "generation.ch01.final",
+            content_sha256=digest,
+            generation_stage="final",
+            review_round=3,
+        ),
+    )
+    with pytest.raises(BookEvidenceError, match="相同正文"):
+        record_evidence(tmp_path, "demo", duplicate)
+
+
+def test_degraded_generation_requires_runtime_failure_evidence():
+    data = _base(
+        "generation",
+        "generation.ch01.degraded",
+        draft_mode="degraded_exploration",
+        content_sha256="0" * 64,
+        agent_harness="writer-a",
+        sandbox_profile="no_shell",
+        tool_capabilities=["read_file", "write_file"],
+        tool_failures=["shell: sandbox denied"],
+    )
+
+    record = parse_evidence_markdown(render_evidence_markdown(data))
+    assert record.data["tool_failures"] == ["shell: sandbox denied"]
+
+    for missing in (
+        "agent_harness",
+        "sandbox_profile",
+        "tool_capabilities",
+        "tool_failures",
+    ):
+        invalid = dict(data)
+        invalid.pop(missing)
+        with pytest.raises(BookEvidenceError, match=missing):
+            render_evidence_markdown(invalid)
+
+
+def test_fourth_generation_requires_explicit_human_authorization(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    for number in range(1, 4):
+        chapter.write_text(
+            f"# 第一章\n\n第 {number} 个正文版本。\n",
+            encoding="utf-8",
+        )
+        source = tmp_path / f"generation-{number}.md"
+        _write_input(
+            source,
+            _base(
+                "generation",
+                f"generation.ch01.r{number}",
+                content_sha256=hashlib.sha256(
+                    chapter.read_bytes()
+                ).hexdigest(),
+            ),
+        )
+        record_evidence(tmp_path, "demo", source)
+
+    chapter.write_text("# 第一章\n\n第四个正文版本。\n", encoding="utf-8")
+    fourth = tmp_path / "generation-fourth.md"
+    fourth_data = _base(
+        "generation",
+        "generation.ch01.r4",
+        content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+    )
+    _write_input(fourth, fourth_data)
+    with pytest.raises(BookEvidenceError, match="人工授权"):
+        record_evidence(tmp_path, "demo", fourth)
+
+    authorized = tmp_path / "generation-fourth-authorized.md"
+    _write_input(
+        authorized,
+        {
+            **fourth_data,
+            "id": "generation.ch01.r4-authorized",
+            "authority": "human_delegate",
+            "human_regeneration_authorized": True,
+            "human_decision_reference": "user-request-2026-07-18",
+        },
+    )
+    result = record_evidence(tmp_path, "demo", authorized)
+    assert result["record_id"] == "generation.ch01.r4-authorized"
+
+
+def test_evidence_status_collapses_legacy_duplicate_generations(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    generation_dir = book_dir / "evidence/generations"
+    generation_dir.mkdir(parents=True, exist_ok=True)
+    for number, stage in ((1, "raw"), (2, "final")):
+        data = _base(
+            "generation",
+            f"generation.ch01.legacy-{number}",
+            content_sha256=digest,
+            generation_stage=stage,
+            review_round=number - 1,
+        )
+        (generation_dir / f"{data['id']}.md").write_text(
+            render_evidence_markdown(data),
+            encoding="utf-8",
+        )
+
+    status = evidence_status(tmp_path, "demo", chapter=1)
+
+    assert status["generation_record_count"] == 2
+    assert status["generation_count"] == 1
+    assert status["review_cycle_status"] == "initial"
+    assert status["another_generation_requires_human"] is False
+    assert status["duplicate_generation_groups"] == [
+        {
+            "chapter": 1,
+            "content_sha256": digest,
+            "record_ids": [
+                "generation.ch01.legacy-1",
+                "generation.ch01.legacy-2",
+            ],
+        }
+    ]
+
+
+def test_evidence_status_reports_generation_convergence_budget(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
     for number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+        chapter.write_text(
+            f"# 第一章\n\n第 {number} 版正文，陈拾没有开门。\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
         source = tmp_path / f"generation-{number}.md"
         _write_input(
             source,

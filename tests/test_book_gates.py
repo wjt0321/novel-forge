@@ -1,8 +1,13 @@
 """Tests for semantic planning gates in the books workflow."""
 
+import hashlib
 from pathlib import Path
 
-from app.novel_forge.book_gates import check_project_materials, check_scene_package
+from app.novel_forge.book_gates import (
+    check_project_materials,
+    check_scene_package,
+    narrative_report,
+)
 
 
 def _scene_package(
@@ -139,6 +144,99 @@ def test_formal_scene_package_accepts_explicit_cognition_and_expertise_waivers()
 
 def test_exploration_mode_skips_semantic_planning_gates():
     assert check_scene_package("# exploration", None, mode="exploration") == []
+
+
+def test_degraded_exploration_skips_formal_planning_gates():
+    assert check_scene_package(
+        "# shell unavailable", None, mode="degraded_exploration"
+    ) == []
+
+
+def test_second_chapter_requires_handoff_section(tmp_path: Path):
+    chapter1 = tmp_path / "chapters/e01/ch-01/正文.md"
+    chapter2 = tmp_path / "chapters/e01/ch-02/正文.md"
+    chapter1.parent.mkdir(parents=True)
+    chapter2.parent.mkdir(parents=True)
+    chapter1.write_text("# 第一章\n\n晚上九点，陈拾关上门。\n", encoding="utf-8")
+    chapter2.write_text("# 第二章\n\n下午三点，陈拾又推开门。\n", encoding="utf-8")
+    package = tmp_path / "planning/scene-package-ch02.md"
+    package.parent.mkdir()
+    package.write_text(_scene_package(), encoding="utf-8")
+
+    report = narrative_report(chapter2, package, mode="formal")
+
+    assert any("章际交接" in item for item in report["blocking"])
+
+
+def test_same_day_handoff_rejects_time_rollback(tmp_path: Path):
+    chapter1 = tmp_path / "chapters/e01/ch-01/正文.md"
+    chapter2 = tmp_path / "chapters/e01/ch-02/正文.md"
+    chapter1.parent.mkdir(parents=True)
+    chapter2.parent.mkdir(parents=True)
+    chapter1.write_text("# 第一章\n\n晚上九点，陈拾关上门。\n", encoding="utf-8")
+    chapter2.write_text("# 第二章\n\n下午三点，陈拾又推开门。\n", encoding="utf-8")
+    digest = hashlib.sha256(chapter1.read_bytes()).hexdigest()
+    package = tmp_path / "planning/scene-package-ch02.md"
+    package.parent.mkdir()
+    package.write_text(
+        _scene_package()
+        + "\n## 0b. 章际交接\n"
+        "- 上一章正文路径：chapters/e01/ch-01/正文.md\n"
+        f"- 上一章正文 SHA-256：{digest}\n"
+        "- 上一章结尾原文：晚上九点，陈拾关上门。\n"
+        "- 本章开头原文：下午三点，陈拾又推开门。\n"
+        "- 上一章结束时间：同日晚上九点\n"
+        "- 本章开始时间：同日下午三点\n"
+        "- 上一章结束地点：门内\n"
+        "- 本章开始地点：门内\n"
+        "- 上一章结束动作：陈拾关门\n"
+        "- 本章开始动作：陈拾推门\n"
+        "- 转场类型：same_day_continuous\n",
+        encoding="utf-8",
+    )
+
+    report = narrative_report(chapter2, package, mode="formal")
+
+    assert any("时间倒退" in item for item in report["blocking"])
+
+
+def test_handoff_rejects_quotes_from_chapter_middle(tmp_path: Path):
+    chapter1 = tmp_path / "chapters/e01/ch-01/正文.md"
+    chapter2 = tmp_path / "chapters/e01/ch-02/正文.md"
+    chapter1.parent.mkdir(parents=True)
+    chapter2.parent.mkdir(parents=True)
+    chapter1.write_text(
+        "# 第一章\n\n开头。\n\n上一章中段引文。\n\n真正的章末。\n",
+        encoding="utf-8",
+    )
+    chapter2.write_text(
+        "# 第二章\n\n真正的章首。\n\n本章中段引文。\n\n结尾。\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(chapter1.read_bytes()).hexdigest()
+    package = tmp_path / "planning/scene-package-ch02.md"
+    package.parent.mkdir()
+    package.write_text(
+        _scene_package()
+        + "\n## 0b. 章际交接\n"
+        "- 上一章正文路径：chapters/e01/ch-01/正文.md\n"
+        f"- 上一章正文 SHA-256：{digest}\n"
+        "- 上一章结尾原文：上一章中段引文。\n"
+        "- 本章开头原文：本章中段引文。\n"
+        "- 上一章结束时间：第一天晚上九点\n"
+        "- 本章开始时间：第二天上午九点\n"
+        "- 上一章结束地点：门内\n"
+        "- 本章开始地点：街上\n"
+        "- 上一章结束动作：关门\n"
+        "- 本章开始动作：走路\n"
+        "- 转场类型：cross_day\n",
+        encoding="utf-8",
+    )
+
+    report = narrative_report(chapter2, package, mode="formal")
+
+    assert any("不在上一章结尾" in item for item in report["blocking"])
+    assert any("不在当前章开头" in item for item in report["blocking"])
 
 
 def test_formal_scene_package_requires_declared_key_dialogue_ledger():
