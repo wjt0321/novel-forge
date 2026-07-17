@@ -59,6 +59,22 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "planning" / "action-draft-template.md").exists()
     assert (book_dir / "planning" / "dialogue-ledger-template.md").exists()
     assert (book_dir / "planning" / "chapter-state-template.md").exists()
+    assert (book_dir / "evaluation" / "constitution.md").exists()
+    assert (book_dir / "evaluation" / "case-template.md").exists()
+    assert (book_dir / "evaluation" / "experiment-template.md").exists()
+    assert (book_dir / "evaluation" / "rule-registry.md").exists()
+    assert (book_dir / "evaluation" / "generation-template.md").exists()
+    assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
+    assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
+    assert (book_dir / "evaluation" / "preference-template.md").exists()
+    assert (book_dir / "evaluation" / "arc-audit-template.md").exists()
+    assert (book_dir / "evaluation" / "rule-decision-template.md").exists()
+    assert (book_dir / "evidence" / "preferences").is_dir()
+    assert (book_dir / "evidence" / "branches").is_dir()
+    assert (book_dir / "evidence" / "evaluations").is_dir()
+    assert (book_dir / "evidence" / "generations").is_dir()
+    assert (book_dir / "evidence" / "arc-audits").is_dir()
+    assert (book_dir / "evidence" / "rule-decisions").is_dir()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
     assert (book_dir / ".claude" / "agents" / "consistency-guard.md").exists()
     assert (book_dir / ".claude" / "agents" / "chapter-editor.md").exists()
@@ -75,6 +91,15 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "严禁复制其他书的正文" in claude_md
     assert "build-memory-context" in claude_md
     assert "memory/canon" in claude_md
+    assert "evidence-status" in claude_md
+    assert "record-evidence" in claude_md
+    assert "set-draft-mode" in claude_md
+    assert "no-deliberate-defects" in claude_md
+    assert "single-winner-branch" in claude_md
+    assert "model-score-not-approval" in claude_md
+    assert "aesthetic-does-not-override-facts" in claude_md
+    assert "exploration-not-ready" in claude_md
+    assert "role-name-not-independence" in claude_md
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
@@ -83,6 +108,19 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
     assert ".novel-forge/" in gitignore
+
+    constitution = (book_dir / "evaluation" / "constitution.md").read_text(
+        encoding="utf-8"
+    )
+    assert "事实秩序" in constitution
+    assert "因果秩序" in constitution
+    assert "人物认知的有限性" in constitution
+    assert "表达的不均匀" in constitution
+    assert "作者偏好" in constitution
+    assert "不得故意加入错别字" in constitution
+    assert "模型评分不是作者批准" in constitution
+    assert "不得静默拼接全部候选" in constitution
+    assert "不得仿写在世作者" in constitution
 
 
 
@@ -260,3 +298,50 @@ def test_skill_frontmatter_has_required_fields():
     frontmatter = text.split("---", 2)[1]
     assert re.search(r"^name:\s*novel-forge\s*$", frontmatter, re.MULTILINE)
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
+
+
+def test_review_template_lists_every_canonical_role(tmp_path: Path):
+    from app.novel_forge.planning_spec import REVIEW_ROLES
+
+    result = init_book_project(tmp_path, "roles", "Roles", "现实悬疑")
+    template = (
+        Path(result["book_dir"]) / "reviews" / "review-template.md"
+    ).read_text(encoding="utf-8")
+
+    for role in REVIEW_ROLES:
+        assert role in template
+
+
+def test_evidence_templates_use_canonical_marker_and_kinds(tmp_path: Path):
+    from app.novel_forge.planning_spec import EVIDENCE_KINDS
+
+    result = init_book_project(tmp_path, "evidence", "Evidence", "现实悬疑")
+    evaluation = Path(result["book_dir"]) / "evaluation"
+    combined = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in evaluation.glob("*-template.md")
+    )
+
+    assert "<!-- novel-forge-evidence:v1 -->" in combined
+    for kind in EVIDENCE_KINDS:
+        assert f'"kind": "{kind}"' in combined
+
+
+def test_generated_agents_enforce_human_narrative_policy_ids(tmp_path: Path):
+    from app.novel_forge.planning_spec import HUMAN_NARRATIVE_POLICY_IDS
+
+    result = init_book_project(tmp_path, "agents", "Agents", "现实悬疑")
+    book_dir = Path(result["book_dir"])
+    agent_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (book_dir / ".claude/agents").glob("*.md")
+    )
+    constitution = (book_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    skill = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for policy_id in HUMAN_NARRATIVE_POLICY_IDS:
+        assert policy_id in constitution
+        assert policy_id in agent_text
+        assert policy_id in skill

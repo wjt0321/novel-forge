@@ -96,3 +96,19 @@ v3（docs/13）落地后，三本试验品暴露出六个系统性缺口：
 
 1. **转述语域（生成时）**：起草指令框架改为"把正在发生的事讲给一个具体的人听"，替代"写一章小说"。已写入 SKILL.md 单章流程起草步。
 2. **声音指纹（可测量的范文锚定）**：新模块 `voice_signature.py` 从范文提取 11 项风格指标（句长均值/方差、对白占比、碎段率、比喻密度、分句复杂度等），`--vs` 做漂移对比。实测：DeepSeek 章节对 Kimi 章节漂移 4/7 项（对白占比 0.09 vs 0.21、碎段率 0.27 vs 0.12、比喻 3.5‰ vs 0.6‰、分句复杂度 1.4 vs 2.8），自身对比零漂移——"像不像本书"从玄学变成距离。指纹贴在 voice-bible 的 exemplar_notes（ch02 起 narrative_gate 检查），texture-editor 的漂移检查用 `--vs` 执行。
+
+## 后记 4：人类叙事证据层（2026-07-17，v3.3）
+
+v3.1/v3.2 能管句面、结构和连续性，但仍有六个流程漏洞：Agent 可用随机缺陷冒充人味、把多个分支静默拼接、把模型评分写成批准、让审美偏好覆盖事实、把探索片段伪装成正式章、用同一模型换角色名冒充独立审稿。
+
+v3.3 把这些漏洞改成可测试协议：
+
+- 新增 `book_evidence.py`，以 `<!-- novel-forge-evidence:v1 -->` Markdown + fenced JSON 保存 generation、evaluation、branch、preference、arc_audit、rule_decision 六类不可变证据。
+- 章节模式改为持久化的 `formal / exploration`；命令行只能断言，不能临时覆盖。探索稿不能进入 `ready`。
+- 审稿绑定正文、规划、模式和 generation 指纹；任一变化都会使旧 verdict stale。
+- 分支必须引用真实盲评、选择单一胜者并保存未胜出方案的代价；作者偏好必须引用同一分支和盲评，不能写入 Canon。
+- 正式场景包新增“决策问题”和“场景余波”，让人物摩擦与跨章后果在写前就有明确承载位置。
+- 每五章强制 checkpoint arc audit；卷终 audit 使用独立 `scope=volume`，不与五章检查点混用。
+- 六个稳定策略 ID 同时进入 `planning_spec.py`、新书 `CLAUDE.md`、Agent 角色和 canonical Skill，防止提示词之间重新分叉。
+
+完整 schema、迁移与边界见 `docs/18-human-narrative-evaluation-workflow.md`。

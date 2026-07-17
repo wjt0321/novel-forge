@@ -15,9 +15,11 @@ from typing import Any
 
 from .planning_spec import (
     BEAT_CHAIN_SECTION,
+    DRAFT_MODES,
     MATERIAL_WAIVER_MARK,
     MIN_BEATS,
     MIN_CHAPTER_PARAGRAPHS,
+    MIN_FORMAL_CJK,
     PLACEHOLDER_TOKENS,
     SCENE_PACKAGE_REQUIRED_SECTIONS,
     TABLE_HEADER_CELLS,
@@ -123,8 +125,14 @@ def _chapter_number(chapter_path: Path, package_path: Path) -> int | None:
     return None
 
 
-def check_scene_package(package_text: str, ledger_text: str | None) -> list[str]:
+def check_scene_package(
+    package_text: str, ledger_text: str | None, mode: str = "formal"
+) -> list[str]:
     """Blocking problems in the scene package (and dialogue ledger)."""
+    if mode not in DRAFT_MODES:
+        raise ValueError(f"unknown draft mode: {mode}")
+    if mode == "exploration":
+        return []
     blocking: list[str] = []
     for heading in SCENE_PACKAGE_REQUIRED_SECTIONS:
         body = section(package_text, heading)
@@ -142,16 +150,25 @@ def check_scene_package(package_text: str, ledger_text: str | None) -> list[str]
     return blocking
 
 
-def check_chapter_text(chapter_text: str) -> list[str]:
+def check_chapter_text(chapter_text: str, mode: str = "formal") -> list[str]:
     """Blocking problems in the chapter body itself."""
+    if mode not in DRAFT_MODES:
+        raise ValueError(f"unknown draft mode: {mode}")
+    blocking: list[str] = []
+    if mode == "formal":
+        cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", chapter_text))
+        if cjk < MIN_FORMAL_CJK:
+            blocking.append(
+                f"正式章节不足 {MIN_FORMAL_CJK} 个 CJK 汉字（当前 {cjk}）"
+            )
     paragraphs = [
         p
         for p in re.split(r"\n\s*\n", chapter_text)
         if p.strip() and not p.lstrip().startswith("#")
     ]
     if len(paragraphs) < MIN_CHAPTER_PARAGRAPHS:
-        return ["正文段落不足，无法验证场景推进"]
-    return []
+        blocking.append("正文段落不足，无法验证场景推进")
+    return blocking
 
 
 def check_project_materials(
@@ -200,27 +217,38 @@ def _derive_project_root(chapter_path: Path) -> Path:
     return resolved.parents[3]
 
 
-def narrative_report(chapter_path: Path, package_path: Path) -> dict[str, Any]:
+def narrative_report(
+    chapter_path: Path, package_path: Path, mode: str = "formal"
+) -> dict[str, Any]:
     """Full narrative gate result for one chapter."""
+    if mode not in DRAFT_MODES:
+        raise ValueError(f"unknown draft mode: {mode}")
     chapter = chapter_path.read_text(encoding="utf-8-sig")
-    package = package_path.read_text(encoding="utf-8-sig")
+    package = (
+        package_path.read_text(encoding="utf-8-sig")
+        if package_path.exists()
+        else ""
+    )
     ledger_path = package_path.with_name(
         package_path.name.replace("scene-package-", "dialogue-ledger-")
     )
     ledger = (
         ledger_path.read_text(encoding="utf-8-sig") if ledger_path.exists() else None
     )
-    blocking = check_scene_package(package, ledger)
-    blocking.extend(check_chapter_text(chapter))
+    blocking = check_scene_package(package, ledger, mode=mode)
+    blocking.extend(check_chapter_text(chapter, mode=mode))
     if ledger is None:
         advisory = [f"对白账本不存在（如本章无关键对白可忽略）：{ledger_path.name}"]
     else:
         advisory = []
-    project_root = _derive_project_root(chapter_path)
-    chapter_number = _chapter_number(chapter_path, package_path)
-    mat_blocking, mat_advisory = check_project_materials(project_root, chapter_number)
-    blocking.extend(mat_blocking)
-    advisory.extend(mat_advisory)
+    if mode == "formal":
+        project_root = _derive_project_root(chapter_path)
+        chapter_number = _chapter_number(chapter_path, package_path)
+        mat_blocking, mat_advisory = check_project_materials(
+            project_root, chapter_number
+        )
+        blocking.extend(mat_blocking)
+        advisory.extend(mat_advisory)
     return {"blocking": blocking, "advisory": advisory}
 
 

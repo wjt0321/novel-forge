@@ -18,7 +18,10 @@ from typing import Any
 
 from .planning_spec import (
     CHAPTER_STATES,
+    EVIDENCE_DIRECTORIES,
+    HUMAN_NARRATIVE_POLICIES,
     MECHANISM_CLAUSES,
+    REVIEW_ROLES,
     genre_preset,
 )
 
@@ -110,8 +113,16 @@ if __name__ == "__main__":
 _STATE_CHAIN = " → ".join(CHAPTER_STATES)
 
 
+def _human_narrative_policy_lines() -> str:
+    return "\n".join(
+        f"- `{policy_id}`: {description}"
+        for policy_id, description in HUMAN_NARRATIVE_POLICIES.items()
+    )
+
+
 def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
     mechanism = MECHANISM_CLAUSES[genre_preset(genre)]
+    policy_lines = _human_narrative_policy_lines()
     return f"""# 小说宪法：《{title}》
 
 ## 基本信息
@@ -119,7 +130,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- **工作流版本**: v3.2（v3.1 质量链 + Markdown 权威长篇记忆与可重建索引）
+- **工作流版本**: v3.3（质量链 + Markdown 权威记忆 + 人类叙事证据层）
 
 ## 正文明确定义
 本书唯一正文入口：
@@ -167,6 +178,17 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `tools/*.py` 是仓库规则的薄壳，不要手工编辑；由 `sync-tools` 统一刷新。
 - 本模板默认包含 v3 编排资产；所有状态、记忆、审稿和上下文材料只留在本书目录内，严禁复制其他书的正文、`memory/`、`reviews/`、`context-cache/` 或已填写 `chXX` 实例。
 
+## 人类叙事证据边界
+`evaluation/constitution.md` 定义本书的评测宪法；`evidence/` 保存不可变的生成、分支、盲评、偏好、跨章审计与规则决策记录。它们证明过程，不认证文学价值。
+
+{policy_lines}
+
+- 开始章节前用 `set-draft-mode` 明确 `formal` 或 `exploration`；模式写入 chapter-state，命令行参数不能临时覆盖。
+- 正式稿必须先记录并绑定 generation evidence；正文或规划变化后，旧审稿自动失效。
+- 用 `evidence-status` 检查当前章的生成证据与五章检查点；用 `record-evidence` 提交 UTF-8 Markdown 证据文件。
+- 分支实验的候选正文放在 `evaluation/experiments/<experiment-id>/candidates/`，不得写进正式正文目录；选择后仅胜者可进入下一步。
+- 第 5、10、15……章进入 `ready` 前必须有当前 checkpoint arc audit，且 `open_must=0`；卷终另做 `scope=volume` 审计。
+
 ## 角色团队（按子代理职责分派，定义见 `.claude/agents/`）
 - `context-collector`: 写前收集最小上下文，输出到 `memory/context-cache/`。
 - `orchestrator`: 维护章节状态、门禁证据与回退决策，不写正文。
@@ -184,7 +206,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.3；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -199,17 +221,20 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `memory/canon/` — Markdown 权威记忆；`memory/candidates/` — 待审增量
 - `.novel-forge/` — 可重建 SQLite 索引与 manifest（不入版本库）
 - `planning/` — 故事发动机、研究边界、场景包、章节状态
+- `evaluation/` — 评测宪法、实验与证据输入模板
+- `evidence/` — 不可变创作证据：生成、分支、盲评、偏好、跨章审计、规则决定
 - `reviews/` — 审稿记录（每个角色一份，含 verdict）
 - `patches/` — 局部修订 patch
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-1. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
-2. 填写 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
-3. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，润色不得偷渡关键事件、设定或动机。
-4. 运行 `quality_check.py` 和 `narrative_gate.py`。
-5. 依次交 `causal-editor`、`line-editor`、`texture-editor`、`consistency-guard`、`blind-reader`、`chapter-editor` 审阅，结论落盘到 `reviews/`；由 `orchestrator` 记录门禁及回退。
-6. `consistency-guard` 将新事实整理为 candidate；经明确晋升后重建索引。结构问题回到场景包/动作稿，纯行文问题才用局部 patch。
+1. 用 `set-draft-mode` 选择 `formal` 或 `exploration`；探索稿永远不能进入 `ready`。
+2. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
+3. 正式稿填写含“决策问题/场景余波”的 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
+4. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，记录 generation evidence 并绑定当前章。
+5. 运行 `quality_check.py` 和 `narrative_gate.py`；需要比较方案时做单胜者分支实验与盲评，禁止把候选静默拼接。
+6. 依次交六个审稿角色审阅，记录真实 reviewer/provider/model/context；由 `orchestrator` 推进相邻状态。
+7. `consistency-guard` 将新事实整理为 candidate；经明确晋升后重建索引。每五章做 checkpoint audit，卷终另做 volume audit。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
 """
@@ -461,6 +486,275 @@ def _planning_story_engine_md() -> str:
 """
 
 
+def _evaluation_constitution_md() -> str:
+    return """# 人类化小说评测宪法
+
+> 本文件规定工作流能判什么、只能记录什么，以及什么必须留给作者决定。
+> 通过任何自动门禁都不等于文学价值、市场价值、可读性或作者批准。
+
+## 五层责任
+
+1. **事实秩序**：人物生死、时间、地点、持有物、知识边界不得自相矛盾；由 Canon 与一致性门负责。
+2. **因果秩序**：欲望、阻力、选择、代价与场景余波必须可以追溯；由规划和因果审稿负责。
+3. **人物认知的有限性**：允许误解、遗漏、偏见、自欺与错误归因，但它们必须属于人物，而不是系统遗忘事实。
+4. **表达的不均匀**：允许跳过、停顿、粗粝、沉默与语域换挡，只要它们承担人物或叙事功能。
+5. **作者偏好**：喜欢什么、拒绝什么、愿意承担什么审美风险，只能由明确的作者决定或授权评审记录。
+
+## 不得伪造的人味
+
+- 不得故意加入错别字、病句、事实错误或随机瑕疵来冒充人类写作。
+- 不得把禁词替换、随机句长、口癖注入或表面粗糙当成人味。
+- 不得静默拼接全部候选；分支实验必须选择一个方案并保留被放弃的代价。
+- 不得仿写在世作者；只能使用可说明、可迁移的文学技法。
+
+## 证据边界
+
+- 模型评分不是作者批准，也不是文学价值认证。
+- 事实检查可以阻断；审美判断只能给证据、偏好、分歧与风险。
+- 同一模型换一个角色名不自动构成独立评审；必须记录 reviewer/provider/model/context。
+- 任何规则都必须先作为实验假设，经跨章节或跨作品证据支持后才能升级；无效规则应降级或退休。
+"""
+
+
+def _evaluation_case_template_md() -> str:
+    return """# 功能型评测案例
+
+- case_id:
+- 文本功能：开场 / 行动压力 / 对白权力 / 关系闲笔 / 信息隐瞒 / 失败余波 / 章末换题
+- 来源与授权边界：
+- 不保存原文时的分析指针：
+
+## 可观察证据
+- 人物当下目标：
+- 选择或拒绝：
+- 细节怎样改变行动：
+- 潜台词或认知限制：
+- 读者记住的画面：
+
+## 反例边界
+- 表面相似但功能不同的情况：
+- 不应机械提炼成的禁令：
+"""
+
+
+def _evaluation_experiment_template_md() -> str:
+    return """# 单变量实验
+
+- experiment_id:
+- 假设：
+- 唯一变量：
+- 固定条件：人物 / 场景包 / 模型 / 上下文 / 字数范围
+- 候选标签：A / B / C
+- 盲评人或模型来源：
+
+## 盲评问题
+- 人物最想得到什么？
+- 人物隐瞒或拒绝承认什么？
+- 关系发生了什么变化？
+- 记住哪三个具体画面？
+- 下一章真正想知道什么？
+
+## 结果
+- 单一胜者：
+- 放弃的优点与代价：
+- 是否生成偏好记录：
+- 是否支持规则升级：否 / 继续验证 / 是（附跨项目证据）
+"""
+
+
+def _evaluation_rule_registry_md() -> str:
+    return """# 规则注册表
+
+> 规则生命周期：experimental → advisory → blocking；也可降级为 retired。
+> 单篇 demo 的修复经验不能直接成为通用硬门。
+
+| rule_id | 假设 | 生命周期 | 支持作品/类型/模型 | 反例 | 最近决定证据 |
+|---|---|---|---|---|---|
+|  |  | experimental |  |  |  |
+"""
+
+
+def _evaluation_generation_template_md() -> str:
+    return """# Generation Evidence
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "generation.ch01.unique-id",
+  "kind": "generation",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "agent",
+  "source_paths": [
+    "chapters/e01/ch-01/正文.md",
+    "chapters/e01/ch-02/正文.md",
+    "chapters/e01/ch-03/正文.md",
+    "chapters/e01/ch-04/正文.md",
+    "chapters/e01/ch-05/正文.md"
+  ],
+  "summary": "本章当前正文的生成来源。",
+  "chapter": 1,
+  "draft_mode": "formal",
+  "writer_type": "agent",
+  "provider": "provider-name",
+  "model": "model-name",
+  "content_path": "chapters/e01/ch-01/正文.md",
+  "content_sha256": "替换为正文文件的64位sha256"
+}
+```
+"""
+
+
+def _evaluation_branch_template_md() -> str:
+    return """# Branch Decision Evidence
+
+> 候选正文放在 `evaluation/experiments/<experiment-id>/candidates/<label>.md`。
+> winner 只能有一个；综合稿必须先成为新的匿名候选。
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "branch.experiment.unique-id",
+  "kind": "branch",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "agent",
+  "source_paths": ["evaluation/experiments/opening/candidates/A.md"],
+  "summary": "关键节点受控分支的单一选择。",
+  "chapter": 1,
+  "experiment_id": "opening",
+  "candidates": ["A", "B"],
+  "winner": "B",
+  "selection_mode": "single_winner",
+  "evaluation_ids": ["evaluation.experiment.unique-id"],
+  "discarded_tradeoffs": {
+    "A": "记录放弃 A 时同时放弃的有效品质。"
+  }
+}
+```
+"""
+
+
+def _evaluation_blind_template_md() -> str:
+    return """# Blind Evaluation Evidence
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "evaluation.experiment.unique-id",
+  "kind": "evaluation",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "human_reviewer",
+  "source_paths": ["evaluation/experiments/opening/candidates/A.md"],
+  "summary": "匿名候选的具体读者重建结果。",
+  "chapter": 1,
+  "experiment_id": "opening",
+  "candidate_labels": ["A", "B"],
+  "blinded": true,
+  "preferred_label": "B",
+  "reviewer_type": "human",
+  "reviewer_id": "reader-session-id",
+  "provider": "not_applicable",
+  "model": "not_applicable",
+  "context_scope": "candidate_prose_only",
+  "questions": {
+    "desire": "人物最想得到什么？",
+    "concealment": "人物隐瞒或拒绝承认什么？",
+    "relationship_change": "关系发生了什么变化？",
+    "memorable_images": ["画面一", "画面二", "画面三"],
+    "next_question": "下一章真正想知道什么？"
+  }
+}
+```
+"""
+
+
+def _evaluation_preference_template_md() -> str:
+    return """# Author Preference Evidence
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "preference.unique-id",
+  "kind": "preference",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "author",
+  "source_paths": ["evidence/evaluations/evaluation.experiment.unique-id.md"],
+  "summary": "作者对本次候选的选择理由。",
+  "chapter": 1,
+  "branch_id": "branch.experiment.unique-id",
+  "evaluation_ids": ["evaluation.experiment.unique-id"],
+  "selected_id": "B",
+  "rejected_ids": ["A"],
+  "accepted_qualities": ["保留的具体品质"],
+  "rejected_qualities": ["拒绝的具体品质"],
+  "decision_authority": "author"
+}
+```
+"""
+
+
+def _evaluation_arc_audit_template_md() -> str:
+    return """# Arc Audit Evidence
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "arc.checkpoint.01-05",
+  "kind": "arc_audit",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "human_delegate",
+  "source_paths": ["chapters/e01/ch-01/正文.md"],
+  "summary": "五章检查点或卷终审计。",
+  "scope": "checkpoint",
+  "start_chapter": 1,
+  "end_chapter": 5,
+  "volume_id": null,
+  "verdict": "continue",
+  "open_must": 0,
+  "source_sha256": {
+    "chapters/e01/ch-01/正文.md": "替换为来源文件的64位sha256",
+    "chapters/e01/ch-02/正文.md": "替换为来源文件的64位sha256",
+    "chapters/e01/ch-03/正文.md": "替换为来源文件的64位sha256",
+    "chapters/e01/ch-04/正文.md": "替换为来源文件的64位sha256",
+    "chapters/e01/ch-05/正文.md": "替换为来源文件的64位sha256"
+  }
+}
+```
+
+JSON 块外逐项记录：承诺、人物弧、关系债务、母题复现、节奏、矛盾与遗弃线索。
+"""
+
+
+def _evaluation_rule_decision_template_md() -> str:
+    return """# Rule Decision Evidence
+
+<!-- novel-forge-evidence:v1 -->
+```json
+{
+  "schema_version": 1,
+  "id": "rule.unique-id",
+  "kind": "rule_decision",
+  "created_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "authority": "human_delegate",
+  "source_paths": ["evaluation/experiment-template.md"],
+  "summary": "规则升级、降级或退休的证据决定。",
+  "rule_id": "rule-id",
+  "hypothesis": "可证伪的规则假设。",
+  "lifecycle": "experimental",
+  "tested_works": ["work-a"],
+  "tested_genres": ["genre-a"],
+  "tested_models": ["model-a"],
+  "intervention_type": "planning_prompt",
+  "retirement_reason": null
+}
+```
+"""
+
+
 def _planning_research_boundaries_md() -> str:
     return """# 研究边界
 
@@ -509,6 +803,7 @@ def _agent_context_collector_md() -> str:
 - 不修改 `chapters/`。
 - 不直接修改 `memory/canon/` 或 `.novel-forge/index.sqlite3`。
 - 发现缺失或新事实时只提交 memory candidate，未经晋升不得当作 Canon。
+- `aesthetic-does-not-override-facts`: 审美目标不得让摘要越过 Canon、证据或人物已知边界。
 - 不调用外部搜索。
 """
 
@@ -551,6 +846,7 @@ def _agent_consistency_guard_md() -> str:
 ## 边界
 - 不生成新正文。
 - 不修改 `chapters/`、`memory/canon/` 与 SQLite；只可提交候选记录供晋升。
+- `aesthetic-does-not-override-facts`: 文学效果不能成为静默改写既成事实的理由。
 """
 
 
@@ -594,6 +890,8 @@ def _agent_chapter_editor_md() -> str:
 ## 边界
 - 不生成新正文。
 - 不判断文学价值或市场潜力。
+- `model-score-not-approval`: verdict 只是流程证据，不是作者批准或发布许可。
+- `role-name-not-independence`: 必须如实记录 reviewer/provider/model/context；换角色名不算独立审稿。
 - `ready_for_editor_decision` 不等于用户批准，只表示流程材料齐备。
 """
 
@@ -624,17 +922,31 @@ def _agent_blind_reader_md() -> str:
 ## 边界
 - 不重写正文。
 - 不评价文学价值。
+- `model-score-not-approval`: pass 只表示本轮盲读可重建，不是作者批准。
+- `role-name-not-independence`: 记录真实 reviewer/provider/model；只换提示词或角色名不算独立。
 - 只报告一件事：仅凭正文，读者能不能看见。
 """
 
 
 def _reviews_review_template_md() -> str:
-    return """# Review — chXX / <role>
+    roles = "|".join(REVIEW_ROLES)
+    return f"""# Review — chXX / <role>
 
 - chapter: chXX
-- role: <causal-editor|line-editor|consistency-guard|blind-reader|chapter-editor>
+- role: <{roles}>
 - verdict: <pass|needs_revision|ready_for_editor_decision>
 - date: YYYY-MM-DD
+- source_fingerprint: <review-binding source_fingerprint>
+- chapter_sha256: <review-binding chapter_sha256>
+- planning_sha256: <review-binding planning_sha256>
+- draft_mode: <formal|exploration>
+- generation_id: <generation evidence id or unrecorded>
+- reviewer_type: <human|agent|model>
+- reviewer_id: <stable reviewer/session id>
+- provider: <provider or not_applicable>
+- model: <model or not_applicable>
+- context_scope: <prose_only|full_review_context>
+- independence_note: <同源评审时必填；角色名不同不等于独立>
 
 ## Findings
 | # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |
@@ -671,6 +983,13 @@ def _planning_scene_package_template_md() -> str:
 - **不可逆选择时刻的情感状态：**
 - **章末残余情感状态：**
 - **本场不应替角色解释的情绪：**
+
+## 1c. 决策问题
+- **不能同时得到的两样东西：**
+- **角色拒绝承认什么：**
+- **角色误读了谁或什么：**
+- **哪句话不能说出口：**
+- **最终接受的具体代价：**
 
 ## 2. 在场者状态
 > “不肯说/尚不知道”列必须填写真秘密；没有秘密的人物不必列表。
@@ -711,6 +1030,13 @@ def _planning_scene_package_template_md() -> str:
 - 人物功能（回避/拖延/误读/身体失控/关系余温/价值暴露）：
 - 具体可见物或动作：
 - 它不能新增的情节信息：
+
+## 7. 场景余波
+- **身体：** 伤、累、冷、饥饿、睡眠或动作能力留下什么变化？
+- **物件：** 什么被获得、失去、损坏、转交或留下痕迹？
+- **关系：** 信任、权力、距离或债务发生什么变化？
+- **认知/误信：** 谁知道、怀疑或仍然误信什么？
+- **未偿债务/承诺：** 哪个后果必须在后续章节继续存在？
 """
 
 
@@ -751,6 +1077,8 @@ def _planning_chapter_state_template_md() -> str:
 - chapter: chXX
 - status: planned
 - revision: 0
+- draft_mode: formal
+- generation_id: unrecorded
 - updated_at: YYYY-MM-DDTHH:MM:SSZ
 - next_action:
 - blocked_from: （仅 status=blocked 时填写）
@@ -836,6 +1164,7 @@ def _agent_texture_editor_md() -> str:
 
 ## 边界
 不评价结构、因果、人物动机与设定；不生成新正文。
+- `no-deliberate-defects`: 不得建议故意加入错字、病句或随机噪声来制造人味。
 """
 
 
@@ -867,6 +1196,8 @@ def _agent_causal_editor_md() -> str:
 
 ## 边界
 不生成新正文；不把文采偏好当作因果问题。
+- `single-winner-branch`: 对分支实验只评因果代价；必须保留单一胜者，不得建议拼接全部候选。
+- `aesthetic-does-not-override-facts`: 审美偏好不得压过事实、人物认知与因果责任。
 """
 
 
@@ -895,6 +1226,7 @@ def _agent_line_editor_md() -> str:
 
 
 def _agent_orchestrator_md() -> str:
+    policy_lines = _human_narrative_policy_lines()
     return f"""# Orchestrator
 
 ## 角色
@@ -921,6 +1253,12 @@ def _agent_orchestrator_md() -> str:
 - writer 仅加载当前场景、近场连续、相关人物/承诺和必要规则；长篇全量材料留给跨章审计。
 - 每次只推进一个状态，并写入证据、结果和下一步。
 - 审稿结论必须落盘到 `reviews/chXX-<role>.md`，证据表只存指针与 verdict。
+- 开始起草前持久化 `formal` / `exploration` 模式；探索稿不得推进到 `ready`。
+- 正式稿绑定 generation evidence 后再审稿；正文、规划、模式或 generation 变化会使旧审稿失效。
+- 分支实验只允许一个胜者；每五章检查 checkpoint arc audit，卷终另做 volume audit。
+
+## 不可绕过的策略
+{policy_lines}
 """
 
 
@@ -938,6 +1276,19 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "memory/memory-record-template.md": (_memory_record_template_md, ()),
     "planning/story-engine.md": (_planning_story_engine_md, ()),
     "planning/research-boundaries.md": (_planning_research_boundaries_md, ()),
+    "evaluation/constitution.md": (_evaluation_constitution_md, ()),
+    "evaluation/case-template.md": (_evaluation_case_template_md, ()),
+    "evaluation/experiment-template.md": (_evaluation_experiment_template_md, ()),
+    "evaluation/rule-registry.md": (_evaluation_rule_registry_md, ()),
+    "evaluation/generation-template.md": (_evaluation_generation_template_md, ()),
+    "evaluation/branch-decision-template.md": (_evaluation_branch_template_md, ()),
+    "evaluation/blind-evaluation-template.md": (_evaluation_blind_template_md, ()),
+    "evaluation/preference-template.md": (_evaluation_preference_template_md, ()),
+    "evaluation/arc-audit-template.md": (_evaluation_arc_audit_template_md, ()),
+    "evaluation/rule-decision-template.md": (
+        _evaluation_rule_decision_template_md,
+        (),
+    ),
     "planning/scene-package-template.md": (_planning_scene_package_template_md, ()),
     "planning/action-draft-template.md": (_planning_action_draft_template_md, ()),
     "planning/dialogue-ledger-template.md": (_planning_dialogue_ledger_template_md, ()),
@@ -970,7 +1321,10 @@ REQUIRED_DIRECTORIES = [
     ".novel-forge",
     "planning/events",
     "planning/chapter-state",
+    "evaluation/cases",
+    "evaluation/experiments",
     "reviews/archive",
+    *(f"evidence/{directory}" for directory in EVIDENCE_DIRECTORIES.values()),
     "patches",
     ".snapshots",
     "tools",
@@ -997,6 +1351,21 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "reviews/review-template.md",
     "memory/MEMORY.md",
     "memory/memory-record-template.md",
+    "evaluation/case-template.md",
+    "evaluation/experiment-template.md",
+    "evaluation/generation-template.md",
+    "evaluation/branch-decision-template.md",
+    "evaluation/blind-evaluation-template.md",
+    "evaluation/preference-template.md",
+    "evaluation/arc-audit-template.md",
+    "evaluation/rule-decision-template.md",
+)
+
+# Author/project policy assets are created in old books when missing, but an
+# existing file is never overwritten by sync-tools.
+CREATE_ONLY_FILES: tuple[str, ...] = (
+    "evaluation/constitution.md",
+    "evaluation/rule-registry.md",
 )
 
 

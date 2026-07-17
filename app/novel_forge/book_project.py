@@ -1,26 +1,32 @@
 """Operations on the `books/<slug>/` front-of-house workflow (no database).
 
 These functions power the skill adapter's book-project ops
-(`project-status`, `run-gates`, `record-review`, `advance-state`,
-`sync-tools`). They only read/write Markdown and run the canonical gates;
-they never return chapter prose, never touch `data/`, and never perform git
-mutations (that stays in `autonomous.git_checkpoint`).
+(`project-status`, `set-draft-mode`, `run-gates`, `record-review`,
+`advance-state`, `evidence-status`, `record-evidence`, `sync-tools`).
+They only read/write Markdown and run the canonical gates; they never return
+chapter prose, never touch `data/`, and never perform git mutations (that
+stays in `autonomous.git_checkpoint`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import book_gates
+from .book_evidence import evidence_status, find_evidence_record
 from .lint import lint_file
 from .models import NovelForgeError
 from .planning_spec import (
     CHAPTER_STATES,
+    DRAFT_MODES,
     EDITORIAL_VERDICTS,
+    FORWARD_STATE_TRANSITIONS,
     PASSING_VERDICTS,
     REVIEW_ROLES,
     REVIEW_STATE_FOR_ROLE,
@@ -28,6 +34,7 @@ from .planning_spec import (
     STATE_BLOCKED,
 )
 from .project_templates import (
+    CREATE_ONLY_FILES,
     REQUIRED_DIRECTORIES,
     SYNCABLE_FILES,
     _planning_chapter_state_template_md,
@@ -52,6 +59,14 @@ def book_dir_for(root: Path, slug: str) -> Path:
 
 def _chapter_id(number: int) -> str:
     return f"ch{number:02d}"
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def find_chapter_file(book_dir: Path, number: int) -> Path:
@@ -141,6 +156,8 @@ def parse_chapter_state(text: str) -> dict[str, Any]:
         "revision": _field("revision"),
         "updated_at": _field("updated_at"),
         "next_action": _field("next_action"),
+        "draft_mode": _field("draft_mode") or "formal",
+        "generation_id": _field("generation_id") or "unrecorded",
         "evidence": evidence,
     }
 
@@ -215,14 +232,92 @@ def _set_fields(text: str, **fields: str) -> str:
 # --- review files ------------------------------------------------------------
 
 
+def _review_binding_for_book(book_dir: Path, number: int) -> dict[str, str]:
+    chapter = find_chapter_file(book_dir, number)
+    _, state_text, _ = _read_chapter_state(book_dir, number)
+    state = parse_chapter_state(state_text)
+    ch_id = _chapter_id(number)
+    planning_paths = (
+        book_dir / "planning" / f"scene-package-{ch_id}.md",
+        book_dir / "planning" / f"action-draft-{ch_id}.md",
+        book_dir / "planning" / f"dialogue-ledger-{ch_id}.md",
+    )
+    planning_sources = {
+        path.relative_to(book_dir).as_posix(): (
+            _sha256_path(path) if path.exists() else None
+        )
+        for path in planning_paths
+    }
+    planning_sha256 = hashlib.sha256(
+        json.dumps(
+            planning_sources, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    binding_data = {
+        "chapter_sha256": _sha256_path(chapter),
+        "planning_sha256": planning_sha256,
+        "draft_mode": state["draft_mode"],
+        "generation_id": state["generation_id"],
+    }
+    source_fingerprint = hashlib.sha256(
+        json.dumps(
+            binding_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return {**binding_data, "source_fingerprint": source_fingerprint}
+
+
+def review_binding(root: Path, slug: str, number: int) -> dict[str, str]:
+    """Return hashes and state identity a review must bind to."""
+    return _review_binding_for_book(book_dir_for(root, slug), number)
+
+
+def _validate_current_generation(
+    root: Path,
+    book_dir: Path,
+    number: int,
+    generation_id: str,
+    draft_mode: str,
+) -> tuple[Any, Path]:
+    record, evidence_path = find_evidence_record(root, book_dir.name, generation_id)
+    if record.kind != "generation":
+        raise BookProjectError(f"证据 {generation_id} 不是 generation。")
+    if record.data["chapter"] != number:
+        raise BookProjectError(
+            f"generation.chapter={record.data['chapter']} 与目标章节 {number} 不一致。"
+        )
+    if record.data["draft_mode"] != draft_mode:
+        raise BookProjectError(
+            "generation.draft_mode 与 chapter-state 不一致。"
+        )
+    pure = PurePosixPath(record.data["content_path"])
+    content_path = (book_dir / Path(*pure.parts)).resolve()
+    chapter_path = find_chapter_file(book_dir, number).resolve()
+    if content_path != chapter_path:
+        raise BookProjectError(
+            "generation.content_path 必须指向本章唯一正文。"
+        )
+    if not content_path.is_file() or (
+        _sha256_path(content_path) != record.data["content_sha256"]
+    ):
+        raise BookProjectError(
+            "generation 证据与当前正文哈希不一致；请为修订后的正文记录新 generation。"
+        )
+    return record, evidence_path
+
+
 def _review_filename(ch_id: str, role: str) -> str:
     return f"{ch_id}-{role}.md"
 
 
 def parse_review(text: str) -> dict[str, Any]:
     def _field(name: str) -> str | None:
-        m = re.search(rf"^-\s*{re.escape(name)}:\s*(\S+)\s*$", text, re.MULTILINE)
-        return m.group(1).strip() if m else None
+        m = re.search(
+            rf"^-[ \t]*{re.escape(name)}:[ \t]*(.*)$",
+            text,
+            re.MULTILINE,
+        )
+        return m.group(1).strip() if m and m.group(1).strip() else None
 
     must_open = 0
     for line in text.splitlines():
@@ -236,6 +331,17 @@ def parse_review(text: str) -> dict[str, Any]:
         "role": _field("role"),
         "verdict": _field("verdict"),
         "date": _field("date"),
+        "source_fingerprint": _field("source_fingerprint"),
+        "chapter_sha256": _field("chapter_sha256"),
+        "planning_sha256": _field("planning_sha256"),
+        "draft_mode": _field("draft_mode"),
+        "generation_id": _field("generation_id"),
+        "reviewer_type": _field("reviewer_type"),
+        "reviewer_id": _field("reviewer_id"),
+        "provider": _field("provider"),
+        "model": _field("model"),
+        "context_scope": _field("context_scope"),
+        "independence_note": _field("independence_note"),
         "must_open": must_open,
     }
 
@@ -256,6 +362,32 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
         parsed = parse_review(path.read_text(encoding="utf-8-sig"))
         parsed["file"] = f"reviews/{path.name}"
         parsed["role"] = parsed["role"] or m.group(2)
+        try:
+            number = int(m.group(1).removeprefix("ch"))
+            current_binding = _review_binding_for_book(book_dir, number)
+            parsed["stale"] = (
+                parsed["source_fingerprint"]
+                != current_binding["source_fingerprint"]
+            )
+        except (BookProjectError, ValueError):
+            parsed["stale"] = True
+        parsed["same_provider_model_as_generation"] = False
+        parsed["independent"] = None
+        generation_id = parsed.get("generation_id")
+        if generation_id and generation_id != "unrecorded":
+            try:
+                generation, _ = find_evidence_record(
+                    book_dir.parents[1], book_dir.name, generation_id
+                )
+                same_origin = (
+                    generation.kind == "generation"
+                    and parsed.get("provider") == generation.data["provider"]
+                    and parsed.get("model") == generation.data["model"]
+                )
+                parsed["same_provider_model_as_generation"] = same_origin
+                parsed["independent"] = not same_origin
+            except NovelForgeError:
+                parsed["stale"] = True
         out.append(parsed)
     return out
 
@@ -293,6 +425,55 @@ def record_review(
         raise BookProjectError(
             f"审稿文件 chapter={parsed['chapter']} 与目标 {ch_id} 不一致。"
         )
+    current_binding = _review_binding_for_book(book_dir, number)
+    if parsed["source_fingerprint"] != current_binding["source_fingerprint"]:
+        raise BookProjectError(
+            "审稿来源指纹与当前章节不一致；正文或规划材料已经变化，请重读全文后复审。"
+        )
+    for field in (
+        "chapter_sha256",
+        "planning_sha256",
+        "draft_mode",
+        "generation_id",
+    ):
+        if parsed[field] != current_binding[field]:
+            raise BookProjectError(
+                f"审稿字段 {field} 与当前章节不一致，请基于当前材料重新审稿。"
+            )
+    generation = None
+    if parsed["generation_id"] != "unrecorded":
+        generation, _ = _validate_current_generation(
+            root,
+            book_dir,
+            number,
+            parsed["generation_id"],
+            parsed["draft_mode"],
+        )
+    if role in {"blind-reader", "chapter-editor"}:
+        for field in (
+            "reviewer_type",
+            "reviewer_id",
+            "provider",
+            "model",
+            "context_scope",
+        ):
+            if not parsed[field]:
+                raise BookProjectError(f"关键审稿缺少来源字段：{field}")
+        if role == "blind-reader" and parsed["context_scope"] != "prose_only":
+            raise BookProjectError(
+                "blind-reader 的 context_scope 必须是 prose_only。"
+            )
+        if parsed["generation_id"] != "unrecorded":
+            assert generation is not None
+            same_origin = (
+                parsed["provider"] == generation.data["provider"]
+                and parsed["model"] == generation.data["model"]
+            )
+            if same_origin and not parsed["independence_note"]:
+                raise BookProjectError(
+                    "同 provider/model 的关键审稿必须填写 independence_note；"
+                    "角色名不同不等于独立评审。"
+                )
 
     target = book_dir / "reviews" / _review_filename(ch_id, role)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -307,19 +488,7 @@ def record_review(
     state_text = _update_state_row(
         state_text, state, f"reviews/{target.name}", parsed["verdict"], when
     )
-    fields = {"updated_at": when}
-    current = parse_chapter_state(state_text)
-    if current["status"] in (None, "", "planned") or current["status"] in CHAPTER_STATES:
-        # Reviews move the chapter to the role's mapped state when that is a
-        # forward step; regressions stay explicit via advance-state.
-        cur_idx = (
-            CHAPTER_STATES.index(current["status"])
-            if current["status"] in CHAPTER_STATES
-            else -1
-        )
-        if cur_idx < CHAPTER_STATES.index(state):
-            fields["status"] = state
-    state_text = _set_fields(state_text, **fields)
+    state_text = _set_fields(state_text, updated_at=when)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(state_text, encoding="utf-8")
 
@@ -328,6 +497,7 @@ def record_review(
         "role": role,
         "verdict": parsed["verdict"],
         "must_open": parsed["must_open"],
+        "stale": False,
         "chapter_state": f"planning/chapter-state/{ch_id}.md",
         "state": state,
     }
@@ -348,24 +518,62 @@ def advance_state(
         )
     ch_id = _chapter_id(number)
     when = _now()
+    state_path, state_text, _ = _read_chapter_state(book_dir, number)
+    current = parse_chapter_state(state_text)
 
     if to_state == "ready":
         from .planning_spec import READY_REQUIRED_REVIEWS
 
+        if current["draft_mode"] != "formal":
+            raise BookProjectError(
+                "exploration 稿不能进入 ready；请切换为 formal 并重跑全部正式门禁。"
+            )
+        audit = evidence_status(root, slug, number)
+        if audit["arc_audit_due"] and not audit["arc_audit_satisfied"]:
+            raise BookProjectError(
+                "checkpoint chapter requires a current arc audit with open_must=0."
+            )
+        if current["generation_id"] == "unrecorded":
+            raise BookProjectError(
+                "进入 ready 前必须记录并绑定本章 generation evidence。"
+            )
+        _validate_current_generation(
+            root,
+            book_dir,
+            number,
+            current["generation_id"],
+            current["draft_mode"],
+        )
         reviews = {r["role"]: r for r in list_reviews(book_dir, ch_id)}
         missing = [
             f"{role} verdict={required_verdict}"
             for role, required_verdict in READY_REQUIRED_REVIEWS
             if reviews.get(role, {}).get("verdict") != required_verdict
+            or reviews.get(role, {}).get("stale", True)
         ]
         if missing:
             raise BookProjectError(
                 "进入 ready 的前置证据缺失：" + "；".join(missing)
             )
+        gates = run_gates(root, slug, number, expected_mode="formal")
+        if gates["quality"]["blocking"] or gates["narrative"]["blocking"]:
+            raise BookProjectError("进入 ready 前 formal gate 仍有 blocking。")
 
-    state_path, state_text, _ = _read_chapter_state(book_dir, number)
-    current = parse_chapter_state(state_text)
     from_state = current["status"] or "planned"
+    if (
+        to_state != STATE_BLOCKED
+        and from_state != STATE_BLOCKED
+        and from_state in CHAPTER_STATES
+        and to_state in CHAPTER_STATES
+    ):
+        from_index = CHAPTER_STATES.index(from_state)
+        to_index = CHAPTER_STATES.index(to_state)
+        expected = FORWARD_STATE_TRANSITIONS.get(from_state)
+        if to_index > from_index and to_state != expected:
+            raise BookProjectError(
+                f"非法状态迁移：{from_state} → {to_state}；"
+                f"下一合法状态为 {expected or '无'}。"
+            )
     state_text = _update_state_row(
         state_text, to_state, evidence or "-", "advanced", when
     )
@@ -379,6 +587,61 @@ def advance_state(
         "chapter_state": f"planning/chapter-state/{ch_id}.md",
         "from": from_state,
         "to": to_state,
+        "author_approval": False,
+        "publication_eligibility": False,
+    }
+
+
+def set_draft_mode(
+    root: Path, slug: str, number: int, mode: str
+) -> dict[str, Any]:
+    """Persist the chapter gate mode; changing it invalidates bound reviews."""
+    if mode not in DRAFT_MODES:
+        raise BookProjectError(
+            f"未知稿件模式：{mode!r}；合法模式：{', '.join(DRAFT_MODES)}"
+        )
+    book_dir = book_dir_for(root, slug)
+    state_path, state_text, _ = _read_chapter_state(book_dir, number)
+    current = parse_chapter_state(state_text)
+    when = _now()
+    state_text = _set_fields(
+        state_text,
+        draft_mode=mode,
+        updated_at=when,
+        status="planned" if current["draft_mode"] != mode else current["status"],
+    )
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(state_text, encoding="utf-8")
+    return {
+        "chapter_state": state_path.relative_to(book_dir).as_posix(),
+        "from": current["draft_mode"],
+        "to": mode,
+        "reviews_invalidated": current["draft_mode"] != mode,
+    }
+
+
+def bind_generation(
+    root: Path, slug: str, number: int, generation_id: str
+) -> dict[str, Any]:
+    """Bind one recorded generation evidence item to a chapter state."""
+    book_dir = book_dir_for(root, slug)
+    state_path, state_text, _ = _read_chapter_state(book_dir, number)
+    current = parse_chapter_state(state_text)
+    _, path = _validate_current_generation(
+        root, book_dir, number, generation_id, current["draft_mode"]
+    )
+    when = _now()
+    state_text = _set_fields(
+        state_text,
+        generation_id=generation_id,
+        updated_at=when,
+    )
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(state_text, encoding="utf-8")
+    return {
+        "chapter_state": state_path.relative_to(book_dir).as_posix(),
+        "generation_id": generation_id,
+        "evidence_path": path.relative_to(book_dir).as_posix(),
     }
 
 
@@ -394,6 +657,8 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         "genre": info.get("genre"),
         "progress": info.get("progress"),
         "book_dir": str(book_dir),
+        "author_approval": False,
+        "publication_eligibility": False,
     }
     state_dir = book_dir / "planning" / "chapter-state"
     chapters: list[dict[str, Any]] = []
@@ -401,6 +666,19 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         for path in sorted(state_dir.glob("ch*.md")):
             parsed = parse_chapter_state(path.read_text(encoding="utf-8-sig"))
             parsed["chapter"] = path.stem
+            parsed["generation_stale"] = False
+            if parsed["generation_id"] != "unrecorded":
+                try:
+                    chapter_number = int(path.stem.removeprefix("ch"))
+                    _validate_current_generation(
+                        root,
+                        book_dir,
+                        chapter_number,
+                        parsed["generation_id"],
+                        parsed["draft_mode"],
+                    )
+                except (NovelForgeError, ValueError):
+                    parsed["generation_stale"] = True
             chapters.append(parsed)
     if number is not None:
         ch_id = _chapter_id(number)
@@ -423,12 +701,32 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["reviews"] = list_reviews(
         book_dir, _chapter_id(number) if number is not None else None
     )
+    data["review_warnings"] = [
+        {
+            "role": review["role"],
+            "warning": "same_provider_model_as_generation",
+        }
+        for review in data["reviews"]
+        if review.get("same_provider_model_as_generation")
+    ]
+    data["evidence"] = evidence_status(root, slug, number)
     return data
 
 
-def run_gates(root: Path, slug: str, number: int) -> dict[str, Any]:
+def run_gates(
+    root: Path,
+    slug: str,
+    number: int,
+    expected_mode: str | None = None,
+) -> dict[str, Any]:
     book_dir = book_dir_for(root, slug)
     chapter_file = find_chapter_file(book_dir, number)
+    _, state_text, _ = _read_chapter_state(book_dir, number)
+    mode = parse_chapter_state(state_text)["draft_mode"]
+    if expected_mode is not None and expected_mode != mode:
+        raise BookProjectError(
+            f"稿件模式不一致：chapter-state={mode}，命令断言={expected_mode}。"
+        )
     package = book_dir / "planning" / f"scene-package-{_chapter_id(number)}.md"
     findings = lint_file(chapter_file)
     quality = {
@@ -447,19 +745,29 @@ def run_gates(root: Path, slug: str, number: int) -> dict[str, Any]:
     }
     result: dict[str, Any] = {
         "chapter": _chapter_id(number),
+        "mode": mode,
         "chapter_file": chapter_file.relative_to(book_dir).as_posix(),
         "cjk": next(
             (f.char_count for f in findings if f.char_count is not None), None
         ),
         "quality": quality,
     }
-    if package.exists():
-        result["narrative"] = book_gates.narrative_report(chapter_file, package)
+    if package.exists() or mode == "exploration":
+        result["narrative"] = book_gates.narrative_report(
+            chapter_file, package, mode=mode
+        )
     else:
         result["narrative"] = {
             "blocking": [f"缺少场景包：planning/scene-package-{_chapter_id(number)}.md"],
             "advisory": [],
         }
+    result["ready_eligible"] = (
+        mode == "formal"
+        and quality["blocking"] == 0
+        and not result["narrative"]["blocking"]
+    )
+    result["author_approval"] = False
+    result["publication_eligibility"] = False
     return result
 
 
@@ -483,7 +791,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     created: list[str] = []
     updated: list[str] = []
     identical: list[str] = []
-    refresh_set = set(SYNCABLE_FILES) | {"memory/voice-bible.md"}
+    refresh_set = (
+        set(SYNCABLE_FILES)
+        | set(CREATE_ONLY_FILES)
+        | {"memory/voice-bible.md"}
+    )
     for rel in sorted(refresh_set):
         content = templates.get(rel)
         if content is None:
@@ -495,8 +807,8 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
             continue
-        if rel == "memory/voice-bible.md":
-            # Voice Bible is hand-maintained per book; never overwrite.
+        if rel == "memory/voice-bible.md" or rel in CREATE_ONLY_FILES:
+            # Hand-maintained project assets are only created when missing.
             identical.append(rel)
             continue
         existing = target.read_text(encoding="utf-8-sig")

@@ -17,6 +17,7 @@ from typing import Any
 
 from app.novel_forge.autonomous import AutonomousError, AutonomousWritingService
 from app.novel_forge import book_project
+from app.novel_forge.book_evidence import evidence_status, record_evidence
 from app.novel_forge.book_memory import (
     build_context_packet,
     memory_status,
@@ -69,6 +70,8 @@ MUTATING_OPS = {
     "promote-memory-candidate",
     "rebuild-memory-index",
     "build-memory-context",
+    "record-evidence",
+    "set-draft-mode",
 }
 
 
@@ -511,6 +514,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument(
+        "--mode",
+        choices=("formal", "exploration"),
+        default=None,
+        help="Assert the persisted chapter mode; never overrides chapter-state.",
+    )
+
+    p = sub.add_parser(
+        "set-draft-mode",
+        help="Persist a books/ chapter mode and invalidate mode-bound evidence.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("number", type=int, help="Chapter number.")
+    p.add_argument(
+        "--mode", required=True, choices=("formal", "exploration")
+    )
 
     p = sub.add_parser(
         "record-review",
@@ -570,6 +589,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("chapter", type=int, help="Target chapter number.")
+
+    p = sub.add_parser(
+        "evidence-status",
+        help="Show creative evidence inventory without returning record bodies.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument(
+        "chapter", type=int, nargs="?", default=None, help="Optional chapter number."
+    )
+
+    p = sub.add_parser(
+        "record-evidence",
+        help="Validate and store one Markdown creative evidence record.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--file", required=True, type=Path, help="Absolute UTF-8 Markdown file.")
 
     # Status: book or chapter. Use positional slug and optional number.
     # argparse does not easily support optional positional after required ones,
@@ -1042,8 +1077,16 @@ def run(argv: list[str] | None = None) -> int:
         return _ok(op, data)
 
     if op == "run-gates":
-        data = book_project.run_gates(root, slug, args.number)
+        data = book_project.run_gates(
+            root, slug, args.number, expected_mode=args.mode
+        )
         return _ok(op, data)
+
+    if op == "set-draft-mode":
+        data = book_project.set_draft_mode(
+            root, slug, args.number, args.mode
+        )
+        return _ok(op, data, state_changed=True)
 
     if op == "record-review":
         data = book_project.record_review(root, slug, args.number, args.role, args.file)
@@ -1081,6 +1124,17 @@ def run(argv: list[str] | None = None) -> int:
 
     if op == "build-memory-context":
         data = build_context_packet(root, slug, args.chapter)
+        return _ok(op, data, state_changed=True)
+
+    if op == "evidence-status":
+        return _ok(op, evidence_status(root, slug, args.chapter))
+
+    if op == "record-evidence":
+        data = record_evidence(root, slug, args.file)
+        if data["kind"] == "generation":
+            data["binding"] = book_project.bind_generation(
+                root, slug, data["chapter"], data["record_id"]
+            )
         return _ok(op, data, state_changed=True)
 
     if op == "create-chapter":
