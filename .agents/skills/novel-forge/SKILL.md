@@ -3,7 +3,7 @@ name: novel-forge
 description: "当需要创建、策划、起草、修订、审阅、质检、审计或导出 Novel Forge 小说项目时使用。"
 whenToUse: 当用户要求创建小说项目、撰写或修改章节正文、运行质量门禁、记录审稿、推进章节状态机或导出小说时使用
 metadata:
-  version: "2.8"
+  version: "2.9"
   entrypoint: "app.novel_forge.skill_adapter"
 ---
 
@@ -115,7 +115,7 @@ generation evidence 可记录 `run_id`、`agent_harness`、`reasoning_effort`、
 
 第 5、10、15……章进入 `ready` 前必须存在 `scope=checkpoint` 且 `open_must=0` 的 arc audit。`source_paths` 必须覆盖范围内每一章，`source_sha256` 必须逐项匹配；任一来源变化都会令审计 stale。卷终另做 `scope=volume` 审计；两者语义不同，不能用五章检查点冒充卷级收束。
 
-### 长篇 v3.6 编排
+### 长篇 v3.7 编排
 
 每个新项目默认具备以下资产；所有状态、记忆和审稿结果必须保留在**各自** `books/<slug>/` 内，不得放到 `books/` 顶层共享：
 
@@ -129,19 +129,19 @@ generation evidence 可记录 `run_id`、`agent_harness`、`reasoning_effort`、
 
 `planned → context_collected → scene_packaged → action_drafted → dialogue_planned → drafted → surface_checked → causal_reviewed → line_reviewed → texture_reviewed → consistency_checked → blind_read → editorial_reviewed → ready`
 
-向前迁移只能逐个相邻状态推进；允许明确回退到更早材料层。`record-review` 只记录证据，不自动推进状态。失败必须回退到对应材料层，而不是直接用措辞润色掩盖结构问题。`ready` 仅允许正式稿进入，并要求当前 generation、正式门禁、六个审稿角色全部有效：causal/line/texture/consistency/blind 为 pass，chapter-editor 为 ready_for_editor_decision；检查点章节还要求 arc audit。**复审协议：任何角色复审时必须重读修订后的完整正文与 patch 记录，而不是仅核对原 finding 是否被删除**——"删过了"不等于"剩下的没问题"。
+向前迁移只能逐个相邻状态推进；允许明确回退到更早材料层。`record-review` 只记录证据，不自动推进状态。`surface_checked` 会重跑机器 lint；存在 blocking 时不得推进，也不得启动任何审稿角色。失败必须回退到对应材料层，而不是直接用措辞润色掩盖结构问题。`ready` 仅允许正式稿进入，并要求当前 generation、正式门禁、六个审稿角色全部有效：causal/line/texture/consistency/blind 为 pass，chapter-editor 为 ready_for_editor_decision；检查点章节还要求 arc audit。`project-status` 会复核旧 `ready` 章节的当前门禁，规则升级后失效的旧状态会进入 workflow integrity blocker。**复审协议：任何角色复审时必须重读修订后的完整正文与 patch 记录，而不是仅核对原 finding 是否被删除**——"删过了"不等于"剩下的没问题"。
 
 正式模式的审核批次是已声明流程，不得在门禁后暂停询问“是否开始审核”。六角色先各自落盘，orchestrator 再去重同源 finding、合并回退层级并只形成一次集中 patch。第一份 generation 是初稿，第二份是合并 patch，第三份是终审版本；第三份完成后若仍有新 MUST，必须进入 `human_decision_required`，不得自动生成第四份。MAY 不触发整章回炉。
 
-自动回炉预算按**不同正文 SHA-256**计算，不按 evidence 文件数量计算。Max/长思考优先用于写前反证、章际交接、因果责任和审稿 findings 合并，不用于重复生成模板、目录或同一正文的多份自证材料。
+自动回炉预算按**不同正文 SHA-256**计算，不按 evidence 文件数量计算。原始正文起草默认使用 standard/medium 推理；Max/长思考优先用于写前反证、章际交接、因果责任和审稿 findings 合并，或用户明确声明的推理强度基准实验。即使正文使用 Max，也不得把 Max 自动复制到六个同源审稿角色；不用于重复生成模板、目录或同一正文的多份自证材料。
 
-即使模型支持超长上下文，writer 也应只加载当前场景、近场连续、相关人物/承诺及必要世界规则，保留剩余上下文用于推理和审稿；全书材料只用于季末或跨章审计。
+即使模型支持超长上下文，writer 也应只加载去除模板格式的最小摘要、当前场景、近场连续、相关人物/承诺及必要世界规则，保留剩余上下文用于推理和审稿；全书材料只用于季末或跨章审计。上一章存在 source-hygiene blocking 时不得准备下一章，避免格式污染跨章自我复制。
 
 - **情感弧：** 场景包的可选情感弧记录开场、不可逆选择和章末残余状态；正文应用身体、注意力与选择呈现变化，不直接替角色命名情绪。
 - **跨章一致性：** `consistency-guard` 必读 `memory/future/00-index.md`，对承诺标记兑现、保持未回收、延后或"偏离：X"。
 - **patch：** 使用 `patches/ch-{章节号}-{功能}.md`，仅记录局部修订；应用后重跑 `quality_check.py`、`narrative_gate.py` 和受影响编辑审稿。
 
-### 单章 v3.6 流程
+### 单章 v3.7 流程
 
 1. **调研：** 写手自行检索与主题有关的现实素材，保留来源链接；区分已核验事实与虚构内容。不得仿写在世作家，只能使用可说明的文学技法。
 2. **故事发动机：** 在 `planning/` 写清主角欲望、阻力、对手/世界的独立目标、主角可能错误的模型、不可逆选择、即时成本和一个尚未解答的承诺。正式稿不得使用空故事发动机。
@@ -150,9 +150,9 @@ generation evidence 可记录 `run_id`、`agent_harness`、`reasoning_effort`、
 5. **场景包：** 填写 `scene-package-chXX.md`，明确边界、目标、阻力、至少两项真实决策摩擦、认知/可证伪假设、规划反证五项、在场者状态、beat 因果链、因果归属、信息预算、专业判断审计与场景余波；第 2 章起补齐 `0b. 章际交接`。
 6. **动作与对白：** 写 `action-draft-chXX.md`；场景包声明有关键对白时必须写 `dialogue-ledger-chXX.md`。正文润色不得新增动作稿外的关键事件、设定、动机或谜团。
 7. **上下文：** `context-collector` 只读必要记忆、规划、研究边界、voice-bible、当前场景材料和上一章结尾；不得写正文。
-8. **起草与取证：** 一名写手只写一章，从正在发生的行动开始；按语域声明换挡起草，不批量生成后续章节。专业能力优先通过提问、下注、操作和后果显形，不反复用履历/原理解释证明人物聪明。写后按真实运行记录 provider、model、run_id、Agent harness、推理强度、沙箱、工具能力/失败、上下文来源和可得的耗时/token/暂停/轮次，生成证据绑定当前章；来源不实的样本不得进入模型比较。
-9. **门禁与实验：** 运行 quality/narrative gate；只有存在真实分歧时才做分支实验，匿名盲评后保留单一胜者。
-10. **批量审稿：** 正式门禁通过后自动运行一批六角色审稿；不再询问是否开始。结论分别落盘并记录真实 reviewer/provider/model/context，causal/chapter editor 先做 prose-only reconstruction。
+8. **起草与取证：** 一名写手只写一章，从正在发生的行动开始；`正文.md` 除章节标题外只写纯叙事文本，禁止 `**粗体**`、`__强调__` 等 Markdown 粗体/强调语法，不得模仿规划模板标签。按语域声明换挡起草，不批量生成后续章节。专业能力优先通过提问、下注、操作和后果显形，不反复用履历/原理解释证明人物聪明。写后按真实运行记录 provider、model、run_id、Agent harness、推理强度、沙箱、工具能力/失败、上下文来源和可得的耗时/token/暂停/轮次，生成证据绑定当前章；来源不实的样本不得进入模型比较。
+9. **门禁与实验：** 运行 quality/narrative gate，并成功推进到 `surface_checked`；任一工具级 blocking 立即短路，不运行审稿、不准备下一章。只有存在真实分歧时才做分支实验，匿名盲评后保留单一胜者。
+10. **批量审稿：** `surface_checked` 成功后自动运行一批六角色审稿；不再询问是否开始。结论分别落盘并记录真实 reviewer/provider/model/context，causal/chapter editor 先做 prose-only reconstruction。
 11. **收敛修订：** orchestrator 去重 findings 后只做一次集中 patch，再做一次全文终审。第三份 generation 后仍出现新 MUST 时停止并请求人工决定，不自动回炉。
 12. **跨章审计：** 每五章检查承诺、人物状态、因果债务与读者问题；卷终单独审计。
 13. **如实交付：** 门禁通过不等于文学保证、市场保证、作者批准或发布许可。
@@ -196,6 +196,7 @@ generation evidence 可记录 `run_id`、`agent_harness`、`reasoning_effort`、
 **L1 工具阻断（quality_check.py blocking，机器可检）：**
 
 - 禁止 `——`、`……`。
+- 禁止在 `正文.md` 使用 `**粗体**`、`__强调__` 等 Markdown 强调标记；渲染后不显眼也仍属源码污染。
 - 禁止 `不是X，而是Y / 不是X，是Y` 式否定翻转。
 
 **L2 编辑门禁（narrative_gate + 审稿角色，结构性问题）：**

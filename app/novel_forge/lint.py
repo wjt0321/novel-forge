@@ -29,6 +29,10 @@ class LintFinding:
 _RULES = {
     "em-dash": ("blocking", "正文禁止使用破折号 ——"),
     "ellipsis": ("blocking", "正文禁止使用省略号 ……"),
+    "markdown-emphasis": (
+        "blocking",
+        "正文禁止使用 Markdown 粗体/强调标记；正文源码必须保持纯叙事文本",
+    ),
     "not-is-flip": (
         "blocking",
         "禁止连续使用“不是 X，而是 Y / 不是 X，是 Y”式否定翻转",
@@ -666,6 +670,23 @@ def lint_text(text: str) -> list[LintFinding]:
                         evidence=_truncate(line, m.start(), m.end()),
                     )
                 )
+
+        emphasis = re.search(r"\*\*|__", line)
+        if emphasis:
+            severity, message = _RULES["markdown-emphasis"]
+            findings.append(
+                LintFinding(
+                    rule_code="markdown-emphasis",
+                    severity=severity,
+                    line_number=idx,
+                    message=message,
+                    evidence=_truncate(
+                        line,
+                        emphasis.start(),
+                        min(len(line), emphasis.end() + 8),
+                    ),
+                )
+            )
 
         # Not-is-flip: blocking only in declarative narration. The pattern is
         # legitimate rhetoric in questions, irony, and dialogue (剑来 ch01:

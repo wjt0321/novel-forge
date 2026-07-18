@@ -130,7 +130,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- **工作流版本**: v3.6（Harness 完整性 + 语义生成计数 + 章际交接）
+- **工作流版本**: v3.7（源码卫生 + 成本短路 + Harness/章际完整性）
 
 ## 正文明确定义
 本书唯一正文入口：
@@ -168,12 +168,13 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - 正文产生的新事实、事件、认知变化与承诺必须先提交到 `memory/candidates/`；只有显式晋升后才可进入 Canon。
 - {mechanism}
 - 禁止 `——`、`……`、`不是X而是Y`、结论性旁白升华。
+- `正文.md` 除章节标题外必须是纯叙事源码；禁止 `**粗体**`、`__强调__` 等 Markdown 粗体/强调标记。规划模板中的加粗标签不得被模仿进正文。
 - 正式章节不少于 5000 个 CJK 汉字；更短的只能标为实验片段。字数是底线不是目标：靠复述与注水凑字数的章同样不合格（见信息预算与 line-editor 重复簇审查）。
 - 起草前完成本章场景包和动作稿；存在关键对白时完成对白账本。认知账本必须区分观察事实、人物假设、替代解释与可推翻证据；因果归属账本必须写清谁提出条件、谁知情、谁承担后果；规划反证必须核对时间/日历、动作机制、知识来源、不可逆性与停止点。
 - 专业能力只能通过可执行判断体现：写清证据、未证前提、执行条件、成本与风险；不得用术语、履历回忆或微表情解码替人物证明聪明。
 - 正文润色不得新增动作稿外的关键事件、设定、人物动机或长线谜团。
 - 起草前按 voice-bible 的写前仪式写一段角色独白（不进入正文），并用 exemplar_notes 的范文段落校准本章目标声音。
-- 每章写完后必须运行 `python tools/quality_check.py chapters/eXX/ch-XX/正文.md` 与 `python tools/narrative_gate.py chapters/eXX/ch-XX/正文.md planning/scene-package-chXX.md`。
+- 每章写完后必须运行 `python tools/quality_check.py chapters/eXX/ch-XX/正文.md` 与 `python tools/narrative_gate.py chapters/eXX/ch-XX/正文.md planning/scene-package-chXX.md`，并成功推进到 `surface_checked`；任何 blocking 都必须在启动审稿角色前停止。
 - 审稿必须落盘：每个审稿角色的结论写入 `reviews/chXX-<role>.md`（格式见 `reviews/review-template.md`），chapter-state 证据表只存文件指针与 verdict。
 - 修订优先局部 patch；因果或信息失败时回到场景包/动作稿，结构失败才重写场景。
 - patch 命名：`patches/ch-{{章节号}}-{{功能}}.md`；只记录局部修订意图、位置、替换范围和验证结果，不替换整章正文。应用后重跑质检、相关编辑和一致性检查。
@@ -189,7 +190,7 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - 正式稿必须先记录并绑定 generation evidence；正文或规划变化后，旧审稿自动失效。
 - generation evidence 应如实记录 run_id、Agent harness、推理强度、沙箱、工具能力/失败、耗时、token、暂停、交互、review_round、父 generation、阶段与来源置信度；未知就写 unknown/null，不得猜测。同章同正文 SHA-256 只能算一个 generation。
 - 第 2 章起，scene-package 的 `0b. 章际交接` 必须绑定上一章路径、SHA-256、原文短引以及时间/地点/动作转移；上一章变化后，本章 consistency/chapter review 自动 stale。
-- 正式模式在门禁通过后自动执行预先声明的一批六角色审核，不在“是否开始审核”处再次暂停。自动链只允许初稿、一次合并 patch 和一次终审版本；第三份 generation 后再回炉必须先取得人工决定。
+- 正式模式只有在 `surface_checked` 成功后才自动执行预先声明的一批六角色审核，不在“是否开始审核”处再次暂停。自动链只允许初稿、一次合并 patch 和一次终审版本；第三份 generation 后再回炉必须先取得人工决定。
 - `ready` 与 `benchmark_eligible` 分离：同源六角色可完成本地生产链，但只有异源 blind-reader 与 chapter-editor 的当前通过证据才具备模型比较资格。
 - 用 `evidence-status` 检查当前章的生成证据与五章检查点；用 `record-evidence` 提交 UTF-8 Markdown 证据文件。
 - 分支实验的候选正文放在 `evaluation/experiments/<experiment-id>/candidates/`，不得写进正式正文目录；选择后仅胜者可进入下一步。
@@ -212,7 +213,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.6；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.7；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -237,8 +238,8 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 1. 用 `set-draft-mode` 选择 `formal`、`exploration` 或 `degraded_exploration`；非正式稿永远不能进入 `ready`。
 2. `context-collector` 检查 `memory-status`，生成本章 `build-memory-context`，再收集最小上下文并建立章节状态。
 3. 正式稿填写含决策摩擦、可证伪假设、规划反证、因果归属、专业判断审计与场景余波的 `scene-package`、`action-draft`；有关键对白时填写 `dialogue-ledger`。
-4. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草 `正文.md`，记录 generation evidence 并绑定当前章。
-5. 运行 `quality_check.py` 和 `narrative_gate.py`；需要比较方案时做单胜者分支实验与盲评，禁止把候选静默拼接。
+4. 按 `CLAUDE.md` 宪法与 `memory/voice-bible.md` 起草纯叙事 `正文.md`，不得把规划材料的 Markdown 强调语法带入正文；记录 generation evidence 并绑定当前章。
+5. 运行 `quality_check.py` 和 `narrative_gate.py`，成功推进到 `surface_checked` 后才启动审稿；需要比较方案时做单胜者分支实验与盲评，禁止把候选静默拼接。
 6. 依次交六个审稿角色完成一批审阅，记录真实 reviewer/provider/model/context；合并去重 findings 后只做一次集中 patch，再全文终审。第三份 generation 后不得自动继续回炉。
 7. `consistency-guard` 将新事实整理为 candidate；经明确晋升后重建索引。每五章做 checkpoint audit，卷终另做 volume audit。
 
@@ -876,7 +877,7 @@ def _agent_context_collector_md() -> str:
 4. 运行 `memory-status`；非 `clean` 时先请求 `rebuild-memory-index`，不得带病起草。
 5. 运行 `build-memory-context <slug> <X>`，读取生成的 `memory/context-cache/chXX-memory.md`。
 6. 读 `memory/worldbuilding.md`、上一章最后 20% 与当前场景材料。
-7. 将生成包压缩为本章 **最小上下文摘要**，不得自行补全缺失事实。
+7. 将生成包压缩为本章 **最小上下文摘要**，只保留字段值与叙事事实，不复制模板标签的 Markdown 强调语法，不得自行补全缺失事实。
 8. 从场景包提取认知账本与因果归属账本；摘要中必须区分“Canon 事实 / 人物已知 / 人物猜测 / 未决替代解释”。
 
 ## 输出格式
@@ -894,6 +895,7 @@ def _agent_context_collector_md() -> str:
 - 不修改 `chapters/`。
 - 不直接修改 `memory/canon/` 或 `.novel-forge/index.sqlite3`。
 - 发现缺失或新事实时只提交 memory candidate，未经晋升不得当作 Canon。
+- 若上一章正文仍有 blocking source-hygiene finding，停止收集下一章上下文，不得把污染格式继续传播。
 - `aesthetic-does-not-override-facts`: 审美目标不得让摘要越过 Canon、证据或人物已知边界。
 - 不调用外部搜索。
 """
@@ -1425,7 +1427,7 @@ def _agent_orchestrator_md() -> str:
 
 ## 规则
 - 一次只编排一个章节或场景，不批量写后续章节。
-- writer 仅加载当前场景、近场连续、相关人物/承诺和必要规则；长篇全量材料留给跨章审计。
+- writer 仅加载去除模板格式的最小摘要、当前场景、近场连续、相关人物/承诺和必要规则；长篇全量材料留给跨章审计。
 - 每次只推进一个状态，并写入证据、结果和下一步。
 - 审稿结论必须落盘到 `reviews/chXX-<role>.md`，证据表只存指针与 verdict。
 - 开始起草前持久化 `formal` / `exploration` 模式；探索稿不得推进到 `ready`。
@@ -1434,7 +1436,8 @@ def _agent_orchestrator_md() -> str:
 - 分支实验只允许一个胜者；每五章检查 checkpoint arc audit，卷终另做 volume audit。
 
 ## 正式模式自动审核
-- 用户选择 `formal` 并开始本章后，quality/narrative gate 通过即自动运行预先声明的一批六角色审核；不得询问是否开始审核。
+- 用户选择 `formal` 并开始本章后，只有 `surface_checked` 成功才自动运行预先声明的一批六角色审核；不得询问是否开始审核。
+- `surface_checked` 失败时立即短路，不生成 review 文件，不运行任何审稿角色，不准备下一章上下文。
 - 只有作者取舍、来源不确定、事实冲突、覆盖风险、外部发布，或返工预算耗尽后出现新 MUST 时才暂停请求人工决定。
 - 审稿角色先独立落盘，orchestrator 再对 findings 去重、合并同源问题并确定唯一回退层级；不得让六个角色分别触发六次改稿。
 
@@ -1445,7 +1448,9 @@ def _agent_orchestrator_md() -> str:
 - MAY 不触发整章回炉；优先保留为编辑建议。局部问题不得升级为无范围的全文重写。
 
 ## 推理预算
-- Max/长思考优先用于写前反证、章际交接、因果归属与合并 findings，不用于重复生成目录、模板或同一正文的多份证据。
+- 原始正文起草默认使用 standard/medium 推理；Max/长思考只用于写前反证、章际交接、因果归属与合并 findings，或用户明确声明的推理强度基准实验。
+- 即使用户选择 Max 起草，也不得把 Max 自动复制到六个同源审稿角色；审稿按一批执行，发现首个工具级 blocking 时立即停止。
+- Max/长思考不用于重复生成目录、模板、证据文件或同一正文的多份自证材料。
 - 第 2 章起，任何审核批次开始前先确认上一章正文 SHA-256 与 `0b. 章际交接` 当前有效。
 
 ## 不可绕过的策略

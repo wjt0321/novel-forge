@@ -656,6 +656,15 @@ def advance_state(
     state_path, state_text, _ = _read_chapter_state(book_dir, number)
     current = parse_chapter_state(state_text)
 
+    if to_state == "surface_checked":
+        findings = lint_file(find_chapter_file(book_dir, number))
+        blocking = [finding for finding in findings if finding.severity == "blocking"]
+        if blocking:
+            codes = ", ".join(sorted({finding.rule_code for finding in blocking}))
+            raise BookProjectError(
+                f"surface gate 仍有 blocking：{codes}；不得启动后续审稿。"
+            )
+
     if to_state == "ready":
         from .planning_spec import READY_REQUIRED_REVIEWS
 
@@ -898,6 +907,30 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
                 "placeholder_state_evidence",
                 "已推进状态仍使用空值或 '-' 作为证据指针。",
             )
+        if chapter_file and parsed["status"] == "ready":
+            try:
+                current_gates = run_gates(root, slug, chapter_number)
+            except BookProjectError as exc:
+                _issue(
+                    integrity_blockers,
+                    chapter_number,
+                    "ready_gate_unverifiable",
+                    f"ready 章节无法复核当前门禁：{exc}",
+                )
+            else:
+                quality_blocking = current_gates["quality"]["blocking"]
+                narrative_blocking = len(
+                    current_gates["narrative"]["blocking"]
+                )
+                if quality_blocking or narrative_blocking:
+                    _issue(
+                        integrity_blockers,
+                        chapter_number,
+                        "ready_with_blocking_gates",
+                        "章节状态为 ready，但当前门禁已失效："
+                        f"quality blocking={quality_blocking}，"
+                        f"narrative blocking={narrative_blocking}。",
+                    )
         chapters.append(parsed)
 
     if number is not None:

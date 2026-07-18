@@ -381,6 +381,26 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
     assert result["to"] == "ready"
 
 
+def test_surface_checked_rejects_blocking_source_hygiene(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter.write_text(
+        "# 第一章\n\n他母亲走回去的时候没有说话。她走得比他**慢**。\n",
+        encoding="utf-8",
+    )
+    for state in (
+        "context_collected",
+        "scene_packaged",
+        "action_drafted",
+        "dialogue_planned",
+        "drafted",
+    ):
+        book_project.advance_state(tmp_path, "demo", 1, state)
+
+    with pytest.raises(BookProjectError, match="surface gate"):
+        book_project.advance_state(tmp_path, "demo", 1, "surface_checked")
+
+
 def test_advance_state_rejects_unknown_state(tmp_path: Path):
     _make_book(tmp_path)
     with pytest.raises(BookProjectError):
@@ -395,6 +415,29 @@ def test_project_status_never_claims_author_or_publication_approval(tmp_path: Pa
     assert status["author_approval"] is False
     assert status["publication_eligibility"] is False
     assert "evidence" in status
+
+
+def test_project_status_flags_ready_chapter_with_current_blocking_gate(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter.write_text(
+        "# 第一章\n\n他母亲走回去的时候没有说话。她走得比他**慢**。\n",
+        encoding="utf-8",
+    )
+    book_project.advance_state(tmp_path, "demo", 1, "context_collected")
+    state_path = book_dir / "planning/chapter-state/ch01.md"
+    state_text = state_path.read_text(encoding="utf-8")
+    state_path.write_text(
+        state_text.replace("- status: context_collected", "- status: ready"),
+        encoding="utf-8",
+    )
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+
+    codes = {issue["code"] for issue in status["workflow_integrity"]["blockers"]}
+    assert "ready_with_blocking_gates" in codes
 
 
 def test_run_gates_uses_persisted_exploration_and_formal_modes(tmp_path: Path):

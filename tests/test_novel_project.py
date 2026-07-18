@@ -88,7 +88,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v3.6" in claude_md
+    assert "v3.7" in claude_md
+    assert "Markdown 粗体" in claude_md
+    assert "surface_checked" in claude_md
     assert "严禁复制其他书的正文" in claude_md
     assert "build-memory-context" in claude_md
     assert "memory/canon" in claude_md
@@ -370,18 +372,21 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v36_harness_and_serial_integrity():
+def test_skill_documents_v37_source_hygiene_and_cost_short_circuit():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v3.6" in text
+    assert "v3.7" in text
     assert "degraded_exploration" in text
     assert "同章同正文 SHA-256" in text
     assert "0b. 章际交接" in text
     assert "previous_chapter_sha256" in text
     assert "tool_capabilities" in text
     assert "tool_failures" in text
+    assert "Markdown 粗体" in text
+    assert "surface_checked" in text
+    assert "Max/长思考" in text
 
 
 def test_review_template_lists_every_canonical_role(tmp_path: Path):

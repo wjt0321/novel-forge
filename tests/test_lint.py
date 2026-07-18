@@ -14,6 +14,17 @@ def test_lint_detects_em_dash_and_ellipsis():
     assert any(f.severity == "blocking" for f in findings)
 
 
+def test_lint_blocks_markdown_emphasis_in_prose():
+    text = "他母亲走回去的时候没有说话。她走得比他**慢**。"
+
+    findings = lint_text(text)
+
+    match = next(f for f in findings if f.rule_code == "markdown-emphasis")
+    assert match.severity == "blocking"
+    assert match.line_number == 1
+    assert "**慢**" in match.evidence
+
+
 def test_lint_detects_not_is_flip():
     text = "他不是害怕，是愤怒。"
     findings = lint_text(text)
