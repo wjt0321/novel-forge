@@ -30,6 +30,9 @@ COGNITION_LEDGER_SECTION = "1d. 认知与可证伪假设"
 PLANNING_FALSIFICATION_SECTION = "1e. 规划反证与常识检查"
 CAUSAL_RESPONSIBILITY_SECTION = "3c. 因果归属账本"
 EXPERTISE_AUDIT_SECTION = "5b. 专业判断审计"
+DIALOGUE_INTENT_FIELDS: tuple[tuple[str, ...], ...] = (
+    ("关键对白意图", "关键对白"),
+)
 CHAPTER_HANDOFF_SECTION = "0b. 章际交接"
 CHAPTER_HANDOFF_FIELDS: tuple[tuple[str, ...], ...] = (
     ("上一章正文路径",),
@@ -75,7 +78,15 @@ DRAFT_MODES: tuple[str, ...] = (
     "degraded_exploration",
 )
 ARC_AUDIT_INTERVAL = 5
-MAX_AUTOMATIC_GENERATIONS = 3
+MAX_AUTOMATIC_GENERATIONS = 2
+
+# Runtime budgets are advisories, not literary verdicts. They exist to stop a
+# monolithic harness session from spending millions of cached tokens on
+# repeated full-context reads and threshold-filling edits.
+MAX_CACHED_INPUT_TOKENS_PER_CHAPTER = 2_000_000
+MAX_REQUESTS_PER_CHAPTER = 30
+MAX_DRAFT_MUTATIONS_PER_CHAPTER = 3
+MAX_REVIEW_CALLS_PER_CHAPTER = 3
 
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})
@@ -93,14 +104,8 @@ CHAPTER_STATES: tuple[str, ...] = (
     "planned",
     "context_collected",
     "scene_packaged",
-    "action_drafted",
-    "dialogue_planned",
     "drafted",
     "surface_checked",
-    "causal_reviewed",
-    "line_reviewed",
-    "texture_reviewed",
-    "consistency_checked",
     "blind_read",
     "editorial_reviewed",
     "ready",
@@ -117,31 +122,38 @@ FORWARD_STATE_TRANSITIONS: dict[str, str] = {
 
 # --- Review roles and verdicts ------------------------------------------------
 
-REVIEW_ROLES: tuple[str, ...] = (
-    "causal-editor",
-    "line-editor",
-    "texture-editor",
-    "consistency-guard",
+DEFAULT_REVIEW_ROLES: tuple[str, ...] = (
     "blind-reader",
     "chapter-editor",
 )
 
+# Specialist roles remain valid for old projects and difficult chapters, but
+# they are not part of the default ready path. The chapter editor owns their
+# former checklist in one consolidated review and may request one specialist
+# when a concrete risk justifies the extra context.
+SPECIALIST_REVIEW_ROLES: tuple[str, ...] = (
+    "causal-editor",
+    "line-editor",
+    "texture-editor",
+    "consistency-guard",
+)
+REVIEW_ROLES: tuple[str, ...] = (
+    *DEFAULT_REVIEW_ROLES,
+    *SPECIALIST_REVIEW_ROLES,
+)
+
 # Which state each review role completes on success.
 REVIEW_STATE_FOR_ROLE: dict[str, str] = {
-    "causal-editor": "causal_reviewed",
-    "line-editor": "line_reviewed",
-    "texture-editor": "texture_reviewed",
-    "consistency-guard": "consistency_checked",
     "blind-reader": "blind_read",
     "chapter-editor": "editorial_reviewed",
+    "causal-editor": "specialist_reviewed",
+    "line-editor": "specialist_reviewed",
+    "texture-editor": "specialist_reviewed",
+    "consistency-guard": "specialist_reviewed",
 }
 
 # Roles whose passing verdict is required before a chapter may enter `ready`.
 READY_REQUIRED_REVIEWS: tuple[tuple[str, str], ...] = (
-    ("causal-editor", "pass"),
-    ("line-editor", "pass"),
-    ("texture-editor", "pass"),
-    ("consistency-guard", "pass"),
     ("blind-reader", "pass"),
     ("chapter-editor", "ready_for_editor_decision"),
 )

@@ -17,6 +17,7 @@ def _scene_package(
     falsification: str | None = None,
     responsibility: str | None = None,
     expertise: str | None = None,
+    dialogue: str | None = None,
 ) -> str:
     decision = decision if decision is not None else (
         "- **不能同时得到的两样东西：** 保住体面 / 请求帮助\n"
@@ -45,6 +46,9 @@ def _scene_package(
     expertise = expertise if expertise is not None else (
         "- 无需：本章没有依赖专业判断推动的关键行动。\n"
     )
+    dialogue = dialogue if dialogue is not None else (
+        "无需：本章关键冲突不依赖对白转移事实或责任"
+    )
     return (
         "# Scene Package\n\n"
         "## 1. 场景压力\n- 目标：拿到钥匙\n\n"
@@ -64,7 +68,9 @@ def _scene_package(
         f"{responsibility}\n"
         "## 4. 信息账本\n"
         "| 信息 | 来源 |\n|---|---|\n| 门被锁上 | 甲亲眼看见 |\n\n"
-        "## 5. 信息预算\n- 主冲突：钥匙归属\n\n"
+        "## 5. 信息预算\n"
+        "- 主冲突：钥匙归属\n"
+        f"- 关键对白意图：{dialogue}\n\n"
         "## 5b. 专业判断审计\n"
         f"{expertise}\n"
         "## 7. 场景余波\n- 关系：甲欠乙一次解释\n"
@@ -239,7 +245,7 @@ def test_handoff_rejects_quotes_from_chapter_middle(tmp_path: Path):
     assert any("不在当前章开头" in item for item in report["blocking"])
 
 
-def test_formal_scene_package_requires_declared_key_dialogue_ledger():
+def test_formal_scene_package_does_not_require_separate_dialogue_ledger():
     package = _scene_package().replace(
         "## 5. 信息预算\n- 主冲突：钥匙归属\n",
         "## 5. 信息预算\n- 主冲突：钥匙归属\n- 关键对白：是\n",
@@ -247,7 +253,17 @@ def test_formal_scene_package_requires_declared_key_dialogue_ledger():
 
     blocking = check_scene_package(package, None, mode="formal")
 
-    assert any("关键对白账本不存在" in item for item in blocking)
+    assert not any("关键对白账本" in item for item in blocking)
+
+
+def test_formal_scene_package_requires_dialogue_intent_or_explicit_waiver():
+    blocking = check_scene_package(
+        _scene_package(dialogue=""),
+        None,
+        mode="formal",
+    )
+
+    assert any("关键对白意图" in item for item in blocking)
 
 
 def test_formal_materials_reject_unfilled_story_engine(tmp_path: Path):

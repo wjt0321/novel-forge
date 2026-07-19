@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-07-18",
+  "session": {
+    "acp_session_id": "9b51d688-a3c9-4c02-bdbe-3dda46804870",
+    "harness": "Claude Code",
+    "provider_model": "MiniMax M3",
+    "reasoning_effort": "high",
+    "project_slug": "claude-acp-5ch-20260719",
+    "title": "暗渠"
+  },
+  "billing": {
+    "total_tokens": 42938274,
+    "requests": 199,
+    "cost_usd": 5.757,
+    "new_input_tokens": 305000,
+    "output_tokens": 201000,
+    "cached_input_tokens": 42432000,
+    "cache_hit_rate": 0.993,
+    "derived_total_input_tokens": 42737000,
+    "derived_cached_share_of_total_tokens": 0.988209,
+    "derived_tokens_per_request": 215770
+  },
+  "acp": {
+    "agent_thought_chunks": 154,
+    "agent_message_chunks": 17,
+    "tool_calls": 422,
+    "plan_events": 24,
+    "tool_failures": 13,
+    "final_report_claimed_tool_failures": 0
+  },
+  "chapters": [
+    {
+      "chapter": 1,
+      "cjk": 5186,
+      "sha256": "8beda413a46954266868589aaaca8eb7195dd990b81aa2c35223c83852b97330",
+      "first_complete_cjk": 4585,
+      "writes": 2,
+      "edits": 4,
+      "minimum_distinct_complete_states": 5,
+      "sentence_len_mean": 21.61,
+      "paragraphs": 122
+    },
+    {
+      "chapter": 2,
+      "cjk": 5025,
+      "sha256": "06bf49bad5cd6cbb5d96b246794a7302ed1376709df712af64775a1082ed8cba",
+      "first_complete_cjk": 3328,
+      "writes": 2,
+      "edits": 7,
+      "minimum_distinct_complete_states": 9,
+      "sentence_len_mean": 17.51,
+      "paragraphs": 125
+    },
+    {
+      "chapter": 3,
+      "cjk": 5064,
+      "sha256": "c4362ec211870c4d2dab647a0705336a40e7388090bcec34066f4bfac388c0f7",
+      "first_complete_cjk": 2671,
+      "writes": 3,
+      "edits": 12,
+      "minimum_distinct_complete_states": 15,
+      "sentence_len_mean": 14.81,
+      "paragraphs": 160
+    },
+    {
+      "chapter": 4,
+      "cjk": 5003,
+      "sha256": "465edd3c4e51dad59c0ccbfdd20c149d22847d3b2134eade62aa1e88d8996b6b",
+      "first_complete_cjk": 2998,
+      "writes": 2,
+      "edits": 13,
+      "minimum_distinct_complete_states": 15,
+      "sentence_len_mean": 13.17,
+      "paragraphs": 165
+    },
+    {
+      "chapter": 5,
+      "cjk": 5057,
+      "sha256": "f13a26b99134a91b3ec863cd6e464e6566047ba7b89e0ef3f9b27ea785866755",
+      "first_complete_cjk": 3503,
+      "writes": 1,
+      "edits": 15,
+      "minimum_distinct_complete_states": 16,
+      "sentence_len_mean": 11.21,
+      "paragraphs": 247
+    }
+  ],
+  "review_integrity": {
+    "review_files": 30,
+    "review_bytes": 158485,
+    "same_origin": true,
+    "review_confidence": "single_origin",
+    "benchmark_eligible": false,
+    "future_chapter_reference_files": 21,
+    "blind_reader_future_knowledge": true,
+    "isolated_reviewer_sessions_observed": false,
+    "future_review_date_observed": "2029-07-19"
+  },
+  "project_assets": {
+    "files": 155,
+    "bytes": 674081,
+    "prose_bytes": 89309,
+    "review_bytes": 159778,
+    "planning_bytes": 136523,
+    "memory_bytes": 94337,
+    "non_prose_to_prose_ratio": 6.55
+  },
+  "disposition": {
+    "verified_at": "2026-07-19",
+    "fingerprints_match": true,
+    "source_project_removed": true,
+    "removed_path": "books/claude-acp-5ch-20260719",
+    "preserved_files": [
+      "docs/examples/agent-demo-v38-claude-minimax-acp-audit.md",
+      "docs/examples/agent-demo-v38-claude-minimax-acp-audit.json",
+      "docs/examples/five-chapter-agent-benchmark-prompt-v38.md"
+    ],
+    "comparison_boundary": "When both the model and agent product change, compare the integrated model-plus-harness system; do not attribute differences to either variable alone."
+  },
+  "verdict": {
+    "mechanical_workflow": "passed",
+    "audit_credibility": "failed",
+    "literary_surface": "failed",
+    "cost_efficiency": "failed",
+    "recommended_workflow": "v3.8 lean literary loop"
+  }
+}

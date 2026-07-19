@@ -18,6 +18,7 @@ import json
 import re
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,96 @@ def compare_signatures(
                 }
             )
     return findings
+
+
+def _normalized_sentences(text: str) -> list[str]:
+    return [
+        re.sub(r"\s+", "", sentence)
+        for sentence in re.findall(r"[^。！？]+[。！？]", text)
+        if _count_cjk(sentence) >= 4
+    ]
+
+
+def analyze_serial_style(
+    chapters: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """Detect cross-chapter style collapse without assigning literary value.
+
+    The report catches high-confidence serial symptoms seen in agent demos:
+    sentence length collapsing chapter by chapter and exact sentences being
+    reused as structural filler. Findings are advisory; the independent blind
+    reader remains the human-likeness decision point.
+    """
+    profiles: list[dict[str, Any]] = []
+    for name, text in chapters:
+        try:
+            signature = extract_signature(text)
+        except ValueError:
+            profiles.append(
+                {
+                    "chapter": name,
+                    "cjk": _count_cjk(text),
+                    "insufficient_for_signature": True,
+                }
+            )
+        else:
+            profiles.append({"chapter": name, **signature})
+    findings: list[dict[str, Any]] = []
+    comparable = [
+        profile
+        for profile in profiles
+        if "sentence_len_mean" in profile
+    ]
+    if len(comparable) >= 3:
+        means = [
+            float(profile["sentence_len_mean"])
+            for profile in comparable
+        ]
+        later_mean = statistics.fmean(means[1:])
+        if later_mean < means[0] * 0.7:
+            findings.append(
+                {
+                    "code": "sentence-length-collapse",
+                    "severity": "advisory",
+                    "detail": (
+                        "后续章节句长均值相对首章明显下降："
+                        + " → ".join(f"{value:.1f}" for value in means)
+                    ),
+                }
+            )
+
+    sentence_chapters: dict[str, set[str]] = {}
+    sentence_counts: Counter[str] = Counter()
+    for name, text in chapters:
+        local = Counter(_normalized_sentences(text))
+        for sentence, count in local.items():
+            sentence_counts[sentence] += count
+            sentence_chapters.setdefault(sentence, set()).add(name)
+    repeated = [
+        {
+            "sentence": sentence,
+            "count": sentence_counts[sentence],
+            "chapters": sorted(sentence_chapters[sentence]),
+        }
+        for sentence in sentence_counts
+        if sentence_counts[sentence] >= 3
+        and len(sentence_chapters[sentence]) >= 2
+    ]
+    repeated.sort(key=lambda item: (-item["count"], item["sentence"]))
+    if repeated:
+        findings.append(
+            {
+                "code": "cross-chapter-repetition",
+                "severity": "advisory",
+                "detail": f"检测到 {len(repeated)} 个跨章精确复用句。",
+                "examples": repeated[:5],
+            }
+        )
+    return {
+        "chapters": profiles,
+        "findings": findings,
+        "human_likeness_risk": len(findings) >= 2,
+    }
 
 
 def signature_report(path: Path, ref_path: Path | None = None) -> str:

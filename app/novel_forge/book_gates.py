@@ -23,6 +23,7 @@ from .planning_spec import (
     COGNITION_LEDGER_SECTION,
     DECISION_QUESTION_FIELDS,
     DECISION_QUESTION_SECTION,
+    DIALOGUE_INTENT_FIELDS,
     DRAFT_MODES,
     EXPERTISE_AUDIT_SECTION,
     MATERIAL_WAIVER_MARK,
@@ -267,22 +268,24 @@ def check_scene_package(
     beats = section(package_text, BEAT_CHAIN_SECTION)
     if beats is None or table_rows(beats) < MIN_BEATS:
         blocking.append(f"Beat 因果链少于 {MIN_BEATS} 个可执行 beat")
-    package_without_bold = package_text.replace("**", "")
-    key_dialogue_declared = bool(
-        re.search(r"关键对白[：:]\s*是", package_without_bold)
-    )
-    ledger_declares_dialogue = bool(
-        ledger_text
-        and re.search(r"本场景是否有关键对白[：:]\s*是", ledger_text)
-    )
-    if key_dialogue_declared and ledger_text is None:
-        blocking.append("场景包声明有关键对白，但关键对白账本不存在")
-    elif (
-        (key_dialogue_declared or ledger_declares_dialogue)
-        and ledger_text is not None
-        and table_rows(ledger_text) < 1
-    ):
-        blocking.append("关键对白账本未填写")
+    information_budget = section(package_text, "5. 信息预算")
+    if information_budget is not None:
+        dialogue_values = _labeled_field_values(
+            information_budget,
+            DIALOGUE_INTENT_FIELDS,
+        )
+        dialogue_intent = dialogue_values.get(
+            DIALOGUE_INTENT_FIELDS[0][0],
+            "",
+        )
+        if not _meaningful(dialogue_intent):
+            blocking.append(
+                "5. 信息预算 未填写关键对白意图；"
+                "没有关键对白时也必须写明具体无需理由"
+            )
+    # v3.8 keeps the separate dialogue ledger as an optional specialist aid.
+    # The compact scene package carries the dialogue intent, so ordinary
+    # chapters do not pay for another mandatory planning artifact.
     return blocking
 
 

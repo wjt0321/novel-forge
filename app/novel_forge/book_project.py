@@ -14,7 +14,7 @@ import hashlib
 import json
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -40,10 +40,30 @@ from .project_templates import (
     _planning_chapter_state_template_md,
     render_templates,
 )
+from .voice_signature import analyze_serial_style
 
 
 class BookProjectError(NovelForgeError):
     """Raised for books/<slug>/ project-level problems."""
+
+
+BLIND_RECONSTRUCTION_FIELDS: tuple[str, ...] = (
+    "reconstruction_space",
+    "reconstruction_body",
+    "reconstruction_constraints",
+    "reconstruction_emotion",
+    "reconstruction_dialogue",
+    "memorable_image_1",
+    "memorable_image_2",
+    "memorable_image_3",
+)
+EDITORIAL_DIMENSION_FIELDS: tuple[str, ...] = (
+    "editorial_causality",
+    "editorial_agency",
+    "editorial_dialogue",
+    "editorial_texture",
+    "editorial_continuity",
+)
 
 
 def _now() -> str:
@@ -399,6 +419,17 @@ def parse_review(text: str) -> dict[str, Any]:
             ("prose_only", "full_review_context", "candidate_prose_only"),
         ),
         "independence_note": _field("independence_note"),
+        "human_likeness": _canonical_value(
+            _field("human_likeness"),
+            ("convincing", "uncertain", "synthetic", "not_applicable"),
+        ),
+        **{
+            field: _field(field)
+            for field in (
+                *BLIND_RECONSTRUCTION_FIELDS,
+                *EDITORIAL_DIMENSION_FIELDS,
+            )
+        },
         "must_open": must_open,
     }
 
@@ -431,6 +462,14 @@ def _review_validation_errors(
         errors.append(
             f"审稿文件 chapter={parsed['chapter']} 与目标 {ch_id} 不一致。"
         )
+    if parsed["date"]:
+        try:
+            review_date = date.fromisoformat(parsed["date"])
+        except ValueError:
+            errors.append("审稿 date 必须使用 YYYY-MM-DD。")
+        else:
+            if review_date > datetime.now(timezone.utc).date():
+                errors.append("审稿 date 不能是未来日期。")
 
     try:
         current_binding = _review_binding_for_book(book_dir, number, role)
@@ -493,6 +532,22 @@ def _review_validation_errors(
                     f"{role} 的 previous_chapter_quote 未在上一章正文中找到。"
                 )
     if role in {"blind-reader", "chapter-editor"}:
+        substantive_fields = (
+            BLIND_RECONSTRUCTION_FIELDS
+            if role == "blind-reader"
+            else EDITORIAL_DIMENSION_FIELDS
+        )
+        missing_substantive = [
+            field
+            for field in substantive_fields
+            if not parsed.get(field)
+            or parsed[field].strip() in {"-", "null", "unknown", "待填写"}
+        ]
+        if missing_substantive:
+            errors.append(
+                f"{role} 缺少实质审稿字段："
+                + "、".join(missing_substantive)
+            )
         for field in (
             "reviewer_type",
             "reviewer_id",
@@ -504,6 +559,15 @@ def _review_validation_errors(
                 errors.append(f"关键审稿缺少来源字段：{field}")
         if role == "blind-reader" and parsed["context_scope"] != "prose_only":
             errors.append("blind-reader 的 context_scope 必须是 prose_only。")
+        if (
+            role == "blind-reader"
+            and parsed["verdict"] == "pass"
+            and parsed["human_likeness"] != "convincing"
+        ):
+            errors.append(
+                "blind-reader 通过时 human_likeness 必须是 convincing；"
+                "uncertain/synthetic 应给 needs_revision。"
+            )
         if generation is not None:
             same_origin = (
                 parsed["provider"] == generation.data["provider"]
@@ -515,6 +579,31 @@ def _review_validation_errors(
                     "角色名不同不等于独立评审。"
                 )
     return errors
+
+
+def _future_chapter_reference_errors(
+    text: str,
+    number: int,
+    role: str,
+) -> list[str]:
+    referenced = {
+        int(match)
+        for match in re.findall(
+            r"(?i)(?<![A-Za-z0-9_])ch-?0*(\d+)(?![A-Za-z0-9_])",
+            text,
+        )
+    }
+    future = sorted(chapter for chapter in referenced if chapter > number)
+    if future:
+        return [
+            f"{role} 审稿引用了未来章节："
+            + "、".join(f"ch{chapter:02d}" for chapter in future)
+        ]
+    if role == "blind-reader":
+        other = sorted(chapter for chapter in referenced if chapter != number)
+        if other:
+            return ["blind-reader 只能引用当前章正文，不能引用其他章节。"]
+    return []
 
 
 def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any]]:
@@ -530,7 +619,8 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
             continue
         if ch_id and m.group(1) != ch_id:
             continue
-        parsed = parse_review(path.read_text(encoding="utf-8-sig"))
+        review_text = path.read_text(encoding="utf-8-sig")
+        parsed = parse_review(review_text)
         parsed["file"] = f"reviews/{path.name}"
         parsed["role"] = parsed["role"] or m.group(2)
         valid_verdicts = (
@@ -554,6 +644,13 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
                 number,
                 parsed["role"],
                 parsed,
+            )
+            validation_errors.extend(
+                _future_chapter_reference_errors(
+                    review_text,
+                    number,
+                    parsed["role"],
+                )
             )
         except (BookProjectError, ValueError):
             parsed["stale"] = True
@@ -605,6 +702,9 @@ def record_review(
     parsed = parse_review(text)
     validation_errors = _review_validation_errors(
         root, book_dir, number, role, parsed
+    )
+    validation_errors.extend(
+        _future_chapter_reference_errors(text, number, role)
     )
     if validation_errors:
         raise BookProjectError(validation_errors[0])
@@ -704,6 +804,24 @@ def advance_state(
         gates = run_gates(root, slug, number, expected_mode="formal")
         if gates["quality"]["blocking"] or gates["narrative"]["blocking"]:
             raise BookProjectError("进入 ready 前 formal gate 仍有 blocking。")
+        placeholder_values = {"", "-", "null", "unknown", "待填写"}
+        evidence_rows = {
+            row["state"]: row for row in current["evidence"]
+        }
+        placeholder_states = [
+            state
+            for state in CHAPTER_STATES[1:-1]
+            if state not in evidence_rows
+            or evidence_rows[state]["evidence"].strip().lower()
+            in placeholder_values
+        ]
+        if placeholder_states:
+            raise BookProjectError(
+                "进入 ready 前仍有占位证据："
+                + "、".join(placeholder_states)
+            )
+        if evidence is None or evidence.strip().lower() in placeholder_values:
+            raise BookProjectError("进入 ready 必须提供非占位 evidence 指针。")
 
     from_state = current["status"] or "planned"
     if (
@@ -720,9 +838,20 @@ def advance_state(
                 f"非法状态迁移：{from_state} → {to_state}；"
                 f"下一合法状态为 {expected or '无'}。"
             )
-    state_text = _update_state_row(
-        state_text, to_state, evidence or "-", "advanced", when
+    existing_row = next(
+        (
+            row
+            for row in current["evidence"]
+            if row["state"] == to_state
+            and row["evidence"].strip().lower()
+            not in {"", "-", "null", "unknown", "待填写"}
+        ),
+        None,
     )
+    if evidence is not None or existing_row is None:
+        state_text = _update_state_row(
+            state_text, to_state, evidence or "-", "advanced", when
+        )
     fields: dict[str, str] = {"status": to_state, "updated_at": when}
     if next_action is not None:
         fields["next_action"] = next_action
@@ -819,6 +948,11 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             match = re.fullmatch(r"ch-(\d+)", path.parent.name)
             if match:
                 chapter_numbers.add(int(match.group(1)))
+    serial_chapter_numbers = {
+        chapter_number
+        for chapter_number in chapter_numbers
+        if number is None or chapter_number <= number
+    }
     if number is not None:
         chapter_numbers = {number} if number in chapter_numbers else set()
 
@@ -902,7 +1036,12 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             for row in parsed["evidence"]
         ):
             _issue(
-                integrity_warnings,
+                (
+                    integrity_blockers
+                    if parsed["status"] == "ready"
+                    and parsed["draft_mode"] == "formal"
+                    else integrity_warnings
+                ),
                 chapter_number,
                 "placeholder_state_evidence",
                 "已推进状态仍使用空值或 '-' 作为证据指针。",
@@ -1062,6 +1201,14 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["benchmark_eligible"] = not benchmark_missing
     data["benchmark_missing"] = benchmark_missing
     data["evidence"] = evidence_status(root, slug, number)
+    runtime_budget = data["evidence"]["runtime_budget"]
+    for finding in runtime_budget["findings"]:
+        _issue(
+            integrity_warnings,
+            finding["chapter"],
+            finding["code"],
+            f"运行预算超限：actual={finding['actual']}，limit={finding['limit']}。",
+        )
     for cycle in data["evidence"]["generation_cycles"]:
         if cycle["review_cycle_status"] not in {
             "budget_exhausted",
@@ -1090,6 +1237,27 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         "blockers": integrity_blockers,
         "warnings": integrity_warnings,
     }
+    serial_inputs: list[tuple[str, str]] = []
+    for chapter_number in sorted(serial_chapter_numbers):
+        try:
+            chapter_path = find_chapter_file(book_dir, chapter_number)
+        except BookProjectError:
+            continue
+        serial_inputs.append(
+            (
+                _chapter_id(chapter_number),
+                chapter_path.read_text(encoding="utf-8-sig"),
+            )
+        )
+    data["literary_profile"] = (
+        analyze_serial_style(serial_inputs)
+        if serial_inputs
+        else {
+            "chapters": [],
+            "findings": [],
+            "human_likeness_risk": False,
+        }
+    )
     return data
 
 
@@ -1146,6 +1314,19 @@ def run_gates(
         and quality["blocking"] == 0
         and not result["narrative"]["blocking"]
     )
+    serial_inputs: list[tuple[str, str]] = []
+    for chapter_number in range(1, number + 1):
+        try:
+            path = find_chapter_file(book_dir, chapter_number)
+        except BookProjectError:
+            continue
+        serial_inputs.append(
+            (
+                _chapter_id(chapter_number),
+                path.read_text(encoding="utf-8-sig"),
+            )
+        )
+    result["literary"] = analyze_serial_style(serial_inputs)
     result["author_approval"] = False
     result["publication_eligibility"] = False
     return result
@@ -1171,9 +1352,21 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     created: list[str] = []
     updated: list[str] = []
     identical: list[str] = []
+    preserved: list[str] = []
+    migrated_states: list[str] = []
+    migratable_project_files = {
+        "CLAUDE.md": re.compile(
+            r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
+            r"v3\.7(?:\s|（|\()"
+        ),
+        "README.md": re.compile(
+            r"(?m)^-\s*默认工作流\s*:\s*v3\.7(?:$|[\s；;。])"
+        ),
+    }
     refresh_set = (
         set(SYNCABLE_FILES)
         | set(CREATE_ONLY_FILES)
+        | set(migratable_project_files)
         | {"memory/voice-bible.md"}
     )
     for rel in sorted(refresh_set):
@@ -1192,15 +1385,55 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
             identical.append(rel)
             continue
         existing = target.read_text(encoding="utf-8-sig")
+        if rel in migratable_project_files:
+            if migratable_project_files[rel].search(existing) is None:
+                if existing == content:
+                    identical.append(rel)
+                else:
+                    preserved.append(rel)
+                continue
         if existing == content:
             identical.append(rel)
         else:
             updated.append(rel)
             if not dry_run:
                 target.write_text(content, encoding="utf-8")
+    legacy_state_map = {
+        "action_drafted": "scene_packaged",
+        "dialogue_planned": "scene_packaged",
+        "causal_reviewed": "surface_checked",
+        "line_reviewed": "surface_checked",
+        "texture_reviewed": "surface_checked",
+        "consistency_checked": "surface_checked",
+    }
+    state_dir = book_dir / "planning/chapter-state"
+    if state_dir.is_dir():
+        for state_path in sorted(state_dir.glob("ch*.md")):
+            state_text = state_path.read_text(encoding="utf-8-sig")
+            old_status = parse_chapter_state(state_text)["status"]
+            new_status = legacy_state_map.get(old_status or "")
+            if new_status is None:
+                continue
+            relative = state_path.relative_to(book_dir).as_posix()
+            migrated_states.append(relative)
+            if not dry_run:
+                state_path.write_text(
+                    _set_fields(
+                        state_text,
+                        status=new_status,
+                        updated_at=_now(),
+                        next_action=(
+                            "v3.8 migration: continue from "
+                            f"{new_status}"
+                        ),
+                    ),
+                    encoding="utf-8",
+                )
     return {
         "dry_run": dry_run,
         "created": created,
         "updated": updated,
         "identical": identical,
+        "preserved": preserved,
+        "migrated_states": migrated_states,
     }

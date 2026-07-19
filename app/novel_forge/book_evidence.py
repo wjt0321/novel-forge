@@ -21,6 +21,10 @@ from .planning_spec import (
     GENERATION_REASONING_EFFORTS,
     GENERATION_SANDBOX_PROFILES,
     GENERATION_STAGES,
+    MAX_CACHED_INPUT_TOKENS_PER_CHAPTER,
+    MAX_DRAFT_MUTATIONS_PER_CHAPTER,
+    MAX_REQUESTS_PER_CHAPTER,
+    MAX_REVIEW_CALLS_PER_CHAPTER,
     MAX_AUTOMATIC_GENERATIONS,
     PROVENANCE_CONFIDENCE_LEVELS,
 )
@@ -166,6 +170,11 @@ def _validate_generation(data: dict[str, Any]) -> None:
         "input_tokens",
         "output_tokens",
         "total_tokens",
+        "cached_input_tokens",
+        "request_count",
+        "draft_write_count",
+        "draft_edit_count",
+        "review_call_count",
         "pause_count",
         "interaction_count",
         "review_round",
@@ -868,6 +877,11 @@ def evidence_status(
         "input_tokens",
         "output_tokens",
         "total_tokens",
+        "cached_input_tokens",
+        "request_count",
+        "draft_write_count",
+        "draft_edit_count",
+        "review_call_count",
         "metrics_source",
         "pause_count",
         "interaction_count",
@@ -883,6 +897,104 @@ def evidence_status(
         "tool_failures",
         "human_regeneration_authorized",
         "human_decision_reference",
+    )
+    runtime_findings: list[dict[str, Any]] = []
+    runtime_chapters: list[dict[str, Any]] = []
+    runtime_groups: dict[int, list[EvidenceRecord]] = {}
+    for record in semantic_generation_records:
+        runtime_groups.setdefault(record.data["chapter"], []).append(record)
+    for generation_chapter, chapter_records in sorted(runtime_groups.items()):
+        def _sum_complete(field: str) -> int | None:
+            values = [record.data.get(field) for record in chapter_records]
+            if any(value is None for value in values):
+                return None
+            return sum(int(value) for value in values)
+
+        writes = _sum_complete("draft_write_count")
+        edits = _sum_complete("draft_edit_count")
+        totals = {
+            "cached_input_tokens": _sum_complete("cached_input_tokens"),
+            "request_count": _sum_complete("request_count"),
+            "draft_mutations": (
+                writes + edits
+                if writes is not None and edits is not None
+                else None
+            ),
+            "review_calls": _sum_complete("review_call_count"),
+        }
+        checks = (
+            (
+                "cached-context-budget",
+                totals["cached_input_tokens"],
+                MAX_CACHED_INPUT_TOKENS_PER_CHAPTER,
+            ),
+            (
+                "request-budget",
+                totals["request_count"],
+                MAX_REQUESTS_PER_CHAPTER,
+            ),
+            (
+                "draft-mutation-budget",
+                totals["draft_mutations"],
+                MAX_DRAFT_MUTATIONS_PER_CHAPTER,
+            ),
+            (
+                "review-call-budget",
+                totals["review_calls"],
+                MAX_REVIEW_CALLS_PER_CHAPTER,
+            ),
+        )
+        chapter_findings: list[dict[str, Any]] = []
+        for code, actual, limit in checks:
+            if actual is not None and actual > limit:
+                finding = {
+                    "record_ids": [
+                        record.id for record in chapter_records
+                    ],
+                    "chapter": generation_chapter,
+                    "code": code,
+                    "actual": actual,
+                    "limit": limit,
+                }
+                runtime_findings.append(finding)
+                chapter_findings.append(finding)
+        assessed = sum(value is not None for value in totals.values())
+        chapter_status = (
+            "exceeded"
+            if chapter_findings
+            else "within_budget"
+            if assessed == len(totals)
+            else "partial"
+            if assessed
+            else "unassessed"
+        )
+        runtime_chapters.append(
+            {
+                "chapter": generation_chapter,
+                "record_ids": [
+                    record.id for record in chapter_records
+                ],
+                "status": chapter_status,
+                "totals": totals,
+            }
+        )
+    assessed_runtime_fields = sum(
+        value is not None
+        for chapter_data in runtime_chapters
+        for value in chapter_data["totals"].values()
+    )
+    runtime_status = (
+        "exceeded"
+        if runtime_findings
+        else "within_budget"
+        if runtime_chapters
+        and all(
+            chapter_data["status"] == "within_budget"
+            for chapter_data in runtime_chapters
+        )
+        else "partial"
+        if assessed_runtime_fields
+        else "unassessed"
     )
     return {
         "slug": slug,
@@ -932,6 +1044,17 @@ def evidence_status(
             }
             for record in generation_records
         ],
+        "runtime_budget": {
+            "status": runtime_status,
+            "findings": runtime_findings,
+            "chapters": runtime_chapters,
+            "limits": {
+                "cached_input_tokens": MAX_CACHED_INPUT_TOKENS_PER_CHAPTER,
+                "request_count": MAX_REQUESTS_PER_CHAPTER,
+                "draft_mutations": MAX_DRAFT_MUTATIONS_PER_CHAPTER,
+                "review_calls": MAX_REVIEW_CALLS_PER_CHAPTER,
+            },
+        },
         "arc_audit_due": arc_audit_due,
         "arc_audit_satisfied": arc_audit_satisfied,
         "arc_audit_interval": ARC_AUDIT_INTERVAL,

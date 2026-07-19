@@ -226,6 +226,11 @@ def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
         input_tokens=12000,
         output_tokens=8000,
         total_tokens=20000,
+        cached_input_tokens=9000,
+        request_count=12,
+        draft_write_count=1,
+        draft_edit_count=1,
+        review_call_count=2,
         metrics_source="user_observed",
         pause_count=1,
         interaction_count=2,
@@ -241,11 +246,125 @@ def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
     assert record.data["elapsed_seconds"] == 3000
     assert record.data["review_round"] == 2
     assert record.data["generation_stage"] == "final"
+    assert record.data["cached_input_tokens"] == 9000
+    assert record.data["draft_edit_count"] == 1
 
     with pytest.raises(BookEvidenceError, match="elapsed_seconds"):
         render_evidence_markdown({**data, "elapsed_seconds": -1})
     with pytest.raises(BookEvidenceError, match="metrics_source"):
         render_evidence_markdown({**data, "metrics_source": "guessed"})
+    with pytest.raises(BookEvidenceError, match="request_count"):
+        render_evidence_markdown({**data, "request_count": -1})
+
+
+def test_evidence_status_reports_runtime_budget_pressure(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    source = tmp_path / "generation-budget.md"
+    _write_input(
+        source,
+        _base(
+            "generation",
+            "generation.ch01.expensive",
+            content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+            metrics_source="harness_reported",
+            provenance_confidence="harness_exposed",
+            run_id="session-expensive",
+            agent_harness="claude-code",
+            reasoning_effort="high",
+            sandbox_profile="full",
+            tool_capabilities=["read", "write", "shell"],
+            tool_failures=[],
+            cached_input_tokens=8_400_000,
+            input_tokens=61_000,
+            output_tokens=40_000,
+            total_tokens=8_501_000,
+            request_count=40,
+            draft_write_count=2,
+            draft_edit_count=15,
+            review_call_count=6,
+        ),
+    )
+    record_evidence(tmp_path, "demo", source)
+
+    status = evidence_status(tmp_path, "demo", chapter=1)
+
+    assert status["runtime_budget"]["status"] == "exceeded"
+    codes = {
+        finding["code"]
+        for finding in status["runtime_budget"]["findings"]
+    }
+    assert "cached-context-budget" in codes
+    assert "draft-mutation-budget" in codes
+    assert "review-call-budget" in codes
+
+
+def test_runtime_budget_aggregates_generations_by_chapter(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    first = tmp_path / "generation-first.md"
+    _write_input(
+        first,
+        _base(
+            "generation",
+            "generation.ch01.first",
+            content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+            cached_input_tokens=1_200_000,
+            request_count=20,
+            draft_write_count=1,
+            draft_edit_count=0,
+            review_call_count=1,
+        ),
+    )
+    record_evidence(tmp_path, "demo", first)
+    chapter.write_text(
+        "# 第一章\n\n陈拾没有开门。门外的人又敲了一次。\n",
+        encoding="utf-8",
+    )
+    second = tmp_path / "generation-second.md"
+    _write_input(
+        second,
+        _base(
+            "generation",
+            "generation.ch01.second",
+            content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+            cached_input_tokens=1_200_000,
+            request_count=20,
+            draft_write_count=0,
+            draft_edit_count=1,
+            review_call_count=1,
+            parent_generation_id="generation.ch01.first",
+            generation_stage="revised",
+        ),
+    )
+    record_evidence(tmp_path, "demo", second)
+
+    budget = evidence_status(tmp_path, "demo", chapter=1)["runtime_budget"]
+
+    assert budget["status"] == "exceeded"
+    totals = budget["chapters"][0]["totals"]
+    assert totals["cached_input_tokens"] == 2_400_000
+    assert totals["request_count"] == 40
+
+
+def test_runtime_budget_is_unassessed_when_metrics_are_unknown(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    source = tmp_path / "generation-unknown-budget.md"
+    _write_input(
+        source,
+        _base(
+            "generation",
+            "generation.ch01.unknown-budget",
+            content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+        ),
+    )
+    record_evidence(tmp_path, "demo", source)
+
+    budget = evidence_status(tmp_path, "demo", chapter=1)["runtime_budget"]
+
+    assert budget["status"] == "unassessed"
+    assert budget["chapters"][0]["status"] == "unassessed"
 
 
 def test_generation_requires_consistent_authority_and_runtime_identity():
@@ -349,12 +468,12 @@ def test_degraded_generation_requires_runtime_failure_evidence():
             render_evidence_markdown(invalid)
 
 
-def test_fourth_generation_requires_explicit_human_authorization(
+def test_third_generation_requires_explicit_human_authorization(
     tmp_path: Path,
 ):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"
-    for number in range(1, 4):
+    for number in range(1, 3):
         chapter.write_text(
             f"# 第一章\n\n第 {number} 个正文版本。\n",
             encoding="utf-8",
@@ -372,30 +491,30 @@ def test_fourth_generation_requires_explicit_human_authorization(
         )
         record_evidence(tmp_path, "demo", source)
 
-    chapter.write_text("# 第一章\n\n第四个正文版本。\n", encoding="utf-8")
-    fourth = tmp_path / "generation-fourth.md"
-    fourth_data = _base(
+    chapter.write_text("# 第一章\n\n第三个正文版本。\n", encoding="utf-8")
+    third = tmp_path / "generation-third.md"
+    third_data = _base(
         "generation",
-        "generation.ch01.r4",
+        "generation.ch01.r3",
         content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
     )
-    _write_input(fourth, fourth_data)
+    _write_input(third, third_data)
     with pytest.raises(BookEvidenceError, match="人工授权"):
-        record_evidence(tmp_path, "demo", fourth)
+        record_evidence(tmp_path, "demo", third)
 
-    authorized = tmp_path / "generation-fourth-authorized.md"
+    authorized = tmp_path / "generation-third-authorized.md"
     _write_input(
         authorized,
         {
-            **fourth_data,
-            "id": "generation.ch01.r4-authorized",
+            **third_data,
+            "id": "generation.ch01.r3-authorized",
             "authority": "human_delegate",
             "human_regeneration_authorized": True,
             "human_decision_reference": "user-request-2026-07-18",
         },
     )
     result = record_evidence(tmp_path, "demo", authorized)
-    assert result["record_id"] == "generation.ch01.r4-authorized"
+    assert result["record_id"] == "generation.ch01.r3-authorized"
 
 
 def test_evidence_status_collapses_legacy_duplicate_generations(
@@ -440,7 +559,7 @@ def test_evidence_status_collapses_legacy_duplicate_generations(
 def test_evidence_status_reports_generation_convergence_budget(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"
-    for number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+    for number, stage in ((1, "raw"), (2, "final")):
         chapter.write_text(
             f"# 第一章\n\n第 {number} 版正文，陈拾没有开门。\n",
             encoding="utf-8",
@@ -462,8 +581,8 @@ def test_evidence_status_reports_generation_convergence_budget(tmp_path: Path):
 
     status = evidence_status(tmp_path, "demo", chapter=1)
 
-    assert status["generation_count"] == 3
-    assert status["automatic_generation_limit"] == 3
+    assert status["generation_count"] == 2
+    assert status["automatic_generation_limit"] == 2
     assert status["review_cycle_status"] == "budget_exhausted"
     assert status["another_generation_requires_human"] is True
 

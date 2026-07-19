@@ -55,7 +55,9 @@ def _make_book(tmp_path: Path, slug: str = "demo") -> Path:
         "|---|---|---|---|---|---|\n"
         "| 三日期限 | 甲 | 乙 | 甲、乙 | 2 | 乙 |\n\n"
         "## 4. 信息账本\n| 信息 | 来源 |\n|---|---|\n| x | y |\n\n"
-        "## 5. 信息预算\n- 主冲突：x\n\n"
+        "## 5. 信息预算\n"
+        "- 主冲突：x\n"
+        "- 关键对白意图：无需：本章关键冲突不依赖对白转移事实或责任\n\n"
         "## 5b. 专业判断审计\n"
         "- 无需：本章没有依赖专业判断推动的关键行动。\n\n"
         "## 7. 场景余波\n"
@@ -96,6 +98,8 @@ def _review_file(
     provider: str = "review-provider",
     model: str = "review-model",
     independence_note: str = "",
+    human_likeness: str = "convincing",
+    substantive: bool = True,
 ) -> Path:
     number = int(chapter.removeprefix("ch"))
     binding = book_project.review_binding(
@@ -120,6 +124,28 @@ def _review_file(
             if line.strip() and not line.lstrip().startswith("#")
         )
     path = tmp_path / f"review-{role}.md"
+    substantive_text = ""
+    if substantive and role == "blind-reader":
+        substantive_text = (
+            "\n## Prose-only Reconstruction\n"
+            f"- reconstruction_space: {evidence_quote}\n"
+            f"- reconstruction_body: {evidence_quote}\n"
+            f"- reconstruction_constraints: {evidence_quote}\n"
+            f"- reconstruction_emotion: {evidence_quote}\n"
+            f"- reconstruction_dialogue: {evidence_quote}\n"
+            f"- memorable_image_1: {evidence_quote}\n"
+            f"- memorable_image_2: {evidence_quote}\n"
+            f"- memorable_image_3: {evidence_quote}\n"
+        )
+    elif substantive and role == "chapter-editor":
+        substantive_text = (
+            "\n## Editorial Dimensions\n"
+            f"- editorial_causality: {evidence_quote}\n"
+            f"- editorial_agency: {evidence_quote}\n"
+            f"- editorial_dialogue: {evidence_quote}\n"
+            f"- editorial_texture: {evidence_quote}\n"
+            f"- editorial_continuity: {evidence_quote}\n"
+        )
     path.write_text(
         f"# Review — {chapter} / {role}\n\n"
         f"- chapter: {chapter}\n"
@@ -140,9 +166,11 @@ def _review_file(
         f"- model: {model}\n"
         f"- context_scope: {'prose_only' if role == 'blind-reader' else 'full_review_context'}\n"
         f"- independence_note: {independence_note}\n\n"
+        f"- human_likeness: {human_likeness if role == 'blind-reader' else 'not_applicable'}\n\n"
         "## Findings\n"
         "| # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |\n"
-        "|---|---|---|---|---|---|---|\n",
+        "|---|---|---|---|---|---|---|\n"
+        + substantive_text,
         encoding="utf-8",
     )
     return path
@@ -247,6 +275,30 @@ def test_record_review_rejects_mismatched_role(tmp_path: Path):
         book_project.record_review(tmp_path, "demo", 1, "causal-editor", review)
 
 
+def test_default_workflow_requires_only_two_high_value_reviews():
+    from app.novel_forge.planning_spec import (
+        CHAPTER_STATES,
+        DEFAULT_REVIEW_ROLES,
+        READY_REQUIRED_REVIEWS,
+    )
+
+    assert CHAPTER_STATES == (
+        "planned",
+        "context_collected",
+        "scene_packaged",
+        "drafted",
+        "surface_checked",
+        "blind_read",
+        "editorial_reviewed",
+        "ready",
+    )
+    assert DEFAULT_REVIEW_ROLES == ("blind-reader", "chapter-editor")
+    assert READY_REQUIRED_REVIEWS == (
+        ("blind-reader", "pass"),
+        ("chapter-editor", "ready_for_editor_decision"),
+    )
+
+
 def test_record_review_rejects_stale_source_fingerprint(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     review = _review_file(tmp_path, "blind-reader", "pass")
@@ -348,10 +400,6 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
     _record_generation(tmp_path, book_dir)
     with pytest.raises(BookProjectError):
         book_project.advance_state(tmp_path, "demo", 1, "ready")
-    for role in ("causal-editor", "line-editor", "texture-editor", "consistency-guard"):
-        book_project.record_review(
-            tmp_path, "demo", 1, role, _review_file(tmp_path, role, "pass")
-        )
     book_project.record_review(
         tmp_path, "demo", 1, "blind-reader", _review_file(tmp_path, "blind-reader", "pass")
     )
@@ -365,19 +413,29 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
     for state in (
         "context_collected",
         "scene_packaged",
-        "action_drafted",
-        "dialogue_planned",
         "drafted",
         "surface_checked",
-        "causal_reviewed",
-        "line_reviewed",
-        "texture_reviewed",
-        "consistency_checked",
         "blind_read",
         "editorial_reviewed",
     ):
-        book_project.advance_state(tmp_path, "demo", 1, state)
-    result = book_project.advance_state(tmp_path, "demo", 1, "ready")
+        book_project.advance_state(
+            tmp_path,
+            "demo",
+            1,
+            state,
+            evidence=(
+                None
+                if state in {"blind_read", "editorial_reviewed"}
+                else f"planning/{state}.md"
+            ),
+        )
+    result = book_project.advance_state(
+        tmp_path,
+        "demo",
+        1,
+        "ready",
+        evidence="project-status/current",
+    )
     assert result["to"] == "ready"
 
 
@@ -391,14 +449,129 @@ def test_surface_checked_rejects_blocking_source_hygiene(tmp_path: Path):
     for state in (
         "context_collected",
         "scene_packaged",
-        "action_drafted",
-        "dialogue_planned",
         "drafted",
     ):
         book_project.advance_state(tmp_path, "demo", 1, state)
 
     with pytest.raises(BookProjectError, match="surface gate"):
         book_project.advance_state(tmp_path, "demo", 1, "surface_checked")
+
+
+def test_blind_reader_requires_explicit_human_likeness_verdict(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "pass",
+        human_likeness="uncertain",
+    )
+
+    with pytest.raises(BookProjectError, match="human_likeness"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "verdict"),
+    [
+        ("blind-reader", "pass"),
+        ("chapter-editor", "ready_for_editor_decision"),
+    ],
+)
+def test_default_review_requires_substantive_dimensions(
+    tmp_path: Path,
+    role: str,
+    verdict: str,
+):
+    _make_book(tmp_path)
+    review = _review_file(
+        tmp_path,
+        role,
+        verdict,
+        substantive=False,
+    )
+
+    with pytest.raises(BookProjectError, match="实质审稿字段"):
+        book_project.record_review(tmp_path, "demo", 1, role, review)
+
+
+def test_blind_reader_rejects_future_chapter_knowledge(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(tmp_path, "blind-reader", "pass")
+    review.write_text(
+        review.read_text(encoding="utf-8")
+        + "\n## 盲读结论\n这个物件会在 ch05 被找回。\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BookProjectError, match="未来章节"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_blind_reader_rejects_chapter_id_touching_chinese_text(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(tmp_path, "blind-reader", "pass")
+    review.write_text(
+        review.read_text(encoding="utf-8")
+        + "\n## 盲读结论\n这个物件会在ch05被找回。\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BookProjectError, match="未来章节"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_record_review_can_replace_existing_future_leaking_review(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    leaking = _review_file(tmp_path, "blind-reader", "pass")
+    leaking.write_text(
+        leaking.read_text(encoding="utf-8")
+        + "\n## 盲读结论\n这个物件会在 ch05 被找回。\n",
+        encoding="utf-8",
+    )
+    canonical = book_dir / "reviews/ch01-blind-reader.md"
+    canonical.write_text(
+        leaking.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    replacement = tmp_path / "clean-blind-review.md"
+    clean = _review_file(tmp_path, "blind-reader", "pass")
+    replacement.write_text(
+        clean.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    result = book_project.record_review(
+        tmp_path, "demo", 1, "blind-reader", replacement
+    )
+
+    assert result["verdict"] == "pass"
+    assert "ch05" not in canonical.read_text(encoding="utf-8")
+
+
+def test_review_rejects_future_date(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(tmp_path, "blind-reader", "pass")
+    review.write_text(
+        review.read_text(encoding="utf-8").replace(
+            "- date: 2026-07-16",
+            "- date: 2029-07-19",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BookProjectError, match="未来"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
 
 
 def test_advance_state_rejects_unknown_state(tmp_path: Path):
@@ -415,6 +588,28 @@ def test_project_status_never_claims_author_or_publication_approval(tmp_path: Pa
     assert status["author_approval"] is False
     assert status["publication_eligibility"] is False
     assert "evidence" in status
+
+
+def test_chapter_project_status_reports_serial_style_through_current_chapter(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    for number in range(1, 4):
+        chapter = book_dir / f"chapters/e01/ch-{number:02d}/正文.md"
+        chapter.parent.mkdir(parents=True, exist_ok=True)
+        chapter.write_text(
+            f"# 第{number}章\n\n"
+            + "客厅里很安静。" * 8
+            + "他绕过桌子，推开窗，确认楼下没有人。" * 8,
+            encoding="utf-8",
+        )
+
+    status = book_project.project_status(tmp_path, "demo", 3)
+
+    assert any(
+        finding["code"] == "cross-chapter-repetition"
+        for finding in status["literary_profile"]["findings"]
+    )
 
 
 def test_project_status_flags_ready_chapter_with_current_blocking_gate(
@@ -438,6 +633,24 @@ def test_project_status_flags_ready_chapter_with_current_blocking_gate(
 
     codes = {issue["code"] for issue in status["workflow_integrity"]["blockers"]}
     assert "ready_with_blocking_gates" in codes
+
+
+def test_ready_formal_placeholder_state_evidence_is_blocking(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    book_project.advance_state(tmp_path, "demo", 1, "context_collected")
+    state_path = book_dir / "planning/chapter-state/ch01.md"
+    state_text = state_path.read_text(encoding="utf-8")
+    state_path.write_text(
+        state_text.replace("- status: context_collected", "- status: ready"),
+        encoding="utf-8",
+    )
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+
+    assert any(
+        issue["code"] == "placeholder_state_evidence"
+        for issue in status["workflow_integrity"]["blockers"]
+    )
 
 
 def test_run_gates_uses_persisted_exploration_and_formal_modes(tmp_path: Path):
@@ -709,7 +922,7 @@ def test_project_status_separates_ready_evidence_from_benchmark_independence(
 
 def test_project_status_reports_generation_budget_exhaustion(tmp_path: Path):
     book_dir = _make_book(tmp_path)
-    for round_number, stage in ((1, "raw"), (2, "revised"), (3, "final")):
+    for round_number, stage in ((1, "raw"), (2, "final")):
         chapter = book_dir / "chapters/e01/ch-01/正文.md"
         chapter.write_text(
             chapter.read_text(encoding="utf-8")
@@ -727,7 +940,7 @@ def test_project_status_reports_generation_budget_exhaustion(tmp_path: Path):
 
     status = book_project.project_status(tmp_path, "demo", 1)
 
-    assert status["evidence"]["generation_count"] == 3
+    assert status["evidence"]["generation_count"] == 2
     assert status["evidence"]["review_cycle_status"] == "budget_exhausted"
     assert status["evidence"]["another_generation_requires_human"] is True
 
@@ -754,22 +967,152 @@ def test_advance_state_allows_adjacent_forward_and_explicit_rollback(tmp_path: P
     assert rollback["to"] == "planned"
 
 
+def test_ready_rejects_placeholder_evidence_before_writing_state(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    paragraph = "他敲门，她没有开。" * 900
+    chapter.write_text(
+        f"# 第一章\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n",
+        encoding="utf-8",
+    )
+    _waive_materials(book_dir)
+    _record_generation(tmp_path, book_dir)
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "blind-reader",
+        _review_file(tmp_path, "blind-reader", "pass"),
+    )
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "chapter-editor",
+        _review_file(
+            tmp_path,
+            "chapter-editor",
+            "ready_for_editor_decision",
+        ),
+    )
+    for state in (
+        "context_collected",
+        "scene_packaged",
+        "drafted",
+        "surface_checked",
+        "blind_read",
+        "editorial_reviewed",
+    ):
+        book_project.advance_state(tmp_path, "demo", 1, state)
+
+    with pytest.raises(BookProjectError, match="占位证据"):
+        book_project.advance_state(tmp_path, "demo", 1, "ready")
+
+    status = book_project.project_status(tmp_path, "demo", 1)
+    assert status["chapters"][0]["status"] == "editorial_reviewed"
+
+
 def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     # Simulate an outdated managed file and a hand-filled voice bible.
-    agent = book_dir / ".claude/agents/line-editor.md"
+    agent = book_dir / ".claude/agents/chapter-editor.md"
     agent.write_text("old version", encoding="utf-8")
     voice = book_dir / "memory/voice-bible.md"
     voice.write_text("# 手写声音圣经\n", encoding="utf-8")
 
     dry = book_project.sync_tools(tmp_path, "demo", dry_run=True)
-    assert ".claude/agents/line-editor.md" in dry["updated"]
+    assert ".claude/agents/chapter-editor.md" in dry["updated"]
     assert agent.read_text(encoding="utf-8") == "old version"  # dry run did not write
 
     result = book_project.sync_tools(tmp_path, "demo")
-    assert ".claude/agents/line-editor.md" in result["updated"]
+    assert ".claude/agents/chapter-editor.md" in result["updated"]
     assert agent.read_text(encoding="utf-8") != "old version"
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
+
+
+def test_sync_tools_migrates_generated_v37_constitution_only(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    claude = book_dir / "CLAUDE.md"
+    claude.write_text(
+        claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v3.8（精简文学闭环）",
+            "- **工作流版本**: v3.7（旧六角色链）",
+        ),
+        encoding="utf-8",
+    )
+    readme = book_dir / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v3.8",
+            "- 默认工作流: v3.7",
+        ),
+        encoding="utf-8",
+    )
+
+    result = book_project.sync_tools(tmp_path, "demo")
+
+    assert "CLAUDE.md" in result["updated"]
+    assert "README.md" in result["updated"]
+    assert "v3.8" in claude.read_text(encoding="utf-8")
+    assert "v3.8" in readme.read_text(encoding="utf-8")
+
+
+def test_sync_tools_preserves_handwritten_constitution_without_version_marker(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    claude = book_dir / "CLAUDE.md"
+    claude.write_text(
+        "# 手写项目宪法\n\n- 标题: 《演示书》\n- 类型: 都市神豪系统流\n",
+        encoding="utf-8",
+    )
+
+    result = book_project.sync_tools(tmp_path, "demo")
+
+    assert "CLAUDE.md" in result["preserved"]
+    assert claude.read_text(encoding="utf-8").startswith("# 手写项目宪法")
+
+
+def test_sync_tools_preserves_handwritten_constitution_with_incidental_v37(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    claude = book_dir / "CLAUDE.md"
+    claude.write_text(
+        "# 手写项目宪法\n\n"
+        "- 标题: 《演示书》\n"
+        "- 类型: 都市神豪系统流\n\n"
+        "本项目吸收了 v3.7 的实验经验，但以下红线由作者手工维护。\n",
+        encoding="utf-8",
+    )
+
+    result = book_project.sync_tools(tmp_path, "demo")
+
+    assert "CLAUDE.md" in result["preserved"]
+    assert "作者手工维护" in claude.read_text(encoding="utf-8")
+
+
+def test_sync_tools_maps_legacy_chapter_state_to_v38_chain(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    state_path = book_dir / "planning/chapter-state/ch01.md"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        book_project._new_chapter_state(1).replace(
+            "- status: planned",
+            "- status: causal_reviewed",
+        ),
+        encoding="utf-8",
+    )
+
+    result = book_project.sync_tools(tmp_path, "demo")
+
+    assert "planning/chapter-state/ch01.md" in result["migrated_states"]
+    migrated = book_project.parse_chapter_state(
+        state_path.read_text(encoding="utf-8")
+    )
+    assert migrated["status"] == "surface_checked"
 
 
 def test_sync_tools_adds_memory_kernel_assets_without_touching_canon(tmp_path: Path):

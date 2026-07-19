@@ -77,18 +77,19 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evidence" / "arc-audits").is_dir()
     assert (book_dir / "evidence" / "rule-decisions").is_dir()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
-    assert (book_dir / ".claude" / "agents" / "consistency-guard.md").exists()
     assert (book_dir / ".claude" / "agents" / "chapter-editor.md").exists()
-    assert (book_dir / ".claude" / "agents" / "causal-editor.md").exists()
-    assert (book_dir / ".claude" / "agents" / "line-editor.md").exists()
     assert (book_dir / ".claude" / "agents" / "orchestrator.md").exists()
+    assert not (book_dir / ".claude" / "agents" / "causal-editor.md").exists()
+    assert not (book_dir / ".claude" / "agents" / "line-editor.md").exists()
+    assert not (book_dir / ".claude" / "agents" / "texture-editor.md").exists()
+    assert not (book_dir / ".claude" / "agents" / "consistency-guard.md").exists()
 
     claude_md = (book_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "Test Book" in claude_md
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v3.7" in claude_md
+    assert "v3.8" in claude_md
     assert "Markdown 粗体" in claude_md
     assert "surface_checked" in claude_md
     assert "严禁复制其他书的正文" in claude_md
@@ -154,6 +155,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert '"sandbox_profile"' in generation_template
     assert '"tool_capabilities"' in generation_template
     assert '"tool_failures"' in generation_template
+    assert generation_template.count("chapters/e01/ch-") == 2
 
     degraded_template = (
         book_dir / "evaluation" / "degraded-run-template.md"
@@ -174,25 +176,22 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     ).read_text(encoding="utf-8")
     assert '"salience": "medium"' in memory_template
 
-    causal_editor = (
-        book_dir / ".claude" / "agents" / "causal-editor.md"
-    ).read_text(encoding="utf-8")
     chapter_editor = (
         book_dir / ".claude" / "agents" / "chapter-editor.md"
     ).read_text(encoding="utf-8")
     orchestrator = (
         book_dir / ".claude" / "agents" / "orchestrator.md"
     ).read_text(encoding="utf-8")
-    assert "先只读正文" in causal_editor
     assert "先只读正文" in chapter_editor
     assert "不得询问是否开始审核" in orchestrator
-    assert "第三份 generation" in orchestrator
+    assert "第二份 generation" in orchestrator
     assert "degraded_exploration" in orchestrator
     assert "不同正文 SHA-256" in orchestrator
-    assert "上一章正文 SHA-256" in (
-        book_dir / ".claude" / "agents" / "consistency-guard.md"
-    ).read_text(encoding="utf-8")
     assert "previous_chapter_quote" in chapter_editor
+    assert "human_likeness" in (
+        book_dir / ".claude" / "agents" / "blind-reader.md"
+    ).read_text(encoding="utf-8")
+    assert len(claude_md) < 6500
 
 
 
@@ -372,12 +371,12 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v37_source_hygiene_and_cost_short_circuit():
+def test_skill_documents_v38_lean_literary_loop():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v3.7" in text
+    assert "v3.8" in text
     assert "degraded_exploration" in text
     assert "同章同正文 SHA-256" in text
     assert "0b. 章际交接" in text
@@ -387,6 +386,24 @@ def test_skill_documents_v37_source_hygiene_and_cost_short_circuit():
     assert "Markdown 粗体" in text
     assert "surface_checked" in text
     assert "Max/长思考" in text
+    assert "human_likeness" in text
+    assert "两角色" in text
+    assert len(text) < 9000
+
+
+def test_v38_scene_package_does_not_prefill_risk_waivers(tmp_path: Path):
+    result = init_book_project(
+        tmp_path,
+        "lean-package",
+        "Lean Package",
+        "现实悬疑",
+    )
+    template = (
+        Path(result["book_dir"]) / "planning/scene-package-template.md"
+    ).read_text(encoding="utf-8")
+
+    assert "- 关键对白意图（没有则写无需）：" in template
+    assert "无需：本章没有依赖专业判断推动关键行动" not in template
 
 
 def test_review_template_lists_every_canonical_role(tmp_path: Path):
@@ -399,6 +416,22 @@ def test_review_template_lists_every_canonical_role(tmp_path: Path):
 
     for role in REVIEW_ROLES:
         assert role in template
+    for field in (
+        "reconstruction_space",
+        "reconstruction_body",
+        "reconstruction_constraints",
+        "reconstruction_emotion",
+        "reconstruction_dialogue",
+        "memorable_image_1",
+        "memorable_image_2",
+        "memorable_image_3",
+        "editorial_causality",
+        "editorial_agency",
+        "editorial_dialogue",
+        "editorial_texture",
+        "editorial_continuity",
+    ):
+        assert field in template
 
 
 def test_evidence_templates_use_canonical_marker_and_kinds(tmp_path: Path):

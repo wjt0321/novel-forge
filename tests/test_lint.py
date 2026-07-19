@@ -375,3 +375,42 @@ def test_not_is_flip_exempts_dialogue():
 def test_not_is_flip_blocks_narration_flip():
     findings = lint_text("屏幕亮起来的第一件事不是通讯录，是邮箱。")
     assert any(f.rule_code == "not-is-flip" for f in findings)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "她翻到 ch04 老魏认出的第三页。",
+        "她翻到ch04老魏认出的第三页。",
+        "屏幕上写着 SHA-256 校验失败。",
+        "他在正文.md里留下了 generation evidence。",
+        "这一章已经 surface_checked，可以进入 ready。",
+        "这一章已经ready，可以交付。",
+    ],
+)
+def test_lint_blocks_workflow_metadata_leaking_into_prose(text):
+    findings = lint_text(text)
+
+    assert any(
+        finding.rule_code == "workflow-meta-leak"
+        and finding.severity == "blocking"
+        for finding in findings
+    )
+
+
+def test_lint_does_not_flag_ordinary_review_language_as_workflow_leak():
+    findings = lint_text("她把合同交给审核员，等对方盖章。")
+
+    assert not any(
+        finding.rule_code == "workflow-meta-leak" for finding in findings
+    )
+
+
+def test_lint_does_not_flag_generation_as_an_ordinary_story_word():
+    findings = lint_text(
+        '屏幕上印着“Next Generation”，那是旧飞船的宣传语。'
+    )
+
+    assert not any(
+        finding.rule_code == "workflow-meta-leak" for finding in findings
+    )

@@ -33,6 +33,10 @@ _RULES = {
         "blocking",
         "正文禁止使用 Markdown 粗体/强调标记；正文源码必须保持纯叙事文本",
     ),
+    "workflow-meta-leak": (
+        "blocking",
+        "正文出现章节编号、文件名、哈希或工作流状态等生产元数据",
+    ),
     "not-is-flip": (
         "blocking",
         "禁止连续使用“不是 X，而是 Y / 不是 X，是 Y”式否定翻转",
@@ -101,6 +105,22 @@ _WORD_COUNT_RE = re.compile(r"(?<![第])[零一二三四五六七八九十百千
 # 不是X，而是Y / 不是X，是Y within a clause.
 _NOT_IS_FLIP_RE = re.compile(
     r"不是([^，。；！？\n]{1,25})(?:，(?:而是|是)|(?:而是|是))([^，。；！？\n]{1,25})"
+)
+
+_WORKFLOW_META_RE = re.compile(
+    r"(?ix)"
+    r"(?:(?<![A-Za-z0-9_])ch-?0*\d+(?![A-Za-z0-9_])"
+    r"|正文\.md"
+    r"|scene-package"
+    r"|chapter-state"
+    r"|generation(?:_id|\s+evidence|\s+record)"
+    r"|review_round"
+    r"|surface_checked"
+    r"|ready_eligible"
+    r"|(?:已经|进入|推进到|标记为|状态为)\s*ready(?![A-Za-z0-9_])"
+    r"|(?<![A-Za-z0-9_])ready\s*(?:状态|门禁|阶段)"
+    r"|open_must"
+    r"|sha-?256)"
 )
 
 # Common proofreading / collocation errors.
@@ -684,6 +704,23 @@ def lint_text(text: str) -> list[LintFinding]:
                         line,
                         emphasis.start(),
                         min(len(line), emphasis.end() + 8),
+                    ),
+                )
+            )
+
+        workflow_meta = _WORKFLOW_META_RE.search(line)
+        if workflow_meta:
+            severity, message = _RULES["workflow-meta-leak"]
+            findings.append(
+                LintFinding(
+                    rule_code="workflow-meta-leak",
+                    severity=severity,
+                    line_number=idx,
+                    message=message,
+                    evidence=_truncate(
+                        line,
+                        workflow_meta.start(),
+                        workflow_meta.end(),
                     ),
                 )
             )

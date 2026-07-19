@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.novel_forge.voice_signature import (
+    analyze_serial_style,
     compare_signatures,
     extract_signature,
     signature_report,
@@ -73,3 +74,46 @@ def test_signature_report_json(tmp_path: Path):
     ref.write_text(AI_LIKE, encoding="utf-8")
     compared = json.loads(signature_report(chapter, ref))
     assert "drift" in compared
+
+
+def test_serial_style_detects_cross_chapter_collapse_and_repetition():
+    chapters = [
+        (
+            "第一章",
+            (
+                "她沿着河岸往前走，鞋底沾着昨夜的泥，"
+                "每到一盏路灯下面才抬头看一次门牌。"
+                "客厅里很安静。"
+            )
+            * 30,
+        ),
+        (
+            "第二章",
+            ("她起身。她开门。她没有说话。客厅里很安静。") * 60,
+        ),
+        (
+            "第三章",
+            ("她坐下。她看手机。她没有起身。客厅里很安静。") * 70,
+        ),
+    ]
+
+    report = analyze_serial_style(chapters)
+    codes = {finding["code"] for finding in report["findings"]}
+
+    assert "sentence-length-collapse" in codes
+    assert "cross-chapter-repetition" in codes
+    assert report["human_likeness_risk"] is True
+
+
+def test_serial_style_keeps_varied_chapters_advisory_free():
+    chapters = [
+        ("第一章", KIMI_LIKE),
+        (
+            "第二章",
+            KIMI_LIKE.replace("吴姐", "老周").replace("两万", "三千"),
+        ),
+    ]
+
+    report = analyze_serial_style(chapters)
+
+    assert report["human_likeness_risk"] is False
