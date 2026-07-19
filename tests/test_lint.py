@@ -349,6 +349,23 @@ def test_lint_simile_density_allows_restrained_use():
     assert not any(f.rule_code == "simile-density" for f in findings)
 
 
+def test_lint_flags_ascii_punctuation_in_chinese_prose():
+    text = (
+        '# 第一章\n\n他推开门,看见她站在窗边。"你回来了,"她说。'
+        "桌上的水已经凉了,杯壁留着一道指印。"
+    )
+
+    findings = lint_text(text)
+    ascii_findings = [
+        finding
+        for finding in findings
+        if finding.rule_code == "ascii-punctuation"
+    ]
+
+    assert ascii_findings
+    assert all(finding.severity == "advisory" for finding in ascii_findings)
+
+
 def test_lint_simile_density_ignores_non_simile_words():
     # 想象/画像/录像/像素 are not similes and must not inflate the count.
     text = _pad_cjk("他看着画像，想象着录像里的像素。", repeats=45)

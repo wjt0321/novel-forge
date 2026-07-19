@@ -20,6 +20,7 @@ from .planning_spec import (
     CHAPTER_HANDOFF_FIELDS,
     CHAPTER_HANDOFF_SECTION,
     CHAPTER_HANDOFF_TRANSITIONS,
+    CHAPTER_DECISION_REVERSAL_VALUES,
     COGNITION_LEDGER_SECTION,
     DECISION_QUESTION_FIELDS,
     DECISION_QUESTION_SECTION,
@@ -457,6 +458,24 @@ def check_chapter_handoff(
             blocking.append(
                 f"{CHAPTER_HANDOFF_SECTION} 同日连续场景发生时间倒退："
                 f"{values['上一章结束时间']} → {values['本章开始时间']}"
+            )
+    reversal = values["本章是否推翻该决定"]
+    if reversal not in CHAPTER_DECISION_REVERSAL_VALUES:
+        blocking.append(
+            f"{CHAPTER_HANDOFF_SECTION} 本章是否推翻该决定必须是 "
+            "是、否或不适用"
+        )
+    elif reversal == "是":
+        trigger_quote = values["若推翻，触发事件原文"]
+        trigger_at = chapter_text.find(trigger_quote)
+        if trigger_at < 0:
+            blocking.append(
+                f"{CHAPTER_HANDOFF_SECTION} 触发事件原文未在当前正文中找到"
+            )
+        elif trigger_at > int(len(chapter_text) * 0.4):
+            blocking.append(
+                f"{CHAPTER_HANDOFF_SECTION} 推翻上一章决定的触发事件"
+                "出现过晚；必须在本章前 40% 建立行动转向"
             )
     return blocking
 

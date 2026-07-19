@@ -34,6 +34,22 @@ _NESTED_SPEAKER_RE = re.compile(
 _MIN_COPIED_PARAGRAPH_CJK = 60
 _BLOCKING_DUPLICATE_SENTENCE_RATIO = 0.20
 _MIN_BLOCKING_DUPLICATE_INSTANCES = 20
+_MIN_PATTERN_SENTENCE_REPEATS = 4
+_MIN_PATTERN_OPENING_REPEATS = 12
+_MIN_PATTERN_OPENING_RATIO = 0.08
+_MIN_PATTERN_CLAUSE_REPEATS = 8
+_VOICE_COPY_NGRAM_CJK = 8
+_MIN_VOICE_COPY_REPEATS = 2
+_OPENING_STOPLIST = frozenset(
+    {
+        "他说",
+        "她说",
+        "他问",
+        "她问",
+        "他说道",
+        "她说道",
+    }
+)
 
 
 def _count_cjk(text: str) -> int:
@@ -170,8 +186,147 @@ def _normalized_paragraphs(text: str) -> list[str]:
     ]
 
 
+def _pattern_saturation(
+    name: str,
+    text: str,
+) -> dict[str, Any] | None:
+    """Return advisory evidence for repeated local generation habits."""
+    sentences = _normalized_sentences(text)
+    sentence_counts = Counter(sentences)
+    repeated_sentences = [
+        {"text": sentence, "count": count}
+        for sentence, count in sentence_counts.items()
+        if count >= _MIN_PATTERN_SENTENCE_REPEATS
+    ]
+    repeated_sentences.sort(key=lambda item: (-item["count"], item["text"]))
+
+    opening_counts: Counter[str] = Counter()
+    for sentence in sentences:
+        cjk = "".join(_CJK_RE.findall(sentence))
+        if len(cjk) < 2:
+            continue
+        opening = cjk[:2]
+        if opening in _OPENING_STOPLIST:
+            continue
+        opening_counts[opening] += 1
+    sentence_total = max(len(sentences), 1)
+    sentence_openings = [
+        {
+            "opening": opening,
+            "count": count,
+            "ratio": round(count / sentence_total, 3),
+        }
+        for opening, count in opening_counts.items()
+        if count >= _MIN_PATTERN_OPENING_REPEATS
+        and count / sentence_total >= _MIN_PATTERN_OPENING_RATIO
+    ]
+    sentence_openings.sort(
+        key=lambda item: (-item["count"], item["opening"])
+    )
+
+    clause_counts: Counter[str] = Counter()
+    for clause in re.split(r"[，。！？；：,\n]+", text):
+        normalized = "".join(_CJK_RE.findall(clause))
+        if 4 <= len(normalized) <= 16:
+            clause_counts[normalized] += 1
+    repeated_clauses = [
+        {"text": clause, "count": count}
+        for clause, count in clause_counts.items()
+        if count >= _MIN_PATTERN_CLAUSE_REPEATS
+    ]
+    repeated_clauses.sort(key=lambda item: (-item["count"], item["text"]))
+
+    if not (repeated_sentences or sentence_openings or repeated_clauses):
+        return None
+    return {
+        "code": "pattern-saturation",
+        "severity": "advisory",
+        "chapter": name,
+        "detail": (
+            "检测到章内完整句、句首或短语的高频复用；"
+            "请判断它是有意复沓还是模型生成惯性。"
+        ),
+        "repeated_sentences": repeated_sentences[:5],
+        "sentence_openings": sentence_openings[:5],
+        "repeated_clauses": repeated_clauses[:5],
+    }
+
+
+def _voice_exemplar(voice_anchor_text: str) -> str:
+    """Return only exemplar_notes when a full Voice Bible is provided."""
+    lines = voice_anchor_text.splitlines()
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if re.match(
+            r"^\s*#{1,6}\s*exemplar_notes\s*$",
+            line,
+            re.IGNORECASE,
+        ):
+            start = index + 1
+            break
+    if start is None:
+        return voice_anchor_text
+    section: list[str] = []
+    for line in lines[start:]:
+        if re.match(r"^\s*#{1,6}\s+", line):
+            break
+        section.append(line)
+    return "\n".join(section)
+
+
+def _voice_anchor_surface_copy(
+    chapters: list[tuple[str, str]],
+    voice_anchor_text: str | None,
+) -> dict[str, Any] | None:
+    """Detect later chapters copying the Voice anchor's surface wording."""
+    if not voice_anchor_text or len(chapters) < 2:
+        return None
+    voice_cjk = "".join(_CJK_RE.findall(_voice_exemplar(voice_anchor_text)))
+    if len(voice_cjk) < _VOICE_COPY_NGRAM_CJK:
+        return None
+    voice_ngrams = {
+        voice_cjk[index : index + _VOICE_COPY_NGRAM_CJK]
+        for index in range(len(voice_cjk) - _VOICE_COPY_NGRAM_CJK + 1)
+    }
+    matches: list[dict[str, Any]] = []
+    for name, text in chapters[1:]:
+        prose_cjk = "".join(_CJK_RE.findall(text))
+        prose_ngrams = Counter(
+            prose_cjk[index : index + _VOICE_COPY_NGRAM_CJK]
+            for index in range(
+                max(0, len(prose_cjk) - _VOICE_COPY_NGRAM_CJK + 1)
+            )
+        )
+        for phrase in voice_ngrams & prose_ngrams.keys():
+            count = prose_ngrams[phrase]
+            if count >= _MIN_VOICE_COPY_REPEATS:
+                matches.append(
+                    {
+                        "chapter": name,
+                        "phrase": phrase,
+                        "count": count,
+                    }
+                )
+    if not matches:
+        return None
+    matches.sort(
+        key=lambda item: (-item["count"], item["chapter"], item["phrase"])
+    )
+    return {
+        "code": "voice-anchor-surface-copy",
+        "severity": "advisory",
+        "detail": (
+            "后续章节反复复用 Voice exemplar 的连续表层措辞；"
+            "范文只能校准叙事功能，不得成为名词、动作或句法模板。"
+        ),
+        "examples": matches[:5],
+    }
+
+
 def analyze_serial_style(
     chapters: list[tuple[str, str]],
+    *,
+    voice_anchor_text: str | None = None,
 ) -> dict[str, Any]:
     """Detect serial drift and high-confidence structural prose failures.
 
@@ -195,6 +350,13 @@ def analyze_serial_style(
         else:
             profiles.append({"chapter": name, **signature})
     findings: list[dict[str, Any]] = []
+    for name, text in chapters:
+        saturation = _pattern_saturation(name, text)
+        if saturation is not None:
+            findings.append(saturation)
+    voice_copy = _voice_anchor_surface_copy(chapters, voice_anchor_text)
+    if voice_copy is not None:
+        findings.append(voice_copy)
     comparable = [
         profile
         for profile in profiles

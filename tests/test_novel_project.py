@@ -92,7 +92,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.0" in claude_md
+    assert "v4.1" in claude_md
     assert "begin-chapter-sequence" in claude_md
     assert "最多 4 章" in claude_md
     assert "上一章完整 ready" in claude_md
@@ -116,7 +116,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.0" in readme
+    assert "默认工作流: v4.1" in readme
     assert "不得复制其他书的正文" in readme
 
     gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
@@ -170,6 +170,13 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         )
     )
     assert harness_contract["schema"] == "novel-forge-harness-contract/v1"
+    assert harness_contract["reasoning_policy"] == {
+        "planning_and_causal_checks": "high",
+        "prose_draft_default": "standard_or_medium",
+        "review_default": "standard_or_medium",
+        "max_reasoning": "named_exception_only",
+        "numeric_style_targets_visible_to_writer": False,
+    }
     assert harness_contract["runtime_report_schema"]["const"] == (
         "novel-forge-runtime/v1"
     )
@@ -398,12 +405,12 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v40_chapter_session_orchestration():
+def test_skill_documents_v41_literary_anti_overfit_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.0" in text
+    assert "v4.1" in text
     assert "begin-chapter-sequence" in text
     assert "claim-chapter-session" in text
     assert "advance-chapter-sequence" in text
@@ -416,6 +423,12 @@ def test_skill_documents_v40_chapter_session_orchestration():
     assert "0b. 章际交接" in text
     assert "previous_chapter_sha256" in text
     assert "tool_capabilities" in text
+    assert "数值风格指标" in text
+    assert "pattern-saturation" in text
+    assert "voice-anchor-surface-copy" in text
+    assert "标准或中等推理" in text
+    assert "明确决定" in text
+    assert "触发事件原文" in text
     assert "tool_failures" in text
     assert "Markdown 粗体" in text
     assert "surface_checked" in text

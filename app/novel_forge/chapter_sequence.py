@@ -34,6 +34,12 @@ from .planning_spec import (
 CHAPTER_SEQUENCE_SCHEMA = "novel-forge-chapter-sequence/v1"
 CHAPTER_SEQUENCE_DIRECTORY = Path("planning/chapter-sequences")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+_WRITER_HIDDEN_STYLE_METRIC_RE = re.compile(
+    r"(?:声音指纹|句长(?:均值|变异|方差|CV)|对白占比|比喻密度|"
+    r"段内句数|微段落|问句率|感叹率|metric|per[_ -]?mille|"
+    r"\d+(?:\.\d+)?\s*[%‰])",
+    re.IGNORECASE,
+)
 
 
 class ChapterSequenceError(NovelForgeError):
@@ -123,20 +129,34 @@ def _voice_excerpt(book_dir: Path, chapter: int) -> str:
         raise ChapterSequenceError("缺少 memory/voice-bible.md。")
     text = path.read_text(encoding="utf-8-sig")
     exemplar = _section(text, "exemplar_notes")
-    usable = "\n".join(
-        line
-        for line in exemplar.splitlines()
-        if line.strip()
-        and not line.lstrip().startswith(">")
-        and set(line.strip()) != {"_"}
-    ).strip()
+    source = exemplar if exemplar else text
+    safe_lines: list[str] = []
+    in_code_fence = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or not stripped:
+            continue
+        if set(stripped) == {"_"} or stripped.startswith("|"):
+            continue
+        if stripped.startswith("#"):
+            continue
+        if _WRITER_HIDDEN_STYLE_METRIC_RE.search(stripped):
+            continue
+        if stripped.startswith(">"):
+            stripped = stripped[1:].strip()
+        stripped = re.sub(r"^[-*]\s*", "", stripped).strip()
+        if stripped:
+            safe_lines.append(stripped)
+    usable = "\n".join(safe_lines).strip()
     if chapter > 1 and not usable:
         raise ChapterSequenceError(
             "第 2 章起必须先在 Voice Bible 的 exemplar_notes "
             "填写本书声音范文，才能创建新 writer session。"
         )
-    source = usable if usable else text
-    return _bounded(source, MAX_HANDOFF_VOICE_EXEMPLAR_CHARS)
+    return _bounded(usable, MAX_HANDOFF_VOICE_EXEMPLAR_CHARS)
 
 
 def _chapter_state(
@@ -250,6 +270,14 @@ def build_chapter_handoff(
         *previous_lines,
         "",
         "## 本书声音锚",
+        "",
+        "- 只学习叙事距离、信息释放和节奏功能。",
+        "- 不得复用范文的具体名词、标志动作、章末物件或句法骨架。",
+        "- Writer 不接收句长、段落、对白占比等数字目标；"
+        "这些数字只供审稿诊断。",
+        "- 正文默认 standard/medium；规划和疑难因果核验可用 high。",
+        "- Max/长思考只处理被明确命名的困难问题，"
+        "不得用于整章自由生成。",
         "",
         voice_text,
         "",
@@ -533,4 +561,47 @@ def chapter_sequence_status(
 ) -> dict[str, Any]:
     """Return sequence metadata and a launch directive without prose bodies."""
     _, _, record = _load_sequence(root, slug, sequence_id)
-    return _public(record)
+    findings: list[str] = []
+    status = record.get("status")
+    if status not in {"awaiting_session", "running", "complete"}:
+        findings.append(f"未知章节序列状态：{status}")
+    if status == "complete":
+        chapters = list(record.get("chapters", []))
+        completed = list(record.get("completed_chapters", []))
+        sessions = list(record.get("used_session_ids", []))
+        if completed != chapters:
+            findings.append("complete 序列的 completed_chapters 与 chapters 不一致")
+        if record.get("current_index") != len(chapters):
+            findings.append("complete 序列的 current_index 未越过最后一章")
+        if record.get("active_session_id") is not None:
+            findings.append("complete 序列仍绑定 active_session_id")
+        if len(sessions) != len(chapters):
+            findings.append("complete 序列的 writer session 数与章节数不一致")
+        for index, chapter in enumerate(chapters):
+            try:
+                _, state = _require_ready(root, slug, chapter)
+                generation_id = state.get("generation_id")
+                generation, _ = find_evidence_record(
+                    root,
+                    slug,
+                    generation_id,
+                )
+            except NovelForgeError as exc:
+                findings.append(
+                    f"第 {chapter:02d} 章无法证明 ready：{exc}"
+                )
+                continue
+            if index >= len(sessions):
+                continue
+            if generation.data.get("run_id") != sessions[index]:
+                findings.append(
+                    f"第 {chapter:02d} 章 generation.run_id "
+                    "与序列 writer session 不一致"
+                )
+    data = _public(record)
+    data["integrity"] = {
+        "status": "blocked" if findings else "clean",
+        "findings": findings,
+    }
+    data["effective_status"] = "inconsistent" if findings else status
+    return data

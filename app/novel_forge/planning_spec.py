@@ -46,6 +46,9 @@ CHAPTER_HANDOFF_FIELDS: tuple[tuple[str, ...], ...] = (
     ("上一章结束动作",),
     ("本章开始动作",),
     ("转场类型",),
+    ("上一章末明确决定",),
+    ("本章是否推翻该决定", "是否推翻上一章决定"),
+    ("若推翻，触发事件原文", "推翻触发原文"),
 )
 CHAPTER_HANDOFF_TRANSITIONS: tuple[str, ...] = (
     "same_day_continuous",
@@ -53,6 +56,7 @@ CHAPTER_HANDOFF_TRANSITIONS: tuple[str, ...] = (
     "flashback",
     "parallel",
 )
+CHAPTER_DECISION_REVERSAL_VALUES = frozenset({"是", "否", "不适用"})
 DECISION_QUESTION_FIELDS: tuple[tuple[str, ...], ...] = (
     ("不能同时得到的两样东西",),
     ("角色拒绝承认什么", "拒绝承认"),

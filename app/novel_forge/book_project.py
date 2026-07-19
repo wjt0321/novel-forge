@@ -1365,8 +1365,17 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
                 chapter_path.read_text(encoding="utf-8-sig"),
             )
         )
+    voice_path = book_dir / "memory/voice-bible.md"
+    voice_anchor_text = (
+        voice_path.read_text(encoding="utf-8-sig")
+        if voice_path.is_file()
+        else None
+    )
     data["literary_profile"] = (
-        analyze_serial_style(serial_inputs)
+        analyze_serial_style(
+            serial_inputs,
+            voice_anchor_text=voice_anchor_text,
+        )
         if serial_inputs
         else {
             "chapters": [],
@@ -1489,7 +1498,16 @@ def run_gates(
                 path.read_text(encoding="utf-8-sig"),
             )
         )
-    result["literary"] = analyze_serial_style(serial_inputs)
+    voice_path = book_dir / "memory/voice-bible.md"
+    voice_anchor_text = (
+        voice_path.read_text(encoding="utf-8-sig")
+        if voice_path.is_file()
+        else None
+    )
+    result["literary"] = analyze_serial_style(
+        serial_inputs,
+        voice_anchor_text=voice_anchor_text,
+    )
     result["ready_eligible"] = (
         mode == "formal"
         and quality["blocking"] == 0
@@ -1526,10 +1544,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"v3\.(?:7|8|9)(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.0)(?:\s|（|\()"
         ),
         "README.md": re.compile(
-            r"(?m)^-\s*默认工作流\s*:\s*v3\.(?:7|8|9)(?:$|[\s；;。])"
+            r"(?m)^-\s*默认工作流\s*:\s*"
+            r"(?:v3\.(?:7|8|9)|v4\.0)(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1592,7 +1611,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v4.0 migration: continue from "
+                            "v4.1 migration: continue from "
                             f"{new_status}"
                         ),
                     ),

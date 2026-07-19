@@ -73,6 +73,10 @@ _RULES = {
         "advisory",
         "出现连续双引号（\"\"…\"\"），通常是 patch 或转义错误，请检查引号嵌套",
     ),
+    "ascii-punctuation": (
+        "advisory",
+        "中文叙事行使用 ASCII 逗号或直引号，请检查是否为模型格式漂移",
+    ),
     "common-error": (
         "advisory",
         "疑似常见错字、搭配或病句，请人工复核",
@@ -676,6 +680,27 @@ def lint_text(text: str) -> list[LintFinding]:
     for idx, line in enumerate(lines, start=1):
         # Count colons (Chinese and ASCII)
         total_colons += len(re.findall(r"[:：]", line))
+
+        if (
+            re.search(r"[\u4e00-\u9fff]", line)
+            and not line.lstrip().startswith("#")
+        ):
+            ascii_punctuation = re.search(r',|"', line)
+            if ascii_punctuation:
+                severity, message = _RULES["ascii-punctuation"]
+                findings.append(
+                    LintFinding(
+                        rule_code="ascii-punctuation",
+                        severity=severity,
+                        line_number=idx,
+                        message=message,
+                        evidence=_truncate(
+                            line,
+                            ascii_punctuation.start(),
+                            ascii_punctuation.end(),
+                        ),
+                    )
+                )
 
         # em-dash / ellipsis: report every occurrence
         for code in ("em-dash", "ellipsis"):

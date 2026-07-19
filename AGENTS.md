@@ -50,7 +50,7 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:\s-black-novel <operation> ...
 # 变更类操作强制 --confirm <operation>；只输出 JSON，永不返回正文全文
 # books/ 工作流专用 op：project-status / set-draft-mode / run-gates / record-review / advance-state / sync-tools
-# v4.0 章节序列 op：begin-chapter-sequence / claim-chapter-session / advance-chapter-sequence / chapter-sequence-status
+# v4.1 章节序列 op：begin-chapter-sequence / claim-chapter-session / advance-chapter-sequence / chapter-sequence-status
 # 人类叙事证据 op：evidence-status / record-evidence
 # 长篇记忆 op：memory-status / record-memory-candidate / promote-memory-candidate / rebuild-memory-index / build-memory-context
 
@@ -71,8 +71,8 @@ python -c "from app.novel_forge.api import create_app; import uvicorn; uvicorn.r
 | `repository.py` | 低层 DB 操作；函数接收已有连接，不自行开事务 |
 | `service.py` | `NovelForgeService` 核心：书籍/章节生命周期、revision、rollback、导出、审计、`work/<slug>/` 人类工作区；继承 `QualityMixin`/`PlanningMixin`/`ReviewGatesMixin`/`CanonMixin` |
 | `quality.py` | lint、review、approval 门控（mixin） |
-| `lint.py` | 中文网文 prose lint 规则（含 `sentence-rhythm` 句长方差、`term-density` 术语密度、`simile-density` 比喻密度）；只标位置、只读、永不自动改正文；`python -m app.novel_forge.lint <file>` 可直接运行 |
-| `voice_signature.py` | 声音指纹：提取可量化风格指标（句长方差、对白占比、比喻密度、分句复杂度等），支持 `--vs` 范文漂移对比；把"像不像本书"变成可测量的距离 |
+| `lint.py` | 中文网文 prose lint 规则（含 `sentence-rhythm`、`term-density`、`simile-density` 与 ASCII 标点提示）；只标位置、只读、永不自动改正文；`python -m app.novel_forge.lint <file>` 可直接运行 |
+| `voice_signature.py` | 声音指纹与跨章文学诊断：提取可量化风格指标，检测句长塌缩、复读、章内模式饱和与 Voice exemplar 表层复制；指标只供编辑器诊断，不作为 writer 生成目标 |
 | `review_gates.py` | Reader Review、Blind Experience Gate、Editorial Memo Gate（mixin） |
 | `planning.py` | Voice Bible、Scene Contract、Drafting Readiness、Drafting Packet（mixin） |
 | `canon.py` | candidate fact 审批/驳回与 canon 列表（mixin） |
@@ -83,8 +83,8 @@ python -c "from app.novel_forge.api import create_app; import uvicorn; uvicorn.r
 | `book_gates.py` | books/ narrative gate 规范实现（场景包校验 + 书级材料校验）；各书 `tools/narrative_gate.py` 是它的薄壳 |
 | `book_project.py` | books/ 工作流业务层（无数据库）：稿件模式、门禁、审稿来源绑定、相邻状态迁移、ready 复核、project-status、sync-tools |
 | `book_evidence.py` | books/ Markdown 权威创作证据：generation、盲评、单胜者分支、作者偏好、跨章审计、规则生命周期；不可变原子落盘 |
-| `session_audit.py` | v4.0 厂商无关 Harness Contract：定义 `novel-forge-runtime/v1` 累计快照、章节序列生命周期与硬停预算；具体产品日志解析仅为兼容导入 |
-| `chapter_sequence.py` | v4.0 章节独立会话编排：持久化 1–4 章顺序序列、签发有界 handoff、绑定真实 native session、验证上一章完整 ready 后才签发下一章 |
+| `session_audit.py` | v4.1 厂商无关 Harness Contract：定义 `novel-forge-runtime/v1` 累计快照、分层推理策略与硬停预算；具体产品日志解析仅为兼容导入 |
+| `chapter_sequence.py` | v4.1 章节独立会话编排：持久化 1–4 章顺序序列、签发不含数值风格目标的有界 handoff、绑定真实 native session，并审计 complete 序列是否真能证明各章 ready |
 | `book_memory.py` | books/ 每书长篇记忆内核：Markdown 记录解析、candidate 晋升、冲突检测、SQLite 原子重建、章节上下文包 |
 | `project_templates.py` | `books/<slug>/` 前台项目模板生成（含 voice-bible、四个默认 agent、evaluation/evidence、reviews 模板、薄壳 tools；genre 预设生效）；不依赖数据库 |
 | `cli.py` | 人类命令行入口 |
@@ -112,7 +112,7 @@ legacy 状态机：`draft → revised → linted → reviewed → approved`（`a
 5. 有通过的 Blind Experience Review（盲读者仅凭正文重建空间、身体、行动约束、情绪轨迹、对话动态与至少三个有原文证据的可记忆画面）；
 6. 有 `ready_for_editor_decision` 且无 blocking issue 的 Editorial Memo（且 `prose_observation` 必须含可定位证据，纯抽象赞扬会被拒绝）。
 
-books/ v4.0 章节状态链（`planning/chapter-state/chXX.md`，由 `advance-state` 校验迁移）：
+books/ v4.1 章节状态链（`planning/chapter-state/chXX.md`，由 `advance-state` 校验迁移）：
 
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
 
@@ -129,6 +129,7 @@ books/ v4.0 章节状态链（`planning/chapter-state/chXX.md`，由 `advance-st
 - v3.6 章际连续性门：第 2 章起场景包必须填写 `0b. 章际交接`，绑定上一章路径/哈希、章末 20% 与章首 20% 的原文短引、时间/地点/动作与转场类型；关键审稿引文必须逐字存在于绑定正文。`project-status` 与 `ready` 会复用 `record-review` 的完整校验，直接写 review 文件不能绕过门禁。
 - v3.6 人类叙事证据门：分支必须引用盲评并选择单一胜者；作者偏好必须引用同一分支/盲评且不得修改 Canon；同模型换角色名不算独立审稿；来源元数据不实、嵌套重复审稿文件或同正文重复 generation 的样本不得参与模型比较。
 - v3.9 文学性与成本短路门：`正文.md` 禁止 Markdown 粗体/强调、`ch05`、`正文.md`、generation、SHA-256、surface_checked、ready 等生产元数据；进入 `surface_checked` 会重跑 blocking lint 与跨章文学结构门。极端逐字复用覆盖、长段跨章复制和嵌套说话人标签为 blocking；句长塌缩与低量复读保持 advisory。writer 每章使用独立会话，只加载一页最小上下文；原始正文默认 standard/medium，Max 仅用于用户明确的基准实验或困难反证。formal ready 使用空值或 `-` 的状态证据会成为 workflow integrity blocker。
+- v4.1 文学防过拟合与序列真实性门：规划和困难因果检查可用 high，正文与默认审稿使用 standard/medium，Max 只能绑定具名难题；writer handoff 会剔除句长、对白率等数值风格目标，只传 Voice exemplar 的叙事功能。`pattern-saturation`、`voice-anchor-surface-copy` 与 ASCII 标点为 advisory；第 2 章起若推翻上一章末明确决定，必须引用当前正文前 40% 的触发事件原文。`chapter-sequence-status` 会复核 complete 声明、每章 ready、generation `run_id` 与 session 顺序，伪造完成态返回 `effective_status=inconsistent`。
 
 Canon Fact 冲突判定限定同一本书内：`(subject, predicate)` 唯一，重复批准会被拒绝而非静默覆盖。
 

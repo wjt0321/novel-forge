@@ -90,6 +90,39 @@ def test_begin_sequence_issues_one_chapter_launch_and_persists_state(
     assert len(handoff) < 30_000
 
 
+def test_handoff_hides_numeric_style_targets_and_warns_against_copying(
+    tmp_path: Path,
+):
+    book_dir = _sequence_book(tmp_path)
+    (book_dir / "memory/voice-bible.md").write_text(
+        "# Voice Bible\n\n"
+        "## exemplar_notes\n"
+        "> 他把介绍信对折，再对折，塞进内袋，扣子摁了两下才摁住。\n"
+        "- 句长均值：12.8\n"
+        "- 对白占比：4.2%\n"
+        "- 段内句数保持 1.3\n",
+        encoding="utf-8",
+    )
+
+    result = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        sequence_id="writer-safe-voice",
+    )
+    handoff = (
+        book_dir / result["launch"]["handoff_path"]
+    ).read_text(encoding="utf-8")
+
+    assert "他把介绍信对折" in handoff
+    assert "句长均值：12.8" not in handoff
+    assert "对白占比：4.2%" not in handoff
+    assert "段内句数保持 1.3" not in handoff
+    assert "不得复用范文的具体名词、标志动作、章末物件或句法骨架" in handoff
+    assert "正文默认 standard/medium" in handoff
+    assert "Max/长思考" in handoff
+
+
 def test_claim_requires_new_native_session_and_advance_requires_ready(
     tmp_path: Path,
 ):
@@ -222,3 +255,45 @@ def test_adapter_sequence_operations_are_json_only_and_confirmed(
     assert code == 0
     assert status["ok"] is True
     assert status["data"]["current_chapter"] == 1
+
+
+def test_sequence_status_marks_forged_complete_record_inconsistent(
+    tmp_path: Path,
+):
+    book_dir = _sequence_book(tmp_path)
+    begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=1,
+        sequence_id="forged-complete",
+    )
+    path = (
+        book_dir
+        / "planning/chapter-sequences/forged-complete.json"
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record.update(
+        {
+            "status": "complete",
+            "current_index": 1,
+            "active_session_id": None,
+            "used_session_ids": ["writer-native-forged"],
+            "completed_chapters": [1],
+        }
+    )
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    status = chapter_sequence_status(
+        tmp_path,
+        "demo",
+        "forged-complete",
+    )
+
+    assert status["status"] == "complete"
+    assert status["effective_status"] == "inconsistent"
+    assert status["integrity"]["status"] == "blocked"
+    assert status["integrity"]["findings"]

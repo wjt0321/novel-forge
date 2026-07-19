@@ -6,7 +6,9 @@
 
 ## 核心主张
 
-- **少禁令，多示范。** 硬禁令只有机器可检测的三条（`——`、`……`、`不是X而是Y`）；其余全部转为每本书的 Voice Bible 正面引导、范文锚定与症状化角色语言指纹。
+- **少禁令，多示范，但不把范文变成配方。** 硬禁令只处理机器可证的破绽；Voice
+  exemplar 只向 writer 传递叙事距离、信息释放与节奏功能，数值风格指标留给编辑器
+  诊断，避免模型把句长、物件和动作学成新的模板。
 - **每个字都为人物此刻的选择服务。** 物件是筹码，对白是权力，数字是赌注。八种 AI 味反模式（均匀碎句、术语堆叠、数值监控、机械观察链、感官轰炸开篇、比喻过密、危机中背景卸货、对白真空）各有对应的门拦截——证据见 `docs/examples/`。
 - **节奏管方差，不管长短。** 句长均匀（全短或全长）是机械指纹，lint 按变异系数检测。
 - **不认证文学价值。** 系统只记录可验证的编辑与校对过程；`ready` 只表示流程材料齐备，永远不等于用户批准或市场判断。
@@ -19,7 +21,7 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v3.9 项目骨架）
+# 创建一本新书（生成 v4.1 项目骨架）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -30,11 +32,13 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
 1. 收集最小上下文，填写 Voice Bible、故事发动机与一页式场景包；
-2. 一次写完整章，记录 generation 并绑定真实 writer `run_id`；
+2. 每章新开 writer session；正文使用标准或中等推理，一次写完整章，并绑定真实
+   writer `run_id`；
 3. 任意 Harness 先读 `evaluation/harness-contract.json`，输出
    `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
    超预算或来源不实立即停止，结束时再 `record-session-audit`；
-4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断；
+4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
+   章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
 5. 在独立会话运行 prose-only blind-reader，再由 chapter-editor 综合审读；
 6. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
 
@@ -90,6 +94,8 @@ research/            # 前期调研
 - 质量门控：`docs/03`、`docs/05`、`docs/06`、`docs/12`、`docs/14`
 - books/ 工作流与 Skill 化：`docs/13`、`docs/15`
 - 外置 Harness 护栏：`docs/24-external-harness-guardrails.md`
+- 章节独立会话：`docs/25-chapter-session-orchestration.md`
+- 文学防过拟合与序列真实性：`docs/26-literary-anti-overfit-and-sequence-truth.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

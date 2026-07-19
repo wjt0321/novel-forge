@@ -1357,21 +1357,21 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v39_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v40_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v4.1（文学防过拟合与序列真实性）",
             "- 工作流版本: v4.0（章节独立会话编排）",
-            "- **工作流版本**: v3.9（外置 Harness 护栏）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v4.1",
             "- 默认工作流: v4.0",
-            "- 默认工作流: v3.9",
         ),
         encoding="utf-8",
     )
@@ -1380,8 +1380,8 @@ def test_sync_tools_migrates_generated_v39_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.0" in claude.read_text(encoding="utf-8")
-    assert "v4.0" in readme.read_text(encoding="utf-8")
+    assert "v4.1" in claude.read_text(encoding="utf-8")
+    assert "v4.1" in readme.read_text(encoding="utf-8")
 
 
 def test_sync_tools_preserves_handwritten_constitution_without_version_marker(

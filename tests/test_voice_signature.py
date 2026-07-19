@@ -106,7 +106,7 @@ def test_serial_style_detects_cross_chapter_collapse_and_repetition():
     assert report["blocking"]
 
 
-def test_serial_style_keeps_varied_chapters_advisory_free():
+def test_serial_style_keeps_non_corrupt_repetition_advisory_only():
     chapters = [
         ("第一章", KIMI_LIKE),
         (
@@ -124,8 +124,11 @@ def test_serial_style_keeps_varied_chapters_advisory_free():
 
     report = analyze_serial_style(chapters)
 
-    assert report["human_likeness_risk"] is False
     assert report["blocking"] == []
+    assert all(
+        finding["severity"] == "advisory"
+        for finding in report["findings"]
+    )
 
 
 def test_serial_style_blocks_extreme_exact_sentence_coverage():
@@ -176,4 +179,75 @@ def test_serial_style_blocks_malformed_nested_dialogue_labels():
     assert any(
         item["code"] == "malformed-dialogue-structure"
         for item in report["blocking"]
+    )
+
+
+def test_serial_style_flags_within_chapter_pattern_saturation():
+    text = (
+        "他想去煤场。他想去邮局。他想去街道办。他想去车站。"
+        "信号仍然每分钟四次。每分钟四次。"
+    ) * 30
+
+    report = analyze_serial_style([("第三章", text)])
+    finding = next(
+        item
+        for item in report["findings"]
+        if item["code"] == "pattern-saturation"
+    )
+
+    assert finding["severity"] == "advisory"
+    assert finding["sentence_openings"]
+    assert finding["repeated_clauses"]
+    assert finding not in report["blocking"]
+
+
+def test_serial_style_flags_voice_anchor_surface_copy_in_later_chapters():
+    voice = (
+        "## exemplar_notes\n"
+        "> 他把介绍信对折，再对折，塞进内袋，扣子摁了两下才摁住。\n"
+    )
+    chapters = [
+        ("第一章", KIMI_LIKE),
+        (
+            "第二章",
+            (
+                "他把申请表对折，再对折，塞进内袋，扣子摁了两下才摁住。"
+                "窗口外有人收伞，水顺着台阶流进排水沟。"
+            )
+            * 12,
+        ),
+    ]
+
+    report = analyze_serial_style(chapters, voice_anchor_text=voice)
+
+    assert any(
+        item["code"] == "voice-anchor-surface-copy"
+        for item in report["findings"]
+    )
+
+
+def test_voice_surface_copy_ignores_voice_bible_sections_outside_exemplar():
+    voice = (
+        "## narrative_distance\n"
+        "窗口外有人收伞，水顺着台阶流进排水沟。\n\n"
+        "## exemplar_notes\n"
+        "> 他把介绍信对折，塞进内袋，扣好扣子才抬头。\n"
+    )
+    chapters = [
+        ("第一章", KIMI_LIKE),
+        (
+            "第二章",
+            (
+                "窗口外有人收伞，水顺着台阶流进排水沟。"
+                "柜台里面的日历仍停在上个月。"
+            )
+            * 12,
+        ),
+    ]
+
+    report = analyze_serial_style(chapters, voice_anchor_text=voice)
+
+    assert all(
+        item["code"] != "voice-anchor-surface-copy"
+        for item in report["findings"]
     )

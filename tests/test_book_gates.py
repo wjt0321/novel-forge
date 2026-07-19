@@ -197,7 +197,10 @@ def test_same_day_handoff_rejects_time_rollback(tmp_path: Path):
         "- 本章开始地点：门内\n"
         "- 上一章结束动作：陈拾关门\n"
         "- 本章开始动作：陈拾推门\n"
-        "- 转场类型：same_day_continuous\n",
+        "- 转场类型：same_day_continuous\n"
+        "- 上一章末明确决定：留在门内\n"
+        "- 本章是否推翻该决定：否\n"
+        "- 若推翻，触发事件原文：无需：未推翻上一章决定\n",
         encoding="utf-8",
     )
 
@@ -235,7 +238,10 @@ def test_handoff_rejects_quotes_from_chapter_middle(tmp_path: Path):
         "- 本章开始地点：街上\n"
         "- 上一章结束动作：关门\n"
         "- 本章开始动作：走路\n"
-        "- 转场类型：cross_day\n",
+        "- 转场类型：cross_day\n"
+        "- 上一章末明确决定：继续等待\n"
+        "- 本章是否推翻该决定：否\n"
+        "- 若推翻，触发事件原文：无需：未推翻上一章决定\n",
         encoding="utf-8",
     )
 
@@ -243,6 +249,50 @@ def test_handoff_rejects_quotes_from_chapter_middle(tmp_path: Path):
 
     assert any("不在上一章结尾" in item for item in report["blocking"])
     assert any("不在当前章开头" in item for item in report["blocking"])
+
+
+def test_handoff_decision_reversal_requires_on_page_trigger(tmp_path: Path):
+    chapter1 = tmp_path / "chapters/e01/ch-01/正文.md"
+    chapter2 = tmp_path / "chapters/e01/ch-02/正文.md"
+    chapter1.parent.mkdir(parents=True)
+    chapter2.parent.mkdir(parents=True)
+    chapter1.write_text(
+        "# 第一章\n\n夜里，他把车票烧了。他决定不去码头。\n",
+        encoding="utf-8",
+    )
+    chapter2.write_text(
+        "# 第二章\n\n第二天清晨，他在窗口买了一张去码头的票。\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(chapter1.read_bytes()).hexdigest()
+    package = tmp_path / "planning/scene-package-ch02.md"
+    package.parent.mkdir()
+    package.write_text(
+        _scene_package()
+        + "\n## 0b. 章际交接\n"
+        "- 上一章正文路径：chapters/e01/ch-01/正文.md\n"
+        f"- 上一章正文 SHA-256：{digest}\n"
+        "- 上一章结尾原文：他决定不去码头。\n"
+        "- 本章开头原文：第二天清晨，他在窗口买了一张去码头的票。\n"
+        "- 上一章结束时间：第一天夜里\n"
+        "- 本章开始时间：第二天清晨\n"
+        "- 上一章结束地点：家中\n"
+        "- 本章开始地点：车站\n"
+        "- 上一章结束动作：烧掉车票并决定不去\n"
+        "- 本章开始动作：购买去码头的车票\n"
+        "- 转场类型：cross_day\n"
+        "- 上一章末明确决定：不去码头\n"
+        "- 本章是否推翻该决定：是\n"
+        "- 若推翻，触发事件原文：妹妹来信要求他立刻过去。\n",
+        encoding="utf-8",
+    )
+
+    report = narrative_report(chapter2, package, mode="formal")
+
+    assert any(
+        "触发事件原文未在当前正文" in item
+        for item in report["blocking"]
+    )
 
 
 def test_formal_scene_package_does_not_require_separate_dialogue_ledger():

@@ -134,6 +134,13 @@ def harness_contract() -> dict[str, Any]:
             "cached_input_tokens_interpretation": "hard_ceiling_not_target",
             "max_request_context_tokens": MAX_REQUEST_CONTEXT_TOKENS,
         },
+        "reasoning_policy": {
+            "planning_and_causal_checks": "high",
+            "prose_draft_default": "standard_or_medium",
+            "review_default": "standard_or_medium",
+            "max_reasoning": "named_exception_only",
+            "numeric_style_targets_visible_to_writer": False,
+        },
         "chapter_sequence": {
             "default_chapter_count": DEFAULT_CHAPTERS_PER_SEQUENCE,
             "maximum_chapter_count": MAX_CHAPTERS_PER_SEQUENCE,

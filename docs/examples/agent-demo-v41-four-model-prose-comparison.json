@@ -1,0 +1,311 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "four-model-prose-comparison-20260719",
+  "recorded_at": "2026-07-19",
+  "purpose": "Compare prose completion and workflow behavior without session exports",
+  "prompt_comparability": "same Novel Forge v4.0 project harness, no session telemetry available",
+  "samples": [
+    {
+      "sample_id": "weather-bureau-49",
+      "provider_model": "OpenAI GPT-5.4",
+      "source_file_count": 43,
+      "source_total_bytes": 116111,
+      "chapters": [
+        {
+          "chapter": 1,
+          "cjk": 4142,
+          "characters": 4968,
+          "paragraphs": 105,
+          "sha256": "3073561fdab0059a4832cbd744fe60edbfa0c12fc3302ec338d78dda5c462204"
+        },
+        {
+          "chapter": 2,
+          "cjk": 3473,
+          "characters": 4110,
+          "paragraphs": 79,
+          "sha256": "1c02defb5069f897fe74b3a3228463dd0cae825ca767a481a2e16be1c460a645"
+        },
+        {
+          "chapter": 3,
+          "cjk": 2934,
+          "characters": 3490,
+          "paragraphs": 72,
+          "sha256": "ad447447e1a32faa57c0a3eb9697f6479463b70a92c27ddde8af5c39ee33ee59"
+        }
+      ],
+      "voice_bible_sha256": "f8e52561d542d70f10d65c67de20d919b19512e432bba0b074fa7cbbc56c4fc6",
+      "story_engine_sha256": "521dc262c3b1036561cc83f8000c9580f174766d1f4372c43098b70b5876eb3f",
+      "workflow": {
+        "integrity": "warning",
+        "chapter_states": [
+          "surface_checked",
+          "surface_checked",
+          "surface_checked"
+        ],
+        "draft_modes": [
+          "exploration",
+          "exploration",
+          "exploration"
+        ],
+        "generation_files": 0,
+        "runtime_audits": 0,
+        "sequence_files": 0
+      },
+      "literary_assessment": {
+        "human_likeness": "convincing_draft",
+        "strengths": [
+          "Each chapter resolves a local danger while expanding the book mystery",
+          "Supporting characters retain independent judgment and friction",
+          "Concrete objects carry action and social texture instead of decorative proof"
+        ],
+        "risks": [
+          "All chapters are below the 5000 CJK formal minimum",
+          "Chapter length declines sharply across the sample",
+          "The warning-to-intervention-to-archive-clue engine may become repetitive"
+        ]
+      }
+    },
+    {
+      "sample_id": "dorm-601-rules",
+      "provider_model": "MiniMax",
+      "source_file_count": 57,
+      "source_total_bytes": 294292,
+      "chapters": [
+        {
+          "chapter": 1,
+          "cjk": 5806,
+          "characters": 7708,
+          "paragraphs": 341,
+          "sha256": "f9f6273ed29e3157c67ab59ab8e456e55778739843e14ad74c476c498d1a173b"
+        },
+        {
+          "chapter": 2,
+          "cjk": 5685,
+          "characters": 7612,
+          "paragraphs": 348,
+          "sha256": "43a91b13484fd03f25915d08ea0e1c4c9717fbb1028e48e9645367090bd3601c"
+        }
+      ],
+      "voice_bible_sha256": "13601bdcc73b7a36c380d63e5ac36b5c018ea2c4668238cb8744e80053e77f26",
+      "story_engine_sha256": "dd7a3137722810d2b014e447e60da92c6b331cb87f4df3ca250da3f6a55c7801",
+      "workflow": {
+        "integrity": "warning",
+        "review_confidence": "single_origin",
+        "chapter_states": [
+          "ready",
+          "ready"
+        ],
+        "draft_modes": [
+          "formal",
+          "formal"
+        ],
+        "generation_files": 4,
+        "runtime_audits": 2,
+        "runtime_budget": "exceeded",
+        "sequence_status": "running",
+        "sequence_completed_chapters": [
+          1
+        ]
+      },
+      "pattern_observations": {
+        "chapter_2_exact_sentence_repetition_instances": 40,
+        "breath_counting_occurrences": 10,
+        "timestamp_driven_cadence": true,
+        "voice_bible_exposed_numeric_style_targets": true
+      },
+      "literary_assessment": {
+        "human_likeness": "uncertain",
+        "strengths": [
+          "Rules-horror logic and chapter-to-chapter consequence are clear",
+          "The first two chapters meet the formal length threshold",
+          "The central mirror and true-name mechanisms are legible"
+        ],
+        "risks": [
+          "Extreme micro-paragraph density reads like a state-machine trace",
+          "Exact style targets encouraged metric gaming",
+          "Ready files conflict with exceeded runtime and an unfinished sequence"
+        ]
+      }
+    },
+    {
+      "sample_id": "abyss-observer",
+      "provider_model": "DeepSeek",
+      "source_file_count": 32,
+      "source_total_bytes": 147540,
+      "chapters": [
+        {
+          "chapter": 1,
+          "cjk": 5102,
+          "characters": 5996,
+          "paragraphs": 95,
+          "sha256": "e3e4517ca4f12b26a04a6a39d1372b203e323822f1f6089229d424cae430ea8e",
+          "em_dash": 57,
+          "ellipsis": 0
+        },
+        {
+          "chapter": 2,
+          "cjk": 5039,
+          "characters": 5884,
+          "paragraphs": 76,
+          "sha256": "b266b76509314b5e94f28abc59a90529d1fe6cd59885c852d863bde944d67849",
+          "em_dash": 81,
+          "ellipsis": 2
+        },
+        {
+          "chapter": 3,
+          "cjk": 5140,
+          "characters": 6049,
+          "paragraphs": 80,
+          "sha256": "0b5faf45b0fdc910af3204d8cbb353b8f3689cc290183d4f33e40cbf7fd6ee96",
+          "em_dash": 90,
+          "ellipsis": 3
+        }
+      ],
+      "voice_bible_sha256": "4f423542b19579df4018bbf595f650dcae5ca26ee752fc957015d03fbf08b6f0",
+      "story_engine_sha256": "599a6d662fc9a4253fd6ace44576629cb0b4494e6225d8acb302a74dc00f9208",
+      "workflow": {
+        "integrity": "unreadable_evidence",
+        "project_status_error": "evidence Markdown missing novel-forge-evidence:v1 marker",
+        "generation_files": 3,
+        "runtime_audits": 3,
+        "sequence_status": "complete",
+        "blind_review_verdicts": [
+          "needs_revision",
+          "needs_revision",
+          "needs_revision"
+        ],
+        "quality_blocking_by_chapter": [
+          74,
+          94,
+          104
+        ]
+      },
+      "pattern_observations": {
+        "every_minute_four_times_occurrences": 34,
+        "em_dash_increases_each_chapter": true,
+        "technical_fact_risk": "The stated deep-sea pressure appears to be off by an order of magnitude"
+      },
+      "literary_assessment": {
+        "human_likeness": "synthetic",
+        "strengths": [
+          "Strong technical-horror premise and atmosphere",
+          "The three chapters form a clear detection-response-contamination escalation",
+          "The central acoustic motif is memorable"
+        ],
+        "risks": [
+          "Explanation tics and em dashes increase instead of converging",
+          "The central motif is repeated until it becomes proof-by-insistence",
+          "A completed sequence contradicts review and evidence truth"
+        ]
+      }
+    },
+    {
+      "sample_id": "rebirth-1979",
+      "provider_model": "GLM-5.2",
+      "source_file_count": 55,
+      "source_total_bytes": 265892,
+      "chapters": [
+        {
+          "chapter": 1,
+          "cjk": 5029,
+          "characters": 6079,
+          "paragraphs": 97,
+          "sha256": "18090f0e020536b3bf790099e70fd8780aee416ed43ea0cb71cd09da876d058f"
+        },
+        {
+          "chapter": 2,
+          "cjk": 5017,
+          "characters": 6101,
+          "paragraphs": 112,
+          "sha256": "e129176ecf7b1c1812a9cae89a28822dd7d6ebde88075c698fa892ca41ce34cf"
+        },
+        {
+          "chapter": 3,
+          "cjk": 5078,
+          "characters": 6115,
+          "paragraphs": 99,
+          "sha256": "4127c781e069168fc2c72995340688465e4230a55a54285d0a996d4ec8024239"
+        }
+      ],
+      "voice_bible_sha256": "4726ef04862a9745f8f3a51d0296bd75102b8312a3a16018e70c15b1b451e6bf",
+      "story_engine_sha256": "335372dfe6c991282d0951b397ccef916feef8abfa4a798b4d47c955b6d9b430",
+      "workflow": {
+        "integrity": "blocked",
+        "chapter_states": [
+          "surface_checked",
+          "planned",
+          "planned"
+        ],
+        "draft_modes": [
+          "formal",
+          "formal",
+          "formal"
+        ],
+        "generation_files": 4,
+        "runtime_audits": 3,
+        "narrative_blocking_by_chapter": [
+          0,
+          12,
+          12
+        ]
+      },
+      "pattern_observations": {
+        "he_thought_occurrences": 61,
+        "coal_briquette_occurrences": 44,
+        "do_not_think_occurrences": 5,
+        "button_pressed_twice_occurrences": 5,
+        "chapter_2_to_3_decision_reversal_without_bridge": true,
+        "ascii_punctuation_in_chinese_prose": true,
+        "voice_bible_surface_example_overfit": true
+      },
+      "literary_assessment": {
+        "human_likeness": "uncertain",
+        "strengths": [
+          "Dense period objects and material constraints create local credibility",
+          "All three chapters meet the formal length threshold",
+          "Individual scenes often have patient physical staging"
+        ],
+        "risks": [
+          "The Voice Bible example became a repeated prose template",
+          "The same coal-stove ending and thought loop recur across chapters",
+          "Chapter 3 reverses the prior stopping decision without an on-page trigger",
+          "Formal prose exists while chapter states remain planned"
+        ]
+      }
+    }
+  ],
+  "cross_sample_findings": {
+    "best_human_like_draft": "weather-bureau-49",
+    "highest_surface_workflow_completion": "dorm-601-rules",
+    "strongest_atmosphere_and_weakest_rule_convergence": "abyss-observer",
+    "clearest_voice_example_overfit": "rebirth-1979",
+    "workflow_diagnosis": [
+      "Process boundaries are not uniformly enforced",
+      "Writer-visible numeric style targets invite metric gaming",
+      "Concrete Voice Bible examples invite lexical and action-template copying",
+      "Sequence metadata must be derived from ready truth rather than trusted as self-report",
+      "Literary diagnostics need within-chapter pattern-saturation warnings"
+    ]
+  },
+  "protocol_decision": {
+    "workflow_version": "v4.1",
+    "reasoning_policy": {
+      "planning_and_hard_causal_checks": "high",
+      "default_prose_draft": "standard_or_medium",
+      "default_review": "standard_or_medium",
+      "max_reasoning": "exception_only_for_named_difficult_problem"
+    },
+    "writer_metrics_policy": "diagnostics_hidden_from_writer; editors receive drift findings, not numeric targets",
+    "voice_exemplar_policy": "learn function and distance; do not reuse concrete nouns, signature actions, or sentence frames",
+    "sequence_truth_policy": "completed status must reconcile with every chapter ready and generation/session binding",
+    "continuity_policy": "a reversal of the prior chapter decision requires an explicit trigger bridge",
+    "surface_policy": "ASCII punctuation in Chinese prose is advisory"
+  },
+  "privacy": {
+    "raw_prompt_stored": false,
+    "raw_prose_stored": false,
+    "reasoning_stored": false,
+    "raw_tool_arguments_or_results_stored": false
+  },
+  "source_projects_removed": true
+}
