@@ -118,6 +118,9 @@ def _review_file(
     model: str = "review-model",
     independence_note: str = "",
     human_likeness: str = "convincing",
+    reader_desire: str = "continue",
+    emotional_residue: str = "人物的选择留下了尚未化解的关系压力。",
+    next_chapter_pull: str = "读者想知道门内的人会不会回应。",
     review_session_id: str | None = None,
     context_scope: str | None = None,
     substantive: bool = True,
@@ -193,6 +196,9 @@ def _review_file(
         f"- context_scope: {context_scope}\n"
         f"- independence_note: {independence_note}\n\n"
         f"- human_likeness: {human_likeness if role == 'blind-reader' else 'not_applicable'}\n\n"
+        f"- reader_desire: {reader_desire if role == 'blind-reader' else 'not_applicable'}\n"
+        f"- emotional_residue: {emotional_residue if role == 'blind-reader' else 'not_applicable'}\n"
+        f"- next_chapter_pull: {next_chapter_pull if role == 'blind-reader' else 'not_applicable'}\n\n"
         "## Findings\n"
         "| # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |\n"
         "|---|---|---|---|---|---|---|\n"
@@ -212,13 +218,24 @@ def _record_generation(
     chapter_number: int = 1,
     run_id: str = "writer-session-001",
     record_audit: bool = True,
+    audit_generation_ids: list[str] | None = None,
     **metrics,
 ) -> str:
     chapter = book_project.find_chapter_file(book_dir, chapter_number)
     content_path = chapter.relative_to(book_dir).as_posix()
-    state = book_project.project_status(
-        tmp_path, "demo", chapter_number
-    )["chapters"][0]
+    state = next(
+        item
+        for item in book_project.project_status(
+            tmp_path, "demo", chapter_number
+        )["chapters"]
+        if item["chapter"] == f"ch{chapter_number:02d}"
+    )
+    observed_metrics = {
+        "draft_write_count": 1,
+        "draft_edit_count": 0,
+        "review_call_count": 2,
+    }
+    observed_metrics.update(metrics)
     source = tmp_path / f"{generation_id}.md"
     generation_data = {
         "schema_version": 1,
@@ -239,7 +256,7 @@ def _record_generation(
         "tool_failures": [],
         "content_path": content_path,
         "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
-        **metrics,
+        **observed_metrics,
     }
     source.write_text(
         render_evidence_markdown(generation_data),
@@ -287,6 +304,10 @@ def _record_generation(
                     "limits": {},
                 },
                 "provenance_mismatches": [],
+                "scope_chapter_count": 1,
+                "generation_record_ids": (
+                    audit_generation_ids or [generation_id]
+                ),
             },
         )
     return generation_id
@@ -750,6 +771,156 @@ def test_blind_reader_requires_explicit_human_likeness_verdict(tmp_path: Path):
     with pytest.raises(BookProjectError, match="human_likeness"):
         book_project.record_review(
             tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_blind_reader_pass_requires_reader_desire_to_continue(
+    tmp_path: Path,
+):
+    _make_book(tmp_path)
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "pass",
+        reader_desire="conditional",
+    )
+
+    with pytest.raises(BookProjectError, match="reader_desire"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+@pytest.mark.parametrize("field", ["emotional_residue", "next_chapter_pull"])
+def test_blind_reader_pass_requires_substantive_reader_pull_evidence(
+    tmp_path: Path,
+    field: str,
+):
+    _make_book(tmp_path)
+    kwargs = {field: "-"}
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "pass",
+        **kwargs,
+    )
+
+    with pytest.raises(BookProjectError, match=field):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_runtime_audit_must_bind_exactly_one_generation(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    generation_id = _record_generation(
+        tmp_path,
+        book_dir,
+        audit_generation_ids=[
+            "generation.ch01.current",
+            "generation.ch02.invalid",
+        ],
+    )
+    generation, _ = book_project.find_evidence_record(
+        tmp_path, "demo", generation_id
+    )
+
+    errors = book_project._runtime_audit_errors(
+        book_dir, generation.data
+    )
+
+    assert any("只能绑定当前 generation" in error for error in errors)
+
+
+def test_project_status_blocks_cross_chapter_writer_session_reuse(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter_two = book_dir / "chapters/e01/ch-02/正文.md"
+    chapter_two.parent.mkdir(parents=True, exist_ok=True)
+    chapter_two.write_text(
+        "# 第二章\n\n" + "她终于开门，但没有让他进去。" * 240,
+        encoding="utf-8",
+    )
+    shutil.copyfile(
+        book_dir / "planning/scene-package-ch01.md",
+        book_dir / "planning/scene-package-ch02.md",
+    )
+    _record_generation(
+        tmp_path,
+        book_dir,
+        run_id="reused-writer-session",
+    )
+    _record_generation(
+        tmp_path,
+        book_dir,
+        generation_id="generation.ch02.current",
+        chapter_number=2,
+        run_id="reused-writer-session",
+        record_audit=False,
+    )
+
+    status = book_project.project_status(tmp_path, "demo", None)
+
+    assert any(
+        item["code"] == "writer_session_reused_across_chapters"
+        for item in status["workflow_integrity"]["blockers"]
+    )
+
+
+def test_ready_rejects_exceeded_draft_mutation_budget(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    paragraph = "他敲门，她没有开。" * 900
+    chapter.write_text(
+        f"# 第一章\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n",
+        encoding="utf-8",
+    )
+    _waive_materials(book_dir)
+    _record_generation(
+        tmp_path,
+        book_dir,
+        draft_write_count=1,
+        draft_edit_count=10,
+    )
+    for role, verdict in (
+        ("blind-reader", "pass"),
+        ("chapter-editor", "ready_for_editor_decision"),
+    ):
+        book_project.record_review(
+            tmp_path,
+            "demo",
+            1,
+            role,
+            _review_file(tmp_path, role, verdict),
+        )
+    for state in (
+        "context_collected",
+        "scene_packaged",
+        "drafted",
+        "surface_checked",
+        "blind_read",
+        "editorial_reviewed",
+    ):
+        book_project.advance_state(
+            tmp_path,
+            "demo",
+            1,
+            state,
+            evidence=(
+                None
+                if state in {"blind_read", "editorial_reviewed"}
+                else f"planning/{state}.md"
+            ),
+        )
+
+    with pytest.raises(BookProjectError, match="draft-mutation-budget"):
+        book_project.advance_state(
+            tmp_path,
+            "demo",
+            1,
+            "ready",
+            evidence="project-status/current",
         )
 
 
@@ -1283,6 +1454,7 @@ def test_project_status_reports_generation_budget_exhaustion(tmp_path: Path):
             tmp_path,
             book_dir,
             generation_id=f"generation.ch01.r{round_number}",
+            run_id=f"writer-session-{round_number:03d}",
             review_round=round_number - 1,
             generation_stage=stage,
             metrics_source="user_observed",
@@ -1382,23 +1554,23 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v41_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     (book_dir / ".git").unlink()
     _remove_readonly_tree(tmp_path / ".local-book-git" / "demo.git")
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v4.3（读者追读与运行真相）",
             "- 工作流版本: v4.2（每书本地版本控制）",
-            "- 工作流版本: v4.1（文学防过拟合与序列真实性）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v4.3",
             "- 默认工作流: v4.2",
-            "- 默认工作流: v4.1",
         ),
         encoding="utf-8",
     )
@@ -1407,8 +1579,8 @@ def test_sync_tools_migrates_generated_v41_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.2" in claude.read_text(encoding="utf-8")
-    assert "v4.2" in readme.read_text(encoding="utf-8")
+    assert "v4.3" in claude.read_text(encoding="utf-8")
+    assert "v4.3" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

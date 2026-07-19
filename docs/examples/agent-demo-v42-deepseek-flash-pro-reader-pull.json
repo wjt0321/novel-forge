@@ -1,0 +1,223 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "deepseek-flash-pro-reader-pull-20260719",
+  "recorded_at": "2026-07-19",
+  "purpose": "Compare literary readability and workflow truth under the v4.2 harness",
+  "prompt_comparability": "same Novel Forge project harness; no native session export was supplied",
+  "samples": [
+    {
+      "sample_id": "midnight-frequency",
+      "title": "深夜频率",
+      "provider_model": "DeepSeek V4 Flash",
+      "agent_harness": "Claude Code",
+      "reasoning_effort_user_reported": "medium",
+      "source_file_count": 46,
+      "source_total_bytes": 147678,
+      "chapters": [
+        {
+          "chapter": 1,
+          "bytes": 20471,
+          "cjk": 5960,
+          "sha256": "c518db8e950210927e88b34d27192bbc91f7f8066a035d13384868f33a1374e4",
+          "sentence_len_cv": 0.688,
+          "dialogue_ratio": 0.083,
+          "quality_blocking": 0,
+          "quality_advisory": 11
+        },
+        {
+          "chapter": 2,
+          "bytes": 19462,
+          "cjk": 5677,
+          "sha256": "9b3b7db751d4473de31db91a9ee6e6d5a46ef5fb7f973324774b8f376cb0db14",
+          "sentence_len_cv": 0.783,
+          "dialogue_ratio": 0.075,
+          "quality_blocking": 0,
+          "quality_advisory": 10
+        },
+        {
+          "chapter": 3,
+          "bytes": 19408,
+          "cjk": 5677,
+          "sha256": "733aba1ef7d22939613730834dae78e304ff7548b8a670d35804e2946eddd457",
+          "sentence_len_cv": 0.76,
+          "dialogue_ratio": 0.114,
+          "quality_blocking": 0,
+          "quality_advisory": 18
+        }
+      ],
+      "voice_bible_sha256": "b81a9d830cc6259e839e0b887bb4ef17e2a94cd12587a4b4aa1565ce07dd5663",
+      "story_engine_sha256": "9d79f316eee78922aba8e3b3909dbdd0e289016c22e93e0bcf20106876542c4c",
+      "workflow": {
+        "integrity": "blocked",
+        "chapter_states": [
+          "planned",
+          "planned",
+          "planned"
+        ],
+        "generation_files": 0,
+        "runtime_audits": 0,
+        "review_records": 6,
+        "review_validity": "stale_or_invalid",
+        "book_git_head": "71f838920c0fb2ab8c24bbabef677d0fa1fae8e0",
+        "book_git_dirty": true,
+        "book_git_changed_paths": 16,
+        "pause_behavior": "asked_user_whether_review_should_begin"
+      },
+      "literary_assessment": {
+        "human_readable_positive_sample": true,
+        "reader_desire": "continue_with_caveats",
+        "strengths": [
+          "Social contact and loneliness are carried by ordinary work rather than explained as a theme",
+          "Dialogue offers companionship without fully naming the emotion",
+          "The protagonist makes a risky broadcast choice that exposes character",
+          "Chapter 3 converts an anomaly into a relationship question: someone is there"
+        ],
+        "risks": [
+          "All chapters show pattern-saturation or cross-chapter repetition advisories",
+          "Chapter 3 repeats one full simile twice in the same sentence",
+          "Chapter 1 contains the typo 那种安静那安静",
+          "Some closing lines explain the image after it has already landed"
+        ],
+        "curated_excerpt_document": "docs/examples/human-readable-positive-sample-deepseek-v4-flash.md",
+        "not_writer_exemplar": true
+      }
+    },
+    {
+      "sample_id": "rule-of-seven",
+      "title": "七条规则",
+      "provider_model": "DeepSeek V4 Pro",
+      "agent_harness": "Claude Code",
+      "reasoning_effort_user_reported": "medium",
+      "reasoning_effort_evidence_claimed": "standard",
+      "source_file_count": 60,
+      "source_total_bytes": 260477,
+      "chapters": [
+        {
+          "chapter": 1,
+          "bytes": 18064,
+          "cjk": 5354,
+          "sha256": "3d0586357a485de5e4468ba31096d80ece8494d279a41a9ad115b2554ac75b64",
+          "sentence_len_cv": 0.615,
+          "dialogue_ratio": 0.039,
+          "quality_blocking": 0,
+          "quality_advisory": 27
+        },
+        {
+          "chapter": 2,
+          "bytes": 17534,
+          "cjk": 5206,
+          "sha256": "d4ee3f111841de073e12a022d374bab65ee80d1fbc4b5d35ce2780d77d0dac53",
+          "sentence_len_cv": 0.638,
+          "dialogue_ratio": 0.083,
+          "quality_blocking": 0,
+          "quality_advisory": 39
+        },
+        {
+          "chapter": 3,
+          "bytes": 17232,
+          "cjk": 5098,
+          "sha256": "4a8801fde757ad012ea4c7ae6425af663b183a8186de449a7b1760af736261de",
+          "sentence_len_cv": 0.683,
+          "dialogue_ratio": 0.236,
+          "quality_blocking": 0,
+          "quality_advisory": 39
+        }
+      ],
+      "voice_bible_sha256": "23c2112da856148a28683448de019b49f1ff46c42f5bafab7994a689dc332544",
+      "story_engine_sha256": "e8d29c9fa43e20ce812c6f78f154ad3b04b1654c46273c2da38003568996f0f7",
+      "generation_evidence_sha256": {
+        "gen.ch01.v1": "e9fbbcc25def4c9f50028280e9fca34c88150f5d54bdf6300bb8d4152ba40d55",
+        "gen.ch02.v1": "5e9f144cbba3cccabebfb99f28881f2cf4cda6b0802c3b6c09034d64d6b60f15",
+        "gen.ch03.v1": "e56bc273b2ae28f1cf1be24037161efaae1bddcb415615fde17ef0320ffcf4ce"
+      },
+      "runtime_audit_sha256": "054505cb42129d329f33d2f227aef115cf95c68bdb783e0d254967c734306731",
+      "workflow": {
+        "reported_chapter_states": [
+          "ready",
+          "ready",
+          "ready"
+        ],
+        "book_git_clean": true,
+        "book_git_ready_commits": 3,
+        "writer_run_id": "ds-v4-session",
+        "writer_run_id_reused_across_chapters": true,
+        "runtime_scope_chapter_count": 1,
+        "runtime_generation_record_count": 3,
+        "draft_mutations_per_chapter": 11,
+        "draft_mutation_limit": 3,
+        "review_calls_per_chapter": 2,
+        "old_v42_integrity_result": "warning",
+        "v43_expected_integrity_result": "blocked"
+      },
+      "literary_assessment": {
+        "human_likeness": "mechanical",
+        "reader_desire": "conditional_or_stop",
+        "strengths": [
+          "Rule progression and chapter-to-chapter mystery are legible",
+          "Material staging is consistent",
+          "All three chapters satisfy the formal CJK threshold"
+        ],
+        "risks": [
+          "Emotion is repeatedly translated into explicit categories",
+          "Body language is explained through named muscle groups and a concluding label",
+          "Symbolic color is directly decoded for the reader",
+          "Review prose praises the exact mechanisms that make the chapter feel mechanical"
+        ]
+      },
+      "local_git_history": [
+        "a52ef6792aad4a743f2e4567a1f529a6a283f8d1 chapter: ch03 ready",
+        "694461888237bf7a4d625a5e6d5db2f2a5718068 chapter: ch02 ready",
+        "d952df93f4273defe87c288867d9b078943a1a31 chapter: ch01 ready",
+        "53e4e80908a0fe9142714197db01347c896503d0 chapter: ch03 draft",
+        "1e2adff9a578fef83a745eed7472e91093b94ba3 chapter: ch02 draft",
+        "64d2490c7223cf0fc9ffd27f6c5abcfdaad3b809 chapter: ch01 draft",
+        "878c7a9f9a97288a6d26c86b07fbcdfa484bd087 book-init: initialize 七条规则"
+      ]
+    }
+  ],
+  "cross_sample_findings": {
+    "best_reader_pull": "midnight-frequency",
+    "highest_surface_completion": "rule-of-seven",
+    "diagnosis": [
+      "More parameters or more explicit reasoning do not guarantee more human-readable prose",
+      "Relationship pressure and subtext can outperform exhaustive explanation",
+      "A valid file tree cannot substitute for a valid session and mutation history",
+      "Asking whether review should begin is an orchestration failure, not a literary choice",
+      "Positive prose evidence must remain outside writer context to avoid exemplar overfitting"
+    ]
+  },
+  "protocol_decision": {
+    "workflow_version": "v4.3",
+    "blind_reader_pass_requires": [
+      "human_likeness=convincing",
+      "reader_desire=continue",
+      "substantive emotional_residue",
+      "substantive next_chapter_pull",
+      "independent native review session"
+    ],
+    "runtime_truth_requires": [
+      "one writer run_id per chapter",
+      "one runtime audit per generation",
+      "scope_chapter_count=1",
+      "observed draft and review counts within canonical limits"
+    ],
+    "review_orchestration": "auto-launch after surface_checked; never pause for optional review confirmation"
+  },
+  "privacy": {
+    "full_raw_prose_stored": false,
+    "curated_positive_excerpts_stored": true,
+    "raw_prompt_stored": false,
+    "reasoning_stored": false,
+    "raw_tool_arguments_or_results_stored": false
+  },
+  "cleanup": {
+    "source_projects_removed": true,
+    "external_book_git_histories_removed": true,
+    "targets": [
+      "books/midnight-frequency",
+      ".local-book-git/midnight-frequency.git",
+      "books/rule-of-seven",
+      ".local-book-git/rule-of-seven.git"
+    ]
+  }
+}

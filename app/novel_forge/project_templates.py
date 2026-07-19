@@ -133,7 +133,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.2（每书本地版本控制）
+- 工作流版本: v4.3（读者追读与运行真相）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -175,7 +175,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    长段复制、损坏对白、Markdown 粗体、工作流标记、`——`、`……` 等任一 blocking
    都立即短路。
 7. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
-   只读正文并给 `human_likeness`；同会话只能标记 `simulated_blind` 且不能 pass。
+   只读正文并给 `human_likeness`、`reader_desire` 与追读证据；同会话只能标记
+   `simulated_blind` 且不能 pass。
    chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
 8. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
    `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
@@ -184,7 +185,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 ## 文学目标
 - 问题不是“表格填完了吗”，而是：人物是否在压力中选择，世界是否有独立意志，细节是否改变行动，声音是否在章际保持活性。
-- blind-reader 必须回答 `human_likeness: convincing|uncertain|synthetic`；只有 convincing 可通过。
+- blind-reader 必须回答 `human_likeness: convincing|uncertain|synthetic` 与
+  `reader_desire: continue|conditional|stop`；只有 convincing + continue 可通过，
+  并必须说明读后残留的关系/情绪压力与下一章追读问题。
 - 机器只拦高置信结构破绽：极端跨章逐字复用、长段复制、损坏对白；句长塌缩、
   Voice 范文表层复制和章内模式饱和仍只报告风险，不认证文学价值。
 - Writer 不接收句长、段落长度、对白占比等数字目标；这些统计只由审稿阶段诊断，
@@ -196,7 +199,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 工具受限时使用 `degraded_exploration`，记录真实 `tool_failures`，不得伪装 formal。
 - `正文.md` 不得出现提示词、Agent 身份、章节工作流编号、SHA-256、generation evidence/id、surface_checked 或 ready 等生产元数据。
-- 不得询问“是否开始审核”；formal 门禁通过后自动完成两角色审核。只有事实冲突、覆盖风险、作者取舍或第二份 generation 后仍有 MUST 才暂停。
+- 不得暂停询问“是否开始审核”；formal 门禁通过后自动创建独立审稿会话并完成两角色审核。无法创建新会话时返回 `review_session_required`，不得改成开放式提问。只有事实冲突、覆盖风险、作者取舍或第二份 generation 后仍有 MUST 才暂停。
 """
 
 
@@ -205,7 +208,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.3；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -1016,6 +1019,9 @@ def _agent_blind_reader_md() -> str:
 - `human_likeness: convincing | uncertain | synthetic`。只有 `convincing`
   可以配合 verdict=pass；若节奏像清单、物件循环像模板配额、叙述知道未来章节、
   或正文带工作流语言，必须给 uncertain/synthetic 与 needs_revision。
+- `reader_desire: continue | conditional | stop`。只有 `continue` 可以配合
+  verdict=pass；必须填写 `emotional_residue` 与 `next_chapter_pull`，回答一个真人
+  是否会自愿继续读，而不是正文是否“符合模板”。
 - 报告必须填写 `reconstruction_space`、`reconstruction_body`、
   `reconstruction_constraints`、`reconstruction_emotion`、
   `reconstruction_dialogue` 与三个 `memorable_image_N`；空字段不能通过
@@ -1058,6 +1064,9 @@ def _reviews_review_template_md() -> str:
 - context_scope: <prose_only|simulated_blind|full_review_context>
 - independence_note: <同源评审时必填；角色名不同不等于独立>
 - human_likeness: <blind-reader 填 convincing|uncertain|synthetic；其他角色填 not_applicable>
+- reader_desire: <blind-reader 填 continue|conditional|stop；其他角色填 not_applicable>
+- emotional_residue: <blind-reader 写读后仍残留的关系、情绪或代价；其他角色填 not_applicable>
+- next_chapter_pull: <blind-reader 写让人自愿追读的具体问题；其他角色填 not_applicable>
 
 ## Prose-only Reconstruction（blind-reader 必填）
 - reconstruction_space:
@@ -1384,7 +1393,9 @@ def _agent_orchestrator_md() -> str:
    `session-audit`；返回 `continue_allowed=false` 时在下一次请求前停机。
 5. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
-6. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得询问是否开始审核。
+6. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
+   无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
+   “要不要审核”一类开放式问题。
 7. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
    进入 `human_decision_required`，不得自动产生第三份不同正文 SHA-256。
 8. 上一章完整 `ready` 后结束该 writer session，运行

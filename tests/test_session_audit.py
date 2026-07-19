@@ -229,6 +229,13 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
     assert contract["lifecycle"]["observe_after_each_model_response"] is True
     assert contract["lifecycle"]["stop_before_next_request_when_denied"] is True
     assert contract["lifecycle"]["next_chapter_requires_new_session"] is True
+    assert contract["review_orchestration"] == {
+        "auto_launch_after_surface_checked": True,
+        "user_confirmation_required": False,
+        "blind_reader_requires_new_native_session": True,
+        "when_session_unavailable": "review_session_required",
+        "open_ended_review_question_forbidden": True,
+    }
     assert contract["chapter_sequence"]["default_chapter_count"] == 1
     assert contract["chapter_sequence"]["maximum_chapter_count"] == 4
     assert (

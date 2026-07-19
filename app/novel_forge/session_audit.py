@@ -168,6 +168,13 @@ def harness_contract() -> dict[str, Any]:
                 "other_book_assets",
             ],
         },
+        "review_orchestration": {
+            "auto_launch_after_surface_checked": True,
+            "user_confirmation_required": False,
+            "blind_reader_requires_new_native_session": True,
+            "when_session_unavailable": "review_session_required",
+            "open_ended_review_question_forbidden": True,
+        },
         "decision_protocol": {
             "continue_field": "budget.continue_allowed",
             "continue_value": True,

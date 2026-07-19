@@ -21,7 +21,7 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v4.2 项目骨架，并初始化每书本地 Git）
+# 创建一本新书（生成 v4.3 项目骨架，并初始化每书本地 Git）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -39,7 +39,8 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
    超预算或来源不实立即停止，结束时再 `record-session-audit`；
 4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
    章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
-5. 在独立会话运行 prose-only blind-reader，再由 chapter-editor 综合审读；
+5. 在独立会话运行 prose-only blind-reader，记录 `human_likeness`、追读意愿与
+   情绪余波，再由 chapter-editor 综合审读；
 6. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
    `chapter: chNN ready`；每五章建立一个本地 checkpoint 标签；
 7. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
@@ -117,6 +118,7 @@ research/            # 前期调研
 - 章节独立会话：`docs/25-chapter-session-orchestration.md`
 - 文学防过拟合与序列真实性：`docs/26-literary-anti-overfit-and-sequence-truth.md`
 - 每书本地版本历史：`docs/27-per-book-local-git.md`
+- 读者追读与运行真相：`docs/28-reader-pull-and-runtime-truth.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

@@ -99,7 +99,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.2" in claude_md
+    assert "v4.3" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
@@ -108,6 +108,8 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "最多 4 章" in claude_md
     assert "上一章完整 ready" in claude_md
     assert "record-session-audit" in claude_md
+    assert "reader_desire" in claude_md
+    assert "不得暂停询问" in claude_md
     assert "Markdown 粗体" in claude_md
     assert "surface_checked" in claude_md
     assert "严禁复制其他书的正文" in claude_md
@@ -127,7 +129,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.2" in readme
+    assert "默认工作流: v4.3" in readme
     assert ".local-book-git" in readme
     assert "不得复制其他书的正文" in readme
 
@@ -236,7 +238,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         book_dir / ".claude" / "agents" / "orchestrator.md"
     ).read_text(encoding="utf-8")
     assert "先只读正文" in chapter_editor
-    assert "不得询问是否开始审核" in orchestrator
+    assert "不得暂停询问是否开始审核" in orchestrator
     assert "begin-chapter-sequence" in orchestrator
     assert "claim-chapter-session" in orchestrator
     assert "advance-chapter-sequence" in orchestrator
@@ -247,6 +249,12 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "previous_chapter_quote" in chapter_editor
     assert "human_likeness" in (
         book_dir / ".claude" / "agents" / "blind-reader.md"
+    ).read_text(encoding="utf-8")
+    assert "reader_desire" in (
+        book_dir / ".claude" / "agents" / "blind-reader.md"
+    ).read_text(encoding="utf-8")
+    assert "next_chapter_pull" in (
+        book_dir / "reviews" / "review-template.md"
     ).read_text(encoding="utf-8")
     assert "不同于 writer" in (
         book_dir / ".claude" / "agents" / "blind-reader.md"
@@ -432,12 +440,12 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v42_per_book_local_git_workflow():
+def test_skill_documents_v43_reader_pull_and_runtime_truth_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.2" in text
+    assert "v4.3" in text
     assert "begin-chapter-sequence" in text
     assert "claim-chapter-session" in text
     assert "advance-chapter-sequence" in text
@@ -467,6 +475,9 @@ def test_skill_documents_v42_per_book_local_git_workflow():
     assert "surface_checked" in text
     assert "Max/长思考" in text
     assert "human_likeness" in text
+    assert "reader_desire" in text
+    assert "runtime audit 只能绑定当前 generation" in text
+    assert "不得暂停询问" in text
     assert "两角色" in text
     assert len(text) < 9000
 

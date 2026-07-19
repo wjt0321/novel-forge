@@ -32,6 +32,8 @@ from .planning_spec import (
     DRAFT_MODES,
     EDITORIAL_VERDICTS,
     FORWARD_STATE_TRANSITIONS,
+    MAX_DRAFT_MUTATIONS_PER_CHAPTER,
+    MAX_REVIEW_CALLS_PER_CHAPTER,
     PASSING_VERDICTS,
     REVIEW_ROLES,
     REVIEW_STATE_FOR_ROLE,
@@ -88,6 +90,10 @@ BLIND_RECONSTRUCTION_FIELDS: tuple[str, ...] = (
     "memorable_image_1",
     "memorable_image_2",
     "memorable_image_3",
+)
+BLIND_READER_PULL_FIELDS: tuple[str, ...] = (
+    "emotional_residue",
+    "next_chapter_pull",
 )
 EDITORIAL_DIMENSION_FIELDS: tuple[str, ...] = (
     "editorial_causality",
@@ -461,6 +467,12 @@ def parse_review(text: str) -> dict[str, Any]:
             _field("human_likeness"),
             ("convincing", "uncertain", "synthetic", "not_applicable"),
         ),
+        "reader_desire": _canonical_value(
+            _field("reader_desire"),
+            ("continue", "conditional", "stop", "not_applicable"),
+        ),
+        "emotional_residue": _field("emotional_residue"),
+        "next_chapter_pull": _field("next_chapter_pull"),
         **{
             field: _field(field)
             for field in (
@@ -621,6 +633,24 @@ def _review_validation_errors(
                 "blind-reader 通过时 human_likeness 必须是 convincing；"
                 "uncertain/synthetic 应给 needs_revision。"
             )
+        if role == "blind-reader" and parsed["verdict"] == "pass":
+            if parsed["reader_desire"] != "continue":
+                errors.append(
+                    "blind-reader 通过时 reader_desire 必须是 continue；"
+                    "conditional/stop 应给 needs_revision。"
+                )
+            missing_pull = [
+                field
+                for field in BLIND_READER_PULL_FIELDS
+                if not parsed.get(field)
+                or parsed[field].strip().lower()
+                in {"-", "null", "unknown", "待填写"}
+            ]
+            if missing_pull:
+                errors.append(
+                    "blind-reader pass 缺少读者追读证据："
+                    + "、".join(missing_pull)
+                )
         if generation is not None:
             same_origin = (
                 parsed["provider"] == generation.data["provider"]
@@ -834,6 +864,19 @@ def _runtime_audit_errors(
     except SessionAuditError as exc:
         return [str(exc)]
     errors: list[str] = []
+    generation_id = str(generation.get("id") or "").strip()
+    audit_generation_ids = audit.get("generation_record_ids")
+    if (
+        not generation_id
+        or audit_generation_ids != [generation_id]
+    ):
+        errors.append(
+            "一章 runtime audit 只能绑定当前 generation；"
+            f"expected={[generation_id] if generation_id else 'missing-id'}，"
+            f"actual={audit_generation_ids!r}。"
+        )
+    if audit.get("scope_chapter_count") != 1:
+        errors.append("formal runtime audit 的 scope_chapter_count 必须为 1。")
     if audit["budget"]["continue_allowed"] is not True:
         errors.append("外部会话预算已超限，continue_allowed=false。")
     elif audit["budget"].get("status") != "within_budget":
@@ -851,7 +894,69 @@ def _runtime_audit_errors(
     )
     if mismatch_fields:
         errors.append("外部来源与 generation 不一致：" + "、".join(mismatch_fields))
+    mutation_fields = (
+        "draft_write_count",
+        "draft_edit_count",
+        "review_call_count",
+    )
+    missing_metrics = [
+        field
+        for field in mutation_fields
+        if not isinstance(generation.get(field), int)
+        or isinstance(generation.get(field), bool)
+    ]
+    if missing_metrics:
+        errors.append(
+            "formal generation 缺少运行计数："
+            + "、".join(missing_metrics)
+        )
+    else:
+        draft_mutations = (
+            generation["draft_write_count"]
+            + generation["draft_edit_count"]
+        )
+        if draft_mutations > MAX_DRAFT_MUTATIONS_PER_CHAPTER:
+            errors.append(
+                "draft-mutation-budget 超限："
+                f"actual={draft_mutations}，"
+                f"limit={MAX_DRAFT_MUTATIONS_PER_CHAPTER}。"
+            )
+        if generation["review_call_count"] > MAX_REVIEW_CALLS_PER_CHAPTER:
+            errors.append(
+                "review-call-budget 超限："
+                f"actual={generation['review_call_count']}，"
+                f"limit={MAX_REVIEW_CALLS_PER_CHAPTER}。"
+            )
     return errors
+
+
+def _writer_session_reuse_groups(
+    root: Path, slug: str
+) -> list[dict[str, Any]]:
+    """Return writer run IDs reused across more than one chapter."""
+    metrics = evidence_status(root, slug, None)["generation_metrics"]
+    sessions: dict[str, set[int]] = {}
+    record_ids: dict[str, list[str]] = {}
+    for generation in metrics:
+        run_id = str(generation.get("run_id") or "").strip()
+        chapter = generation.get("chapter")
+        if (
+            run_id.lower() in {"", "unknown", "unrecorded"}
+            or not isinstance(chapter, int)
+            or isinstance(chapter, bool)
+        ):
+            continue
+        sessions.setdefault(run_id, set()).add(chapter)
+        record_ids.setdefault(run_id, []).append(str(generation["id"]))
+    return [
+        {
+            "run_id": run_id,
+            "chapters": sorted(chapters),
+            "record_ids": sorted(record_ids[run_id]),
+        }
+        for run_id, chapters in sorted(sessions.items())
+        if len(chapters) > 1
+    ]
 
 
 def advance_state(
@@ -921,6 +1026,24 @@ def advance_state(
             current["generation_id"],
             current["draft_mode"],
         )
+        reused_session = next(
+            (
+                group
+                for group in _writer_session_reuse_groups(root, slug)
+                if group["run_id"] == generation.data.get("run_id")
+            ),
+            None,
+        )
+        if reused_session is not None:
+            raise BookProjectError(
+                "进入 ready 前写作 run_id 必须一章一会话；"
+                f"{reused_session['run_id']} 同时绑定章节 "
+                + "、".join(
+                    f"ch{chapter:02d}"
+                    for chapter in reused_session["chapters"]
+                )
+                + "。"
+            )
         reviews = {r["role"]: r for r in list_reviews(book_dir, ch_id)}
         missing = [
             f"{role} verdict={required_verdict}"
@@ -1380,13 +1503,36 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["benchmark_missing"] = benchmark_missing
     data["evidence"] = evidence_status(root, slug, number)
     runtime_budget = data["evidence"]["runtime_budget"]
+    chapter_status_by_number = {
+        int(chapter["chapter"].removeprefix("ch")): chapter["status"]
+        for chapter in chapters
+        if isinstance(chapter.get("chapter"), str)
+        and chapter["chapter"].removeprefix("ch").isdigit()
+    }
     for finding in runtime_budget["findings"]:
+        target = (
+            integrity_blockers
+            if chapter_status_by_number.get(finding["chapter"]) == "ready"
+            else integrity_warnings
+        )
         _issue(
-            integrity_warnings,
+            target,
             finding["chapter"],
             finding["code"],
             f"运行预算超限：actual={finding['actual']}，limit={finding['limit']}。",
         )
+    for reuse in _writer_session_reuse_groups(root, slug):
+        for chapter_number in reuse["chapters"]:
+            _issue(
+                integrity_blockers,
+                chapter_number,
+                "writer_session_reused_across_chapters",
+                f"写作 run_id={reuse['run_id']} 同时绑定 "
+                + "、".join(
+                    f"ch{chapter:02d}" for chapter in reuse["chapters"]
+                )
+                + "；正式工作流必须一章一原生会话。",
+            )
     for cycle in data["evidence"]["generation_cycles"]:
         if cycle["review_cycle_status"] not in {
             "budget_exhausted",
@@ -1595,11 +1741,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1))(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2))(?:\s|（|\()"
         ),
         "README.md": re.compile(
             r"(?m)^-\s*默认工作流\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1))(?:$|[\s；;。])"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2))(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1662,7 +1808,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v4.2 migration: continue from "
+                            "v4.3 migration: continue from "
                             f"{new_status}"
                         ),
                     ),

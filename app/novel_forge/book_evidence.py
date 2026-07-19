@@ -873,6 +873,7 @@ def evidence_status(
         else "not_applicable"
     )
     metric_fields = (
+        "chapter",
         "writer_type",
         "provider",
         "model",
