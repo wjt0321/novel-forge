@@ -89,6 +89,17 @@ MAX_DRAFT_MUTATIONS_PER_CHAPTER = 3
 MAX_REVIEW_CALLS_PER_CHAPTER = 3
 MAX_REQUEST_CONTEXT_TOKENS = 120_000
 
+# v4.0 chapter-session orchestration. A sequence is an orchestration convenience,
+# never a shared writer context: every chapter still receives a fresh native
+# session and a bounded handoff packet.
+DEFAULT_CHAPTERS_PER_SEQUENCE = 1
+MAX_CHAPTERS_PER_SEQUENCE = 4
+MAX_HANDOFF_MEMORY_CHARS = 12_000
+MAX_HANDOFF_SCENE_PACKAGE_CHARS = 8_000
+MAX_HANDOFF_PREVIOUS_TAIL_CHARS = 1_600
+MAX_HANDOFF_VOICE_EXEMPLAR_CHARS = 1_200
+MAX_HANDOFF_TOTAL_CHARS = 28_000
+
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})
 

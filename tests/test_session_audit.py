@@ -228,9 +228,23 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
     }
     assert contract["lifecycle"]["observe_after_each_model_response"] is True
     assert contract["lifecycle"]["stop_before_next_request_when_denied"] is True
+    assert contract["lifecycle"]["next_chapter_requires_new_session"] is True
+    assert contract["chapter_sequence"]["default_chapter_count"] == 1
+    assert contract["chapter_sequence"]["maximum_chapter_count"] == 4
+    assert (
+        contract["chapter_sequence"]["previous_chapter_must_be_ready"]
+        is True
+    )
     assert contract["limits_per_chapter"]["request_count"] == 30
+    assert (
+        contract["limits_per_chapter"]["cached_input_tokens_interpretation"]
+        == "hard_ceiling_not_target"
+    )
     assert contract["adapter_operations"]["audit_snapshot"].startswith(
         "session-audit "
+    )
+    assert contract["adapter_operations"]["begin_sequence"].startswith(
+        "begin-chapter-sequence "
     )
     serialized = json.dumps(contract, ensure_ascii=False).lower()
     for vendor in ("minimax", "reasonix", "claude", "deepseek"):

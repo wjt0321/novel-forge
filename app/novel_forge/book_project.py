@@ -1526,10 +1526,10 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"v3\.(?:7|8)(?:\s|（|\()"
+            r"v3\.(?:7|8|9)(?:\s|（|\()"
         ),
         "README.md": re.compile(
-            r"(?m)^-\s*默认工作流\s*:\s*v3\.(?:7|8)(?:$|[\s；;。])"
+            r"(?m)^-\s*默认工作流\s*:\s*v3\.(?:7|8|9)(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1592,7 +1592,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v3.9 migration: continue from "
+                            "v4.0 migration: continue from "
                             f"{new_status}"
                         ),
                     ),

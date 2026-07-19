@@ -13,7 +13,9 @@ from typing import Any, Mapping
 
 from .models import NovelForgeError
 from .planning_spec import (
+    DEFAULT_CHAPTERS_PER_SEQUENCE,
     MAX_CACHED_INPUT_TOKENS_PER_CHAPTER,
+    MAX_CHAPTERS_PER_SEQUENCE,
     MAX_REQUEST_CONTEXT_TOKENS,
     MAX_REQUESTS_PER_CHAPTER,
 )
@@ -97,9 +99,27 @@ def harness_contract() -> dict[str, Any]:
             "stop_before_next_request_when_denied": True,
             "record_final_audit_before_ready": True,
             "blind_review_uses_separate_session": True,
+            "next_chapter_requires_new_session": True,
+            "writer_session_ends_after_chapter_ready": True,
+            "orchestrator_may_auto_launch_next_session": True,
         },
         "adapter_operations": {
             "get_contract": "harness-contract",
+            "begin_sequence": (
+                "begin-chapter-sequence <slug> --start-chapter <n> "
+                "--chapter-count <1..4>"
+            ),
+            "claim_writer_session": (
+                "claim-chapter-session <slug> <sequence-id> "
+                "--session-id <native-session-id>"
+            ),
+            "advance_sequence": (
+                "advance-chapter-sequence <slug> <sequence-id> "
+                "--session-id <native-session-id>"
+            ),
+            "sequence_status": (
+                "chapter-sequence-status <slug> <sequence-id>"
+            ),
             "audit_snapshot": (
                 "session-audit <slug> --file <absolute-runtime-json>"
             ),
@@ -111,7 +131,24 @@ def harness_contract() -> dict[str, Any]:
         "limits_per_chapter": {
             "request_count": MAX_REQUESTS_PER_CHAPTER,
             "cached_input_tokens": MAX_CACHED_INPUT_TOKENS_PER_CHAPTER,
+            "cached_input_tokens_interpretation": "hard_ceiling_not_target",
             "max_request_context_tokens": MAX_REQUEST_CONTEXT_TOKENS,
+        },
+        "chapter_sequence": {
+            "default_chapter_count": DEFAULT_CHAPTERS_PER_SEQUENCE,
+            "maximum_chapter_count": MAX_CHAPTERS_PER_SEQUENCE,
+            "five_or_more_must_be_split": True,
+            "previous_chapter_must_be_ready": True,
+            "one_launch_directive_at_a_time": True,
+            "native_session_id_must_not_be_reused": True,
+            "generation_run_id_must_equal_claimed_session_id": True,
+            "continuity_source": "bounded_external_handoff",
+            "forbidden_context": [
+                "old_session_messages",
+                "old_tool_output",
+                "old_review_bodies",
+                "other_book_assets",
+            ],
         },
         "decision_protocol": {
             "continue_field": "budget.continue_allowed",

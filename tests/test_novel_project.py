@@ -49,6 +49,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "memory" / "MEMORY.md").exists()
     assert (book_dir / "memory" / "memory-record-template.md").exists()
     assert (book_dir / "planning" / "events").is_dir()
+    assert (book_dir / "planning" / "chapter-sequences").is_dir()
     assert (book_dir / "reviews" / "archive").is_dir()
     assert (book_dir / "patches").is_dir()
     assert (book_dir / ".snapshots").is_dir()
@@ -91,7 +92,10 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v3.9" in claude_md
+    assert "v4.0" in claude_md
+    assert "begin-chapter-sequence" in claude_md
+    assert "最多 4 章" in claude_md
+    assert "上一章完整 ready" in claude_md
     assert "record-session-audit" in claude_md
     assert "Markdown 粗体" in claude_md
     assert "surface_checked" in claude_md
@@ -112,7 +116,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v3" in readme
+    assert "默认工作流: v4.0" in readme
     assert "不得复制其他书的正文" in readme
 
     gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
@@ -169,6 +173,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert harness_contract["runtime_report_schema"]["const"] == (
         "novel-forge-runtime/v1"
     )
+    assert harness_contract["chapter_sequence"]["maximum_chapter_count"] == 4
 
     degraded_template = (
         book_dir / "evaluation" / "degraded-run-template.md"
@@ -199,6 +204,10 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     ).read_text(encoding="utf-8")
     assert "先只读正文" in chapter_editor
     assert "不得询问是否开始审核" in orchestrator
+    assert "begin-chapter-sequence" in orchestrator
+    assert "claim-chapter-session" in orchestrator
+    assert "advance-chapter-sequence" in orchestrator
+    assert "新的原生 writer session" in orchestrator
     assert "第二份 generation" in orchestrator
     assert "degraded_exploration" in orchestrator
     assert "不同正文 SHA-256" in orchestrator
@@ -389,12 +398,17 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v39_external_harness_guardrails():
+def test_skill_documents_v40_chapter_session_orchestration():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v3.9" in text
+    assert "v4.0" in text
+    assert "begin-chapter-sequence" in text
+    assert "claim-chapter-session" in text
+    assert "advance-chapter-sequence" in text
+    assert "最多 4 章" in text
+    assert "上一章完整 `ready`" in text
     assert "session-audit" in text
     assert "review_session_id" in text
     assert "degraded_exploration" in text

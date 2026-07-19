@@ -17,6 +17,12 @@ from typing import Any
 
 from app.novel_forge.autonomous import AutonomousError, AutonomousWritingService
 from app.novel_forge import book_project
+from app.novel_forge.chapter_sequence import (
+    advance_chapter_sequence,
+    begin_chapter_sequence,
+    chapter_sequence_status,
+    claim_chapter_session,
+)
 from app.novel_forge.book_evidence import evidence_status, record_evidence
 from app.novel_forge.book_memory import (
     build_context_packet,
@@ -78,6 +84,9 @@ MUTATING_OPS = {
     "record-evidence",
     "set-draft-mode",
     "record-session-audit",
+    "begin-chapter-sequence",
+    "claim-chapter-session",
+    "advance-chapter-sequence",
 }
 
 
@@ -517,6 +526,45 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, nargs="?", default=None, help="Chapter number.")
+
+    p = sub.add_parser(
+        "begin-chapter-sequence",
+        help=(
+            "Create a one-to-four chapter sequence and issue the first "
+            "fresh-session launch directive."
+        ),
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--start-chapter", required=True, type=int)
+    p.add_argument("--chapter-count", type=int, default=1)
+    p.add_argument("--sequence-id", default=None)
+    p.add_argument("--orchestrator-run-id", default=None)
+
+    p = sub.add_parser(
+        "claim-chapter-session",
+        help="Bind the current chapter to a real native writer session ID.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
+    p.add_argument("--session-id", required=True)
+
+    p = sub.add_parser(
+        "advance-chapter-sequence",
+        help=(
+            "Verify the current chapter is ready and issue the next "
+            "fresh-session launch directive."
+        ),
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
+    p.add_argument("--session-id", required=True)
+
+    p = sub.add_parser(
+        "chapter-sequence-status",
+        help="Show chapter sequence metadata without returning handoff prose.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
 
     p = sub.add_parser(
         "run-gates",
@@ -1117,6 +1165,45 @@ def run(argv: list[str] | None = None) -> int:
     if op == "project-status":
         data = book_project.project_status(root, slug, args.number)
         return _ok(op, data)
+
+    if op == "begin-chapter-sequence":
+        data = begin_chapter_sequence(
+            root,
+            slug,
+            args.start_chapter,
+            args.chapter_count,
+            sequence_id=args.sequence_id,
+            orchestrator_run_id=args.orchestrator_run_id,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "claim-chapter-session":
+        data = claim_chapter_session(
+            root,
+            slug,
+            args.sequence_id,
+            args.session_id,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "advance-chapter-sequence":
+        data = advance_chapter_sequence(
+            root,
+            slug,
+            args.sequence_id,
+            args.session_id,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "chapter-sequence-status":
+        return _ok(
+            op,
+            chapter_sequence_status(
+                root,
+                slug,
+                args.sequence_id,
+            ),
+        )
 
     if op == "run-gates":
         data = book_project.run_gates(

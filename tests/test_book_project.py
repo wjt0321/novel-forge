@@ -7,6 +7,12 @@ from pathlib import Path
 import pytest
 
 from app.novel_forge import book_project
+from app.novel_forge.chapter_sequence import (
+    ChapterSequenceError,
+    advance_chapter_sequence,
+    begin_chapter_sequence,
+    claim_chapter_session,
+)
 from app.novel_forge.book_evidence import record_evidence, render_evidence_markdown
 from app.novel_forge.book_project import BookProjectError
 from app.novel_forge.project_templates import init_book_project
@@ -548,6 +554,145 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
         evidence="project-status/current",
     )
     assert result["to"] == "ready"
+
+
+def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    sequence = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=2,
+        sequence_id="two-chapters",
+    )
+    assert sequence["launch"]["chapter"] == 1
+    claim_chapter_session(
+        tmp_path,
+        "demo",
+        "two-chapters",
+        "writer-session-001",
+    )
+
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    paragraph = "他敲门，她没有开。" * 900
+    chapter.write_text(
+        f"# 第一章\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n",
+        encoding="utf-8",
+    )
+    _waive_materials(book_dir)
+    _record_generation(
+        tmp_path,
+        book_dir,
+        run_id="writer-session-001",
+    )
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "blind-reader",
+        _review_file(
+            tmp_path,
+            "blind-reader",
+            "pass",
+            review_session_id="blind-session-001",
+        ),
+    )
+    book_project.record_review(
+        tmp_path,
+        "demo",
+        1,
+        "chapter-editor",
+        _review_file(
+            tmp_path,
+            "chapter-editor",
+            "ready_for_editor_decision",
+            review_session_id="editor-session-001",
+        ),
+    )
+    for state in (
+        "context_collected",
+        "scene_packaged",
+        "drafted",
+        "surface_checked",
+        "blind_read",
+        "editorial_reviewed",
+    ):
+        book_project.advance_state(
+            tmp_path,
+            "demo",
+            1,
+            state,
+            evidence=(
+                None
+                if state in {"blind_read", "editorial_reviewed"}
+                else f"planning/{state}.md"
+            ),
+        )
+    book_project.advance_state(
+        tmp_path,
+        "demo",
+        1,
+        "ready",
+        evidence="project-status/current",
+    )
+
+    voice = book_dir / "memory/voice-bible.md"
+    voice.write_text(
+        voice.read_text(encoding="utf-8").replace(
+            "________________",
+            "选自第一章：他敲门，她没有开。门锁里有一声很轻的回响。"
+            "这段以动作承受关系压力，不解释情绪。",
+        ),
+        encoding="utf-8",
+    )
+    (book_dir / "planning/scene-package-ch02.md").write_text(
+        "# Scene Package\n\n"
+        "## 0b. 章际交接\n"
+        "- 上一章结束动作：敲门。\n"
+        "- 本章开始动作：门内的人靠近。\n\n"
+        "## 1. 场景压力\n"
+        "- 本章目标：决定是否回应。\n"
+        "- 停止边界：门内第一次出声后结束。\n",
+        encoding="utf-8",
+    )
+
+    advanced = advance_chapter_sequence(
+        tmp_path,
+        "demo",
+        "two-chapters",
+        "writer-session-001",
+    )
+
+    assert advanced["status"] == "awaiting_session"
+    assert advanced["completed_chapters"] == [1]
+    assert advanced["launch"]["chapter"] == 2
+    assert advanced["launch"]["new_native_session_required"] is True
+    assert "writer-session-001" in advanced["launch"]["forbidden_session_ids"]
+    handoff_path = book_dir / advanced["launch"]["handoff_path"]
+    handoff = handoff_path.read_text(encoding="utf-8")
+    assert "上一章正文 SHA-256" in handoff
+    assert "他敲门，她没有开" in handoff
+    assert "这段以动作承受关系压力" in handoff
+    assert "门内的人靠近" in handoff
+    assert "review-session" not in handoff
+    assert len(handoff) < 30_000
+
+    with pytest.raises(ChapterSequenceError, match="已被使用"):
+        claim_chapter_session(
+            tmp_path,
+            "demo",
+            "two-chapters",
+            "writer-session-001",
+        )
+    claimed = claim_chapter_session(
+        tmp_path,
+        "demo",
+        "two-chapters",
+        "writer-session-002",
+    )
+    assert claimed["current_chapter"] == 2
 
 
 def test_surface_checked_rejects_blocking_source_hygiene(tmp_path: Path):
@@ -1212,21 +1357,21 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v38_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v39_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v3.9（外置 Harness 护栏）",
-            "- **工作流版本**: v3.8（精简文学闭环）",
+            "- 工作流版本: v4.0（章节独立会话编排）",
+            "- **工作流版本**: v3.9（外置 Harness 护栏）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v4.0",
             "- 默认工作流: v3.9",
-            "- 默认工作流: v3.8",
         ),
         encoding="utf-8",
     )
@@ -1235,8 +1380,8 @@ def test_sync_tools_migrates_generated_v38_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v3.9" in claude.read_text(encoding="utf-8")
-    assert "v3.9" in readme.read_text(encoding="utf-8")
+    assert "v4.0" in claude.read_text(encoding="utf-8")
+    assert "v4.0" in readme.read_text(encoding="utf-8")
 
 
 def test_sync_tools_preserves_handwritten_constitution_without_version_marker(

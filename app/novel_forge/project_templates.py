@@ -132,7 +132,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v3.9（外置 Harness 护栏）
+- 工作流版本: v4.0（章节独立会话编排）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -143,14 +143,20 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 ## 每章只做八步
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
 
-1. 先读 `evaluation/harness-contract.json`（或调用 `harness-contract`），再运行
-   `project-status` 并用 `set-draft-mode` 固定 formal/exploration。任何 Harness
-   都必须保留真实 session id，并能输出 `novel-forge-runtime/v1` 累计快照。
-2. `memory-status` 必须 clean；formal 运行 `build-memory-context`。
-3. 只读 voice bible、故事发动机、本章相关 Canon/承诺、上一章末段和一页式 scene package。不要读全书审稿史。
+1. 先读 `evaluation/harness-contract.json`（或调用 `harness-contract`）。用户要求
+   写 1 章时运行 `begin-chapter-sequence --chapter-count 1`；要求连续写多章时，
+   仍由同一编排器按顺序执行，但单次最多 4 章，五章及以上必须拆分。用
+   `set-draft-mode` 固定 formal/exploration。
+2. 每章都用 launch directive 创建新的原生 writer session，并立即用
+   `claim-chapter-session` 绑定真实 session id。不得把编排器 session、角色名或
+   上一章 session 冒充新会话。
+3. writer 只读 `chXX-handoff.md` 指定的 Voice exemplar、相关 Canon/承诺、
+   上一章末段和本章 scene package；不要读取旧会话消息、旧工具输出或全书审稿史。
+   单章记忆诊断仍可运行 `memory-status` / `build-memory-context`。
 4. 一次写完整章；正式章 ≥5000 CJK。正文默认 standard/medium，Max/长思考仅在用户明确做基准实验时用于正文。
 5. 记录 generation；`run_id`、provider/model/Harness/思考强度和工具失败必须来自
-   真实会话。初稿后只允许一次集中 patch，即最多两份不同正文 SHA-256。
+   真实会话，并经 `record-evidence` 落盘。初稿后只允许一次集中 patch，即最多
+   两份不同正文 SHA-256。
 6. 每次模型响应后更新累计快照并运行 `session-audit`；若
    `budget.continue_allowed=false`，必须在下一次模型请求前停止。结束时再经
    `record-session-audit` 固化脱敏审计。预算超限、来源不一致、逐字复用覆盖过高、
@@ -159,7 +165,10 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 7. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
    只读正文并给 `human_likeness`；同会话只能标记 `simulated_blind` 且不能 pass。
    chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
-8. 第五章做 checkpoint audit；用 `evidence-status` / `record-evidence` 留痕。
+8. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
+   `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
+   新 session；否则停止。第五章做 checkpoint audit，并用 `evidence-status`
+   核对证据闭环。
 
 ## 文学目标
 - 问题不是“表格填完了吗”，而是：人物是否在压力中选择，世界是否有独立意志，细节是否改变行动，声音是否在章际保持活性。
@@ -182,7 +191,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.9；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.0；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -205,8 +214,12 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-最小上下文 → 一页式 scene package → 一次完整初稿 → 机器门禁 →
-blind-reader → chapter-editor → 至多一次集中 patch → ready。
+章节序列签发 → 新 writer session claim → 有界 handoff → 一次完整初稿 →
+机器门禁 → blind-reader → chapter-editor → 至多一次集中 patch → ready →
+结束本章 session → 顺序签发下一章。
+
+单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
+复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
 """
@@ -282,6 +295,9 @@ def _memory_guide_md() -> str:
 3. 人工或编排 Agent 审核后，用 `promote-memory-candidate` 晋升。
 4. 状态变化必须填写 `supersedes`；例如死亡事实取代存活事实，旧事实有效期会闭合。
 5. 起草前运行 `memory-status`；仅在 `clean` 时生成 `build-memory-context`。
+6. 正式编排优先用 `begin-chapter-sequence` 生成
+   `memory/context-cache/chXX-handoff.md`；它在记忆包之外只加入 Voice exemplar、
+   上一章末段和当前 scene package。
 
 所有记录必须引用本书内真实存在的 `source_path`，并提供可定位的短证据。正文或 Canon 改动都会使索引变为 stale，必须重建后才能生成上下文包。
 """
@@ -858,7 +874,9 @@ def _agent_context_collector_md() -> str:
 5. voice bible 只摘本章距离、节奏和一个 exemplar 短段。
 6. 列出未加载材料及原因。
 
-运行 `memory-status`；formal 仅在 clean 后运行 `build-memory-context`。
+正式序列由 `begin-chapter-sequence` 自动核对/重建派生索引并生成
+`chXX-handoff.md`；单章诊断仍可直接运行 `memory-status` /
+`build-memory-context`。
 不得读取全书审稿史、全部 Canon、其他章节规划或模板说明。上一章有
 source-hygiene blocking 时停止。事实缺口只记 candidate，不自行补全。
 """
@@ -1331,17 +1349,24 @@ def _agent_orchestrator_md() -> str:
 ## 默认闭环
 1. 启动时读取 `evaluation/harness-contract.json`；原生遥测必须规范化为
    `novel-forge-runtime/v1`。
-2. context collector 产出一页最小上下文；一名 writer 一次写完整章。
-3. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
+2. 用户要 1 章时运行 `begin-chapter-sequence --chapter-count 1`；用户要连续多章
+   时按请求建立序列，但最多 4 章，五章及以上必须拆分。
+3. 每次 launch directive 只允许当前一章。创建新的原生 writer session 后立即
+   `claim-chapter-session`；writer 只读该章 `chXX-handoff.md`，一次写完整章。
+4. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
    `session-audit`；返回 `continue_allowed=false` 时在下一次请求前停机。
-4. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
+5. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
-5. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得询问是否开始审核。
-6. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
+6. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得询问是否开始审核。
+7. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
    进入 `human_decision_required`，不得自动产生第三份不同正文 SHA-256。
+8. 上一章完整 `ready` 后结束该 writer session，运行
+   `advance-chapter-sequence`。只有返回 `launch_next_session=true` 才能按顺序
+   创建下一章的新 session；不得提前并发起草。
 
 ## 成本边界
-- 每章独立会话；跨章只传最小摘要，不携带旧工具输出和审稿全文。
+- 每章独立会话；跨章只传有界 handoff，不携带旧会话消息、旧工具输出和审稿全文。
+- 2,000,000 cached-input tokens 是每章硬停止上限，不是应当吃满的目标。
 - 正文一次完整 Write，最多一次集中 Edit；禁止边查 CJK 边连续补写。
 - high/Max 不用于模板、状态、证据或默认审稿。
 - 默认两角色；专业编辑只有 chapter-editor 指出具体风险时才调用一个。
@@ -1420,6 +1445,7 @@ REQUIRED_DIRECTORIES = [
     ".novel-forge",
     "planning/events",
     "planning/chapter-state",
+    "planning/chapter-sequences",
     "evaluation/cases",
     "evaluation/experiments",
     "evidence/runtime-audits",

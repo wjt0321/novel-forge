@@ -1,0 +1,157 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "deepseek-v39-five-chapter-20260719",
+  "recorded_at": "2026-07-19",
+  "purpose": "Evidence for vendor-neutral one-chapter-per-session orchestration",
+  "shared_model_family": "DeepSeek-V4-Pro",
+  "samples": [
+    {
+      "sample_id": "opencode",
+      "harness": "OpenCode",
+      "session_id": "ses_087153fcaffehXdrQSqQIMJTJj",
+      "reasoning_effort": "max",
+      "elapsed_seconds": 1897.008,
+      "assistant_messages": 184,
+      "tool_calls": 254,
+      "tool_failures": 3,
+      "tokens": {
+        "input": 109116,
+        "output": 86555,
+        "reasoning": 14917,
+        "cached_input": 21075584
+      },
+      "cost_usd": 0.212145092,
+      "source_export_sha256": "f43ac2da6010db5a6cb1a499bc79ad5d9988c14ed14eba1d0f013d55edcc5db0",
+      "original_chapters": [
+        {
+          "chapter": 1,
+          "cjk": 7278,
+          "sha256": "319356ac35ee747b393ef683911e39a19cded0d9ea3189c6fe55b6a811a51028"
+        },
+        {
+          "chapter": 2,
+          "cjk": 5843,
+          "sha256": "ee6df355eed2980507eec6178bf4e406e7d750294b8d147d3c5861b8866620b9",
+          "reconstructed_from_tool_log": true
+        },
+        {
+          "chapter": 3,
+          "cjk": 5158,
+          "sha256": "3daab71fabe41588210f6a1ebfba7b830a237f4234d24ff2eae4df70d68d39c9"
+        },
+        {
+          "chapter": 4,
+          "cjk": 5099,
+          "sha256": "ac9d86890314b820b7eceab33ec32b8ed74860eb35aac752f9a7e8e8a0708c0e"
+        },
+        {
+          "chapter": 5,
+          "cjk": 11111,
+          "sha256": "c93b382c45cac238136b1a396378b4346664b191dbc83dc6c77832491c81928f"
+        }
+      ],
+      "evidence_inventory": {
+        "generation_files": 4,
+        "review_files": 7,
+        "runtime_audits": 0,
+        "arc_audits": 0
+      },
+      "workflow_status": "blocked",
+      "notable_findings": [
+        "Five chapters shared one native writer session",
+        "Chapter 5 had nine blocking not-is-flip findings",
+        "No final runtime audit was recorded",
+        "The current chapter 2 file was later overwritten by the other sample"
+      ]
+    },
+    {
+      "sample_id": "claude-code",
+      "harness": "Claude Code",
+      "session_id": "7cf08780-5cf7-4d0d-a559-4fb6121d8f6e",
+      "reasoning_effort": "max",
+      "elapsed_seconds": 4533.974,
+      "assistant_messages": 605,
+      "tool_calls": 312,
+      "agent_dispatches": 15,
+      "tokens": {
+        "input": 1468196,
+        "output": 339359,
+        "cached_input": 95208320
+      },
+      "source_export_sha256": "92a28ca9b3e57ac0dd612e101946c160768ee626e7d3f6bb6d8a473e80f59630",
+      "chapters_at_audit": [
+        {
+          "chapter": 1,
+          "cjk": 5020,
+          "sha256": "0f6d80233c500c073482e46779920cceaca903c98d9b92a0b9112c5c0dc3c065"
+        },
+        {
+          "chapter": 2,
+          "cjk": 10477,
+          "sha256": "68f8378f33f520c7e79d6da91bcf0dd3ac99a78023342c3c28962145ac4587b4",
+          "cross_project_contaminated": true
+        },
+        {
+          "chapter": 3,
+          "cjk": 9555,
+          "sha256": "29b10348a28749c126fb8dd39d9c709c576b830276ad09af43289c8bf48422bd"
+        },
+        {
+          "chapter": 4,
+          "cjk": 20695,
+          "sha256": "f8dc9c5904dc1d1190f52f58489f56046f61f3bea7b8aabd32512562b1176445"
+        },
+        {
+          "chapter": 5,
+          "cjk": 15761,
+          "sha256": "9d7a7460a612ab4e742eec6d86ef85da11b2abc63e4e3d0bce1a88c184737116"
+        }
+      ],
+      "evidence_inventory": {
+        "generation_files": 1,
+        "review_files": 15,
+        "runtime_audits": 0,
+        "arc_audits": 0
+      },
+      "workflow_status": "blocked",
+      "notable_findings": [
+        "A child writer wrote chapter 2 into the OpenCode project",
+        "The main session copied that wrong-project chapter into its own project",
+        "Chapter 4 blind review remained uncertain",
+        "The session explicitly skipped formal review recording near the end",
+        "No final runtime audit was recorded"
+      ]
+    }
+  ],
+  "cross_sample_findings": {
+    "shared_current_chapter_2_sha256": "68f8378f33f520c7e79d6da91bcf0dd3ac99a78023342c3c28962145ac4587b4",
+    "chapter_2_is_not_comparable": true,
+    "long_session_failure_mode": [
+      "language and workflow inertia accumulated across chapters",
+      "late chapters expanded sharply",
+      "review and evidence discipline degraded",
+      "subagent path isolation failed",
+      "cached context grew far beyond a useful chapter-local working set"
+    ]
+  },
+  "protocol_decision": {
+    "workflow_version": "v4.0",
+    "one_native_writer_session_per_chapter": true,
+    "automatic_sequence_default_chapters": 1,
+    "automatic_sequence_max_chapters": 4,
+    "five_chapter_sequence_allowed": false,
+    "next_session_requires_previous_chapter_ready": true,
+    "continuity_source": "bounded external handoff plus canonical memory",
+    "cached_input_tokens_per_chapter": {
+      "hard_ceiling": 2000000,
+      "interpretation": "safety ceiling, not a target"
+    }
+  },
+  "privacy": {
+    "raw_prompt_stored": false,
+    "raw_prose_stored": false,
+    "reasoning_stored": false,
+    "raw_tool_arguments_or_results_stored": false
+  },
+  "source_projects_removed": true
+}
