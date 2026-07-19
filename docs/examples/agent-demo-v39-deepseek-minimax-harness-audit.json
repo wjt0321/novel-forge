@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-07-19",
+  "experiment": {
+    "prompt": "same five-chapter benchmark prompt",
+    "title": "回水",
+    "genre": "现实悬疑 / 家庭伦理",
+    "comparison_boundary": "Compare integrated model-plus-harness systems; do not attribute differences to one component alone."
+  },
+  "v39_limits": {
+    "canonical_runtime_schema": "novel-forge-runtime/v1",
+    "formal_scope_chapter_count": 1,
+    "multi_chapter_formal_session_allowed": false,
+    "requests_per_chapter": 30,
+    "cached_input_tokens_per_chapter": 2000000,
+    "max_request_context_tokens": 120000,
+    "five_chapter_request_limit": 150,
+    "five_chapter_cached_input_limit": 10000000,
+    "compatibility_replay_note": "Legacy logs lack chapter boundaries. Five-chapter limits are conservative replay figures; a new formal multi-chapter session is rejected before it can claim the larger budget."
+  },
+  "deepseek_reasonix": {
+    "project_slug": "five-chapter-benchmark-20260719-014647",
+    "source_log_sha256": "12a7a7834eef2aa1b1aa93efb046112b9385d582cbe3ab1c4977faa8a3f8b749",
+    "session_id": "20260719-014647-d-s-black-novel-agents-md-agents-skills-novel-forge-skil",
+    "source_format": "reasonix",
+    "agent_harness": "reasonix-autoresearch",
+    "provider": "deepseek",
+    "model": "unknown",
+    "reasoning_effort": "unknown",
+    "elapsed_seconds": 2003.072,
+    "request_count": 239,
+    "token_metrics_available": false,
+    "tool_calls": 306,
+    "tool_failures": 14,
+    "budget_status": "exceeded",
+    "budget_findings": [
+      {
+        "code": "session-request-budget",
+        "actual": 239,
+        "limit": 150
+      }
+    ],
+    "v39_predicted_stop": {
+      "request": 151,
+      "elapsed_seconds": 1142.477,
+      "trigger": "session-request-budget"
+    },
+    "provenance_status": "mismatch",
+    "provenance_mismatch_fields": [
+      "agent_harness",
+      "generation_binding",
+      "provider",
+      "run_id",
+      "tool_failures"
+    ],
+    "chapters": [
+      {"chapter": 1, "cjk": 5193, "sentence_len_mean": 15.3, "ready_eligible": true},
+      {"chapter": 2, "cjk": 6015, "sentence_len_mean": 13.6, "ready_eligible": true},
+      {"chapter": 3, "cjk": 4980, "sentence_len_mean": 13.0, "ready_eligible": false},
+      {"chapter": 4, "cjk": 3139, "sentence_len_mean": 11.4, "ready_eligible": false},
+      {"chapter": 5, "cjk": 2792, "sentence_len_mean": 10.8, "ready_eligible": false}
+    ],
+    "literary_findings": {
+      "cross_chapter_exact_sentences": 3,
+      "blocking": []
+    }
+  },
+  "minimax_pi": {
+    "project_slug": "five-chapter-benchmark-20260719-014504",
+    "source_log_sha256": "79bfc93919d6bd284130ab502eb4aa9ae1b7f259007defcd44d2cf569dbaa1d9",
+    "session_id": "mvs_a05600fcdba347cbb4d180aa114ffc5f",
+    "source_format": "minimax-code",
+    "agent_harness": "pi-agent/mavis",
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "reasoning_effort": "high",
+    "elapsed_seconds": 5566.222,
+    "request_count": 592,
+    "tokens": {
+      "input": 612193,
+      "output": 222935,
+      "cached_input": 106769514,
+      "total": 107612220
+    },
+    "max_context_tokens": 375300,
+    "context_reset_count": 1,
+    "tool_calls": 589,
+    "tool_failures": 34,
+    "budget_status": "exceeded",
+    "budget_findings": [
+      {"code": "session-request-budget", "actual": 592, "limit": 150},
+      {"code": "session-cached-context-budget", "actual": 106769514, "limit": 10000000},
+      {"code": "request-context-window", "actual": 375300, "limit": 120000}
+    ],
+    "v39_predicted_stop": {
+      "request": 128,
+      "elapsed_seconds": 524.915,
+      "cached_input_tokens": 10051016,
+      "trigger": "session-cached-context-budget"
+    },
+    "provenance_status": "mismatch",
+    "provenance_mismatch_fields": [
+      "agent_harness",
+      "generation_binding",
+      "model",
+      "provider",
+      "reasoning_effort",
+      "run_id",
+      "tool_failures"
+    ],
+    "chapters": [
+      {"chapter": 1, "cjk": 5770, "sentence_len_mean": 19.0, "ready_eligible": true},
+      {"chapter": 2, "cjk": 5125, "sentence_len_mean": 13.2, "ready_eligible": true},
+      {"chapter": 3, "cjk": 5398, "sentence_len_mean": 12.2, "ready_eligible": false},
+      {"chapter": 4, "cjk": 5316, "sentence_len_mean": 11.6, "ready_eligible": false},
+      {"chapter": 5, "cjk": 5303, "sentence_len_mean": 11.7, "ready_eligible": false}
+    ],
+    "literary_findings": {
+      "cross_chapter_exact_sentences": 105,
+      "duplicate_sentence_instances": 691,
+      "total_sentence_instances": 2034,
+      "duplicate_sentence_ratio": 0.34,
+      "copied_long_paragraphs": 1,
+      "malformed_nested_dialogue_labels": 10,
+      "blocking": [
+        "serial-duplicate-coverage",
+        "cross-chapter-paragraph-copy",
+        "malformed-dialogue-structure"
+      ]
+    }
+  },
+  "disposition": {
+    "source_projects_removed": true,
+    "source_logs_removed": true,
+    "preserved_files": [
+      "docs/examples/agent-demo-v39-deepseek-minimax-harness-audit.md",
+      "docs/examples/agent-demo-v39-deepseek-minimax-harness-audit.json"
+    ]
+  }
+}

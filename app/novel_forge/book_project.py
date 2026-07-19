@@ -40,6 +40,11 @@ from .project_templates import (
     _planning_chapter_state_template_md,
     render_templates,
 )
+from .session_audit import (
+    SessionAuditError,
+    compare_generation_provenance,
+    find_runtime_audit,
+)
 from .voice_signature import analyze_serial_style
 
 
@@ -412,11 +417,17 @@ def parse_review(text: str) -> dict[str, Any]:
         "previous_chapter_quote": _field("previous_chapter_quote"),
         "reviewer_type": _field("reviewer_type"),
         "reviewer_id": _field("reviewer_id"),
+        "review_session_id": _field("review_session_id"),
         "provider": _field("provider"),
         "model": _field("model"),
         "context_scope": _canonical_value(
             _field("context_scope"),
-            ("prose_only", "full_review_context", "candidate_prose_only"),
+            (
+                "prose_only",
+                "simulated_blind",
+                "full_review_context",
+                "candidate_prose_only",
+            ),
         ),
         "independence_note": _field("independence_note"),
         "human_likeness": _canonical_value(
@@ -551,14 +562,29 @@ def _review_validation_errors(
         for field in (
             "reviewer_type",
             "reviewer_id",
+            "review_session_id",
             "provider",
             "model",
             "context_scope",
         ):
             if not parsed[field]:
                 errors.append(f"关键审稿缺少来源字段：{field}")
-        if role == "blind-reader" and parsed["context_scope"] != "prose_only":
-            errors.append("blind-reader 的 context_scope 必须是 prose_only。")
+        if role == "blind-reader" and parsed["context_scope"] not in {
+            "prose_only",
+            "simulated_blind",
+        }:
+            errors.append(
+                "blind-reader 的 context_scope 必须是 prose_only "
+                "或 simulated_blind。"
+            )
+        if (
+            role == "blind-reader"
+            and parsed["verdict"] == "pass"
+            and parsed["context_scope"] == "simulated_blind"
+        ):
+            errors.append(
+                "simulated_blind 只能记录诊断性 needs_revision，不能作为 pass。"
+            )
         if (
             role == "blind-reader"
             and parsed["verdict"] == "pass"
@@ -578,6 +604,20 @@ def _review_validation_errors(
                     "同 provider/model 的关键审稿必须填写 independence_note；"
                     "角色名不同不等于独立评审。"
                 )
+            if role == "blind-reader" and parsed["verdict"] == "pass":
+                writer_session = str(generation.data.get("run_id") or "").strip()
+                review_session = str(
+                    parsed.get("review_session_id") or ""
+                ).strip()
+                if writer_session.lower() in {"", "unknown", "unrecorded"}:
+                    errors.append(
+                        "blind-reader pass 要求 generation 记录真实 run_id，"
+                        "不能使用 unknown。"
+                    )
+                elif review_session == writer_session:
+                    errors.append(
+                        "blind-reader pass 必须来自不同于写作 run_id 的独立会话。"
+                    )
     return errors
 
 
@@ -659,6 +699,7 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
         parsed["validation_valid"] = not validation_errors
         parsed["same_provider_model_as_generation"] = False
         parsed["independent"] = None
+        parsed["session_isolated"] = None
         generation_id = parsed.get("generation_id")
         if generation_id and generation_id != "unrecorded":
             try:
@@ -675,6 +716,20 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
                 parsed["same_provider_model_as_generation"] = same_origin
                 if parsed.get("provider") and parsed.get("model"):
                     parsed["independent"] = not same_origin
+                writer_session = str(
+                    generation.data.get("run_id") or ""
+                ).strip()
+                review_session = str(
+                    parsed.get("review_session_id") or ""
+                ).strip()
+                if (
+                    writer_session.lower()
+                    not in {"", "unknown", "unrecorded"}
+                    and review_session
+                ):
+                    parsed["session_isolated"] = (
+                        writer_session != review_session
+                    )
             except NovelForgeError:
                 parsed["stale"] = True
         out.append(parsed)
@@ -738,6 +793,40 @@ def record_review(
     }
 
 
+def _runtime_audit_errors(
+    book_dir: Path, generation: dict[str, Any]
+) -> list[str]:
+    """Validate externally observed runtime evidence for one generation."""
+    if generation.get("writer_type") == "human":
+        return []
+    run_id = str(generation.get("run_id") or "").strip()
+    if run_id.lower() in {"", "unknown", "unrecorded"}:
+        return ["generation.run_id 未绑定真实 Harness 会话。"]
+    try:
+        audit = find_runtime_audit(book_dir, run_id)
+    except SessionAuditError as exc:
+        return [str(exc)]
+    errors: list[str] = []
+    if audit["budget"]["continue_allowed"] is not True:
+        errors.append("外部会话预算已超限，continue_allowed=false。")
+    elif audit["budget"].get("status") != "within_budget":
+        errors.append(
+            "formal runtime audit 缺少请求数、缓存输入或最大上下文的完整观测。"
+        )
+    mismatches = compare_generation_provenance(generation, audit)
+    recorded_mismatches = audit.get("provenance_mismatches", [])
+    mismatch_fields = sorted(
+        {
+            str(item.get("field"))
+            for item in [*mismatches, *recorded_mismatches]
+            if isinstance(item, dict) and item.get("field")
+        }
+    )
+    if mismatch_fields:
+        errors.append("外部来源与 generation 不一致：" + "、".join(mismatch_fields))
+    return errors
+
+
 def advance_state(
     root: Path,
     slug: str,
@@ -757,12 +846,28 @@ def advance_state(
     current = parse_chapter_state(state_text)
 
     if to_state == "surface_checked":
-        findings = lint_file(find_chapter_file(book_dir, number))
-        blocking = [finding for finding in findings if finding.severity == "blocking"]
-        if blocking:
-            codes = ", ".join(sorted({finding.rule_code for finding in blocking}))
+        gates = run_gates(root, slug, number)
+        if gates["quality"]["blocking"]:
+            codes = ", ".join(
+                sorted(
+                    {
+                        finding["rule_code"]
+                        for finding in gates["quality"]["findings"]
+                        if finding["severity"] == "blocking"
+                    }
+                )
+            )
             raise BookProjectError(
                 f"surface gate 仍有 blocking：{codes}；不得启动后续审稿。"
+            )
+        if gates["literary"]["blocking"]:
+            codes = ", ".join(
+                finding["code"]
+                for finding in gates["literary"]["blocking"]
+            )
+            raise BookProjectError(
+                f"serial literary gate 仍有 blocking：{codes}；"
+                "不得启动后续审稿。"
             )
 
     if to_state == "ready":
@@ -782,7 +887,7 @@ def advance_state(
             raise BookProjectError(
                 "进入 ready 前必须记录并绑定本章 generation evidence。"
             )
-        _validate_current_generation(
+        generation, _ = _validate_current_generation(
             root,
             book_dir,
             number,
@@ -801,8 +906,22 @@ def advance_state(
             raise BookProjectError(
                 "进入 ready 的前置证据缺失：" + "；".join(missing)
             )
+        blind_review = reviews.get("blind-reader", {})
+        if blind_review.get("session_isolated") is not True:
+            raise BookProjectError(
+                "进入 ready 前 blind-reader 必须绑定不同于写作 run_id 的独立会话。"
+            )
+        runtime_errors = _runtime_audit_errors(book_dir, generation.data)
+        if runtime_errors:
+            raise BookProjectError(
+                "进入 ready 前外部 runtime audit 未通过：" + runtime_errors[0]
+            )
         gates = run_gates(root, slug, number, expected_mode="formal")
-        if gates["quality"]["blocking"] or gates["narrative"]["blocking"]:
+        if (
+            gates["quality"]["blocking"]
+            or gates["narrative"]["blocking"]
+            or gates["literary"]["blocking"]
+        ):
             raise BookProjectError("进入 ready 前 formal gate 仍有 blocking。")
         placeholder_values = {"", "-", "null", "unknown", "待填写"}
         evidence_rows = {
@@ -1061,14 +1180,18 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
                 narrative_blocking = len(
                     current_gates["narrative"]["blocking"]
                 )
-                if quality_blocking or narrative_blocking:
+                literary_blocking = len(
+                    current_gates["literary"]["blocking"]
+                )
+                if quality_blocking or narrative_blocking or literary_blocking:
                     _issue(
                         integrity_blockers,
                         chapter_number,
                         "ready_with_blocking_gates",
                         "章节状态为 ready，但当前门禁已失效："
                         f"quality blocking={quality_blocking}，"
-                        f"narrative blocking={narrative_blocking}。",
+                        f"narrative blocking={narrative_blocking}，"
+                        f"literary blocking={literary_blocking}。",
                     )
         chapters.append(parsed)
 
@@ -1188,6 +1311,10 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         for role, verdict in benchmark_requirements.items()
         if critical.get(role, {}).get("verdict") != verdict
         or critical.get(role, {}).get("independent") is not True
+        or (
+            role == "blind-reader"
+            and critical.get(role, {}).get("session_isolated") is not True
+        )
     ]
     data["review_confidence"] = review_confidence
     if any(
@@ -1226,17 +1353,6 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             cycle["review_cycle_status"],
             "自动 generation 预算已耗尽；下一次完整回炉需要明确人工决定。",
         )
-    data["workflow_integrity"] = {
-        "status": (
-            "blocked"
-            if integrity_blockers
-            else "warning"
-            if integrity_warnings
-            else "clean"
-        ),
-        "blockers": integrity_blockers,
-        "warnings": integrity_warnings,
-    }
     serial_inputs: list[tuple[str, str]] = []
     for chapter_number in sorted(serial_chapter_numbers):
         try:
@@ -1255,9 +1371,61 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         else {
             "chapters": [],
             "findings": [],
+            "blocking": [],
             "human_likeness_risk": False,
         }
     )
+    if data["literary_profile"]["blocking"]:
+        target_chapter = (
+            number
+            if number is not None
+            else max(serial_chapter_numbers, default=0)
+        )
+        for finding in data["literary_profile"]["blocking"]:
+            _issue(
+                integrity_blockers,
+                target_chapter,
+                finding["code"],
+                finding["detail"],
+            )
+    for chapter in chapters:
+        if chapter["generation_id"] == "unrecorded":
+            continue
+        try:
+            generation, _ = find_evidence_record(
+                root, slug, chapter["generation_id"]
+            )
+        except NovelForgeError:
+            continue
+        runtime_errors = _runtime_audit_errors(book_dir, generation.data)
+        if not runtime_errors:
+            continue
+        try:
+            chapter_number = int(chapter["chapter"].removeprefix("ch"))
+        except (AttributeError, ValueError):
+            chapter_number = number or 0
+        target = (
+            integrity_blockers
+            if chapter["status"] == "ready"
+            else integrity_warnings
+        )
+        _issue(
+            target,
+            chapter_number,
+            "runtime_audit_invalid",
+            "；".join(runtime_errors),
+        )
+    data["workflow_integrity"] = {
+        "status": (
+            "blocked"
+            if integrity_blockers
+            else "warning"
+            if integrity_warnings
+            else "clean"
+        ),
+        "blockers": integrity_blockers,
+        "warnings": integrity_warnings,
+    }
     return data
 
 
@@ -1309,11 +1477,6 @@ def run_gates(
             "blocking": [f"缺少场景包：planning/scene-package-{_chapter_id(number)}.md"],
             "advisory": [],
         }
-    result["ready_eligible"] = (
-        mode == "formal"
-        and quality["blocking"] == 0
-        and not result["narrative"]["blocking"]
-    )
     serial_inputs: list[tuple[str, str]] = []
     for chapter_number in range(1, number + 1):
         try:
@@ -1327,6 +1490,12 @@ def run_gates(
             )
         )
     result["literary"] = analyze_serial_style(serial_inputs)
+    result["ready_eligible"] = (
+        mode == "formal"
+        and quality["blocking"] == 0
+        and not result["narrative"]["blocking"]
+        and not result["literary"]["blocking"]
+    )
     result["author_approval"] = False
     result["publication_eligibility"] = False
     return result
@@ -1357,10 +1526,10 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"v3\.7(?:\s|（|\()"
+            r"v3\.(?:7|8)(?:\s|（|\()"
         ),
         "README.md": re.compile(
-            r"(?m)^-\s*默认工作流\s*:\s*v3\.7(?:$|[\s；;。])"
+            r"(?m)^-\s*默认工作流\s*:\s*v3\.(?:7|8)(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1423,7 +1592,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v3.8 migration: continue from "
+                            "v3.9 migration: continue from "
                             f"{new_status}"
                         ),
                     ),

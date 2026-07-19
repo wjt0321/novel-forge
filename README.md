@@ -16,10 +16,10 @@
 ```bash
 pip install -r requirements.txt
 
-# 320 个测试（仓库根目录）
+# 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成完整项目骨架，含 Voice Bible 与七个审稿角色）
+# 创建一本新书（生成 v3.9 项目骨架）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -29,11 +29,14 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
-1. 填写 `memory/voice-bible.md`、`planning/story-engine.md` 与场景包（目标/阻力/不可逆选择/beat 因果链/信息账本/术语预算/锚定物象）；
-2. 写动作稿与对白账本，再起草 `chapters/eXX/ch-XX/正文.md`；
-3. 跑 `tools/quality_check.py` 与 `tools/narrative_gate.py`（两者是仓库规则的薄壳）；
-4. 六个独立审稿角色依次审读（因果、行文、文字肌理、一致性、盲读者、宏观编辑），结论落盘 `reviews/`；盲读者只凭正文重建画面，宏观编辑按五维输出 verdict；
-5. 状态机推进到 `ready`（强制要求盲审通过 + 宏观编辑放行）；修订回退到对应材料层，不用措辞掩盖结构问题。
+1. 收集最小上下文，填写 Voice Bible、故事发动机与一页式场景包；
+2. 一次写完整章，记录 generation 并绑定真实 writer `run_id`；
+3. 任意 Harness 先读 `evaluation/harness-contract.json`，输出
+   `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
+   超预算或来源不实立即停止，结束时再 `record-session-audit`；
+4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断；
+5. 在独立会话运行 prose-only blind-reader，再由 chapter-editor 综合审读；
+6. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
 
 ## 两种工作流
 
@@ -41,7 +44,7 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 |---|---|---|
 | 用途 | 写作 Agent 项目内写作，质量门完整 | SQLite 审计、不可变 revision、Canon 事实库、Pandoc 导出 |
 | 正文 | `chapters/eXX/ch-XX/正文.md` | `manuscript/revisions/` 不可变文件 |
-| 驱动 | adapter：`project-status` / `run-gates` / `record-review` / `advance-state` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
+| 驱动 | adapter：`project-status` / `session-audit` / `run-gates` / `record-review` / `advance-state` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
 | 数据库 | 不需要 | `data/novel-forge.db`（可重建的审计索引） |
 
 两者不得静默混用；选择标准见 SKILL.md。
@@ -69,9 +72,10 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   lint.py            #   中文网文 prose 规则（单源，各书 tools 是它的薄壳）
   book_gates.py      #   narrative gate 规范实现
   book_project.py    #   books/ 业务层（无数据库）
+  session_audit.py   #   厂商无关 Harness Contract、标准快照审计与兼容导入
   project_templates.py # 新书骨架生成（Voice Bible、七角色、薄壳工具）
-tests/               # 320 个 pytest 用例
-docs/                # 15 份里程碑文档
+tests/               # pytest 回归测试
+docs/                # 里程碑与实验审计文档
 docs/examples/       # 人味解剖 + AI 味反模式（起草与审稿前必读）
 books/               # 小说项目（一书一目录，项目级隔离；gitignored，仅存本地不上传）
 library/             # legacy 审计资产（gitignore）
@@ -85,6 +89,7 @@ research/            # 前期调研
 - 数据模型与状态机：`docs/02`
 - 质量门控：`docs/03`、`docs/05`、`docs/06`、`docs/12`、`docs/14`
 - books/ 工作流与 Skill 化：`docs/13`、`docs/15`
+- 外置 Harness 护栏：`docs/24-external-harness-guardrails.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

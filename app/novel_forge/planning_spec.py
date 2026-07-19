@@ -80,13 +80,14 @@ DRAFT_MODES: tuple[str, ...] = (
 ARC_AUDIT_INTERVAL = 5
 MAX_AUTOMATIC_GENERATIONS = 2
 
-# Runtime budgets are advisories, not literary verdicts. They exist to stop a
-# monolithic harness session from spending millions of cached tokens on
-# repeated full-context reads and threshold-filling edits.
+# Runtime budgets are operational guardrails, not literary verdicts. Generation
+# evidence still reports chapter-local metrics, while v3.9 session audits read
+# the harness export directly and issue a hard continue/stop decision.
 MAX_CACHED_INPUT_TOKENS_PER_CHAPTER = 2_000_000
 MAX_REQUESTS_PER_CHAPTER = 30
 MAX_DRAFT_MUTATIONS_PER_CHAPTER = 3
 MAX_REVIEW_CALLS_PER_CHAPTER = 3
+MAX_REQUEST_CONTEXT_TOKENS = 120_000
 
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})

@@ -873,6 +873,9 @@ def evidence_status(
         else "not_applicable"
     )
     metric_fields = (
+        "writer_type",
+        "provider",
+        "model",
         "elapsed_seconds",
         "input_tokens",
         "output_tokens",

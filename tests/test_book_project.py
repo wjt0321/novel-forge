@@ -10,6 +10,7 @@ from app.novel_forge import book_project
 from app.novel_forge.book_evidence import record_evidence, render_evidence_markdown
 from app.novel_forge.book_project import BookProjectError
 from app.novel_forge.project_templates import init_book_project
+from app.novel_forge.session_audit import record_runtime_audit
 from app.novel_forge.skill_adapter import main as adapter_main
 
 
@@ -99,6 +100,8 @@ def _review_file(
     model: str = "review-model",
     independence_note: str = "",
     human_likeness: str = "convincing",
+    review_session_id: str | None = None,
+    context_scope: str | None = None,
     substantive: bool = True,
 ) -> Path:
     number = int(chapter.removeprefix("ch"))
@@ -124,6 +127,10 @@ def _review_file(
             if line.strip() and not line.lstrip().startswith("#")
         )
     path = tmp_path / f"review-{role}.md"
+    review_session_id = review_session_id or f"review-session-{role}"
+    context_scope = context_scope or (
+        "prose_only" if role == "blind-reader" else "full_review_context"
+    )
     substantive_text = ""
     if substantive and role == "blind-reader":
         substantive_text = (
@@ -162,9 +169,10 @@ def _review_file(
         f"- previous_chapter_quote: {previous_quote}\n\n"
         "- reviewer_type: model\n"
         f"- reviewer_id: {role}-instance\n"
+        f"- review_session_id: {review_session_id}\n"
         f"- provider: {provider}\n"
         f"- model: {model}\n"
-        f"- context_scope: {'prose_only' if role == 'blind-reader' else 'full_review_context'}\n"
+        f"- context_scope: {context_scope}\n"
         f"- independence_note: {independence_note}\n\n"
         f"- human_likeness: {human_likeness if role == 'blind-reader' else 'not_applicable'}\n\n"
         "## Findings\n"
@@ -184,6 +192,8 @@ def _record_generation(
     model: str = "writer-model",
     generation_id: str = "generation.ch01.current",
     chapter_number: int = 1,
+    run_id: str = "writer-session-001",
+    record_audit: bool = True,
     **metrics,
 ) -> str:
     chapter = book_project.find_chapter_file(book_dir, chapter_number)
@@ -192,36 +202,137 @@ def _record_generation(
         tmp_path, "demo", chapter_number
     )["chapters"][0]
     source = tmp_path / f"{generation_id}.md"
+    generation_data = {
+        "schema_version": 1,
+        "id": generation_id,
+        "kind": "generation",
+        "created_at": "2026-07-17T12:00:00Z",
+        "authority": "agent",
+        "source_paths": [content_path],
+        "summary": "当前正式稿生成来源。",
+        "chapter": chapter_number,
+        "draft_mode": state["draft_mode"],
+        "writer_type": "agent",
+        "provider": provider,
+        "model": model,
+        "run_id": run_id,
+        "agent_harness": "test-harness",
+        "reasoning_effort": "standard",
+        "tool_failures": [],
+        "content_path": content_path,
+        "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
+        **metrics,
+    }
     source.write_text(
-        render_evidence_markdown(
-            {
-                "schema_version": 1,
-                "id": generation_id,
-                "kind": "generation",
-                "created_at": "2026-07-17T12:00:00Z",
-                "authority": "agent",
-                "source_paths": [content_path],
-                "summary": "当前正式稿生成来源。",
-                "chapter": chapter_number,
-                "draft_mode": state["draft_mode"],
-                "writer_type": "agent",
-                "provider": provider,
-                "model": model,
-                "content_path": content_path,
-                "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
-                **metrics,
-            }
-        ),
+        render_evidence_markdown(generation_data),
         encoding="utf-8",
     )
     record_evidence(tmp_path, "demo", source)
     book_project.bind_generation(
         tmp_path, "demo", chapter_number, generation_id
     )
+    if record_audit:
+        source_hash = hashlib.sha256(
+            f"{run_id}:{provider}:{model}".encode("utf-8")
+        ).hexdigest()
+        record_runtime_audit(
+            book_dir,
+            {
+                "schema_version": 1,
+                "source_format": "synthetic-test",
+                "source_log_sha256": source_hash,
+                "session_id": run_id,
+                "agent_harness": "test-harness",
+                "provider": provider,
+                "model": model,
+                "reasoning_effort": "standard",
+                "elapsed_seconds": 1.0,
+                "request_count": 1,
+                "tokens": {
+                    "input": 10,
+                    "output": 10,
+                    "cached_input": 10,
+                    "total": 30,
+                },
+                "max_context_tokens": 30,
+                "context_reset_count": 0,
+                "tool_calls": {
+                    "total": 1,
+                    "failed": 0,
+                    "by_name": {"write": 1},
+                },
+                "budget": {
+                    "status": "within_budget",
+                    "continue_allowed": True,
+                    "chapter_count": 1,
+                    "findings": [],
+                    "limits": {},
+                },
+                "provenance_mismatches": [],
+            },
+        )
     return generation_id
 
 
 # --- business layer -----------------------------------------------------------
+
+
+def test_formal_runtime_audit_requires_complete_budget_observation(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    run_id = "partial-runtime-session"
+    record_runtime_audit(
+        book_dir,
+        {
+            "schema_version": 1,
+            "source_format": "novel-forge-runtime-v1",
+            "source_log_sha256": hashlib.sha256(run_id.encode()).hexdigest(),
+            "session_id": run_id,
+            "agent_harness": "generic-harness/1",
+            "provider": "generic-provider",
+            "model": "generic-model",
+            "reasoning_effort": "standard",
+            "elapsed_seconds": 1.0,
+            "request_count": 1,
+            "tokens": {
+                "input": 1,
+                "output": 1,
+                "cached_input": None,
+                "total": None,
+            },
+            "max_context_tokens": None,
+            "context_reset_count": None,
+            "tool_calls": {
+                "total": 0,
+                "failed": 0,
+                "by_name": {},
+            },
+            "budget": {
+                "status": "partial",
+                "continue_allowed": True,
+                "chapter_count": 1,
+                "findings": [],
+                "limits": {},
+            },
+            "provenance_mismatches": [],
+        },
+    )
+
+    errors = book_project._runtime_audit_errors(
+        book_dir,
+        {
+            "writer_type": "agent",
+            "run_id": run_id,
+            "agent_harness": "generic-harness/1",
+            "provider": "generic-provider",
+            "model": "generic-model",
+            "reasoning_effort": "standard",
+            "tool_failures": [],
+        },
+    )
+
+    assert any("完整观测" in error for error in errors)
 
 
 def test_project_status_reads_progress_and_states(tmp_path: Path):
@@ -869,6 +980,75 @@ def test_same_origin_blind_review_requires_note_and_stays_visible(tmp_path: Path
     review = next(r for r in status["reviews"] if r["role"] == "blind-reader")
     assert review["same_provider_model_as_generation"] is True
     assert review["independent"] is False
+    assert review["session_isolated"] is True
+
+
+def test_blind_reader_pass_rejects_same_writer_session(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    _record_generation(tmp_path, book_dir, run_id="shared-session")
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "pass",
+        review_session_id="shared-session",
+    )
+
+    with pytest.raises(BookProjectError, match="独立会话"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_simulated_blind_may_report_failure_but_cannot_pass(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    _record_generation(tmp_path, book_dir, run_id="writer-session")
+    diagnostic = _review_file(
+        tmp_path,
+        "blind-reader",
+        "needs_revision",
+        review_session_id="writer-session",
+        context_scope="simulated_blind",
+        human_likeness="synthetic",
+    )
+
+    recorded = book_project.record_review(
+        tmp_path, "demo", 1, "blind-reader", diagnostic
+    )
+    assert recorded["verdict"] == "needs_revision"
+
+    passing = _review_file(
+        tmp_path,
+        "blind-reader",
+        "pass",
+        review_session_id="writer-session",
+        context_scope="simulated_blind",
+    )
+    with pytest.raises(BookProjectError, match="simulated_blind"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", passing
+        )
+
+
+def test_run_gates_blocks_malformed_dialogue_and_ready_eligibility(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_dir / "chapters/e01/ch-01/正文.md"
+    chapter.write_text(
+        "# 第一章\n\n"
+        + ('周蓉说："周蓉说：你别再查了。"\n\n' * 200)
+        + ("罗闻沿着墙摸到总阀，记录红针的位置。" * 400),
+        encoding="utf-8",
+    )
+    _waive_materials(book_dir)
+
+    gates = book_project.run_gates(tmp_path, "demo", 1)
+
+    assert gates["ready_eligible"] is False
+    assert any(
+        item["code"] == "malformed-dialogue-structure"
+        for item in gates["literary"]["blocking"]
+    )
 
 
 def test_review_parser_normalizes_markdown_wrapped_verdicts():
@@ -1032,21 +1212,21 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v37_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v38_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v3.8（精简文学闭环）",
-            "- **工作流版本**: v3.7（旧六角色链）",
+            "- 工作流版本: v3.9（外置 Harness 护栏）",
+            "- **工作流版本**: v3.8（精简文学闭环）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v3.9",
             "- 默认工作流: v3.8",
-            "- 默认工作流: v3.7",
         ),
         encoding="utf-8",
     )
@@ -1055,8 +1235,8 @@ def test_sync_tools_migrates_generated_v37_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v3.8" in claude.read_text(encoding="utf-8")
-    assert "v3.8" in readme.read_text(encoding="utf-8")
+    assert "v3.9" in claude.read_text(encoding="utf-8")
+    assert "v3.9" in readme.read_text(encoding="utf-8")
 
 
 def test_sync_tools_preserves_handwritten_constitution_without_version_marker(

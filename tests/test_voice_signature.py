@@ -103,6 +103,7 @@ def test_serial_style_detects_cross_chapter_collapse_and_repetition():
     assert "sentence-length-collapse" in codes
     assert "cross-chapter-repetition" in codes
     assert report["human_likeness_risk"] is True
+    assert report["blocking"]
 
 
 def test_serial_style_keeps_varied_chapters_advisory_free():
@@ -110,10 +111,69 @@ def test_serial_style_keeps_varied_chapters_advisory_free():
         ("第一章", KIMI_LIKE),
         (
             "第二章",
-            KIMI_LIKE.replace("吴姐", "老周").replace("两万", "三千"),
+            (
+                "老周把账册摊在桌上，先核对日期，再把每一笔欠款抄到便签。"
+                "窗外有人收伞，水顺着台阶流进排水沟。"
+                '"数目对不上。"他说，手指停在最后一行。'
+                "她没有接话，只把缴费单转过来，看见背面留下半枚蓝色印章。"
+                "楼道里的灯亮了一次，很快又暗下去。"
+            )
+            * 16,
         ),
     ]
 
     report = analyze_serial_style(chapters)
 
     assert report["human_likeness_risk"] is False
+    assert report["blocking"] == []
+
+
+def test_serial_style_blocks_extreme_exact_sentence_coverage():
+    repeated = "她走到门边。她没有开门。她回头看了一眼。"
+    chapters = [
+        ("第一章", (repeated + "雨落在窗台上，留下细密水痕。") * 80),
+        ("第二章", (repeated + "楼道的灯坏了，墙上只有灰白天光。") * 80),
+    ]
+
+    report = analyze_serial_style(chapters)
+    finding = next(
+        item
+        for item in report["blocking"]
+        if item["code"] == "serial-duplicate-coverage"
+    )
+
+    assert finding["duplicate_sentence_ratio"] >= 0.5
+    assert report["human_likeness_risk"] is True
+
+
+def test_serial_style_blocks_long_cross_chapter_paragraph_copy():
+    copied = (
+        "罗闻把水表前的锈屑拨开，看见齿轮仍在缓慢移动。"
+        "她关掉总阀，又等了两分钟，表盘上的红针依旧越过刻度。"
+        "楼上传来拖动椅子的声音，她没有立刻抬头。"
+    )
+    chapters = [
+        ("第一章", copied + "\n\n" + KIMI_LIKE),
+        ("第二章", copied + "\n\n" + AI_LIKE),
+    ]
+
+    report = analyze_serial_style(chapters)
+
+    assert any(
+        item["code"] == "cross-chapter-paragraph-copy"
+        for item in report["blocking"]
+    )
+
+
+def test_serial_style_blocks_malformed_nested_dialogue_labels():
+    malformed = (
+        '周蓉说："周蓉说：你别再查了。"\n\n'
+        '罗闻说："罗闻说：我只看水表。"\n\n'
+    ) * 20
+
+    report = analyze_serial_style([("第三章", malformed)])
+
+    assert any(
+        item["code"] == "malformed-dialogue-structure"
+        for item in report["blocking"]
+    )

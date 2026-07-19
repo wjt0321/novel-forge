@@ -64,6 +64,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evaluation" / "experiment-template.md").exists()
     assert (book_dir / "evaluation" / "rule-registry.md").exists()
     assert (book_dir / "evaluation" / "generation-template.md").exists()
+    assert (book_dir / "evaluation" / "harness-contract.json").exists()
     assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
     assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
@@ -74,6 +75,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evidence" / "branches").is_dir()
     assert (book_dir / "evidence" / "evaluations").is_dir()
     assert (book_dir / "evidence" / "generations").is_dir()
+    assert (book_dir / "evidence" / "runtime-audits").is_dir()
     assert (book_dir / "evidence" / "arc-audits").is_dir()
     assert (book_dir / "evidence" / "rule-decisions").is_dir()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
@@ -89,7 +91,8 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v3.8" in claude_md
+    assert "v3.9" in claude_md
+    assert "record-session-audit" in claude_md
     assert "Markdown 粗体" in claude_md
     assert "surface_checked" in claude_md
     assert "严禁复制其他书的正文" in claude_md
@@ -157,6 +160,16 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert '"tool_failures"' in generation_template
     assert generation_template.count("chapters/e01/ch-") == 2
 
+    harness_contract = json.loads(
+        (book_dir / "evaluation" / "harness-contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert harness_contract["schema"] == "novel-forge-harness-contract/v1"
+    assert harness_contract["runtime_report_schema"]["const"] == (
+        "novel-forge-runtime/v1"
+    )
+
     degraded_template = (
         book_dir / "evaluation" / "degraded-run-template.md"
     ).read_text(encoding="utf-8")
@@ -170,6 +183,8 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "previous_chapter_sha256" in review_template
     assert "evidence_quote" in review_template
     assert "previous_chapter_quote" in review_template
+    assert "review_session_id" in review_template
+    assert "simulated_blind" in review_template
 
     memory_template = (
         book_dir / "memory" / "memory-record-template.md"
@@ -189,6 +204,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "不同正文 SHA-256" in orchestrator
     assert "previous_chapter_quote" in chapter_editor
     assert "human_likeness" in (
+        book_dir / ".claude" / "agents" / "blind-reader.md"
+    ).read_text(encoding="utf-8")
+    assert "不同于 writer" in (
         book_dir / ".claude" / "agents" / "blind-reader.md"
     ).read_text(encoding="utf-8")
     assert len(claude_md) < 6500
@@ -371,12 +389,14 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v38_lean_literary_loop():
+def test_skill_documents_v39_external_harness_guardrails():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v3.8" in text
+    assert "v3.9" in text
+    assert "session-audit" in text
+    assert "review_session_id" in text
     assert "degraded_exploration" in text
     assert "同章同正文 SHA-256" in text
     assert "0b. 章际交接" in text

@@ -14,6 +14,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import statistics
@@ -26,6 +27,13 @@ _CJK_RE = re.compile(r"[一-鿿]")
 _SENTENCE_END_RE = re.compile(r"[。！？]")
 _QUOTE_SPAN_RE = re.compile(r'["“「][^"”」]*["”」]')
 _SIMILE_RE = re.compile(r"(?<![想图画录雕影头塑摄])像|仿佛|好似|宛如|犹如")
+_NESTED_SPEAKER_RE = re.compile(
+    r'(?P<speaker>[\u4e00-\u9fff]{1,8})(?:说|问|喊|道)'
+    r'[：:]?["“][^"”\n]{0,30}(?P=speaker)(?:说|问|喊|道)[：:]'
+)
+_MIN_COPIED_PARAGRAPH_CJK = 60
+_BLOCKING_DUPLICATE_SENTENCE_RATIO = 0.20
+_MIN_BLOCKING_DUPLICATE_INSTANCES = 20
 
 
 def _count_cjk(text: str) -> int:
@@ -154,15 +162,23 @@ def _normalized_sentences(text: str) -> list[str]:
     ]
 
 
+def _normalized_paragraphs(text: str) -> list[str]:
+    return [
+        re.sub(r"\s+", "", paragraph)
+        for paragraph in _paragraphs(text)
+        if _count_cjk(paragraph) >= _MIN_COPIED_PARAGRAPH_CJK
+    ]
+
+
 def analyze_serial_style(
     chapters: list[tuple[str, str]],
 ) -> dict[str, Any]:
-    """Detect cross-chapter style collapse without assigning literary value.
+    """Detect serial drift and high-confidence structural prose failures.
 
-    The report catches high-confidence serial symptoms seen in agent demos:
-    sentence length collapsing chapter by chapter and exact sentences being
-    reused as structural filler. Findings are advisory; the independent blind
-    reader remains the human-likeness decision point.
+    Sentence-length drift and low-volume repetition remain advisory. Exact
+    reuse covering a material share of the manuscript, long paragraph copying,
+    and malformed nested speaker labels are blocking because they are
+    mechanically verifiable manuscript corruption rather than literary taste.
     """
     profiles: list[dict[str, Any]] = []
     for name, text in chapters:
@@ -229,10 +245,105 @@ def analyze_serial_style(
                 "examples": repeated[:5],
             }
         )
+    total_sentence_instances = sum(sentence_counts.values())
+    duplicate_sentence_instances = sum(
+        sentence_counts[sentence]
+        for sentence in sentence_counts
+        if len(sentence_chapters[sentence]) >= 2
+    )
+    duplicate_sentence_ratio = (
+        duplicate_sentence_instances / total_sentence_instances
+        if total_sentence_instances
+        else 0.0
+    )
+    if (
+        duplicate_sentence_instances >= _MIN_BLOCKING_DUPLICATE_INSTANCES
+        and duplicate_sentence_ratio >= _BLOCKING_DUPLICATE_SENTENCE_RATIO
+    ):
+        findings.append(
+            {
+                "code": "serial-duplicate-coverage",
+                "severity": "blocking",
+                "detail": (
+                    "跨章逐字复用句覆盖正文句子实例比例过高："
+                    f"{duplicate_sentence_ratio:.1%}。"
+                ),
+                "duplicate_sentence_instances": duplicate_sentence_instances,
+                "total_sentence_instances": total_sentence_instances,
+                "duplicate_sentence_ratio": round(
+                    duplicate_sentence_ratio, 3
+                ),
+                "examples": repeated[:5],
+            }
+        )
+
+    paragraph_chapters: dict[str, set[str]] = {}
+    paragraph_counts: Counter[str] = Counter()
+    for name, text in chapters:
+        local = Counter(_normalized_paragraphs(text))
+        for paragraph, count in local.items():
+            paragraph_counts[paragraph] += count
+            paragraph_chapters.setdefault(paragraph, set()).add(name)
+    copied_paragraphs = [
+        {
+            "paragraph_sha256": hashlib.sha256(
+                paragraph.encode("utf-8")
+            ).hexdigest(),
+            "cjk": _count_cjk(paragraph),
+            "count": paragraph_counts[paragraph],
+            "chapters": sorted(paragraph_chapters[paragraph]),
+        }
+        for paragraph in paragraph_counts
+        if len(paragraph_chapters[paragraph]) >= 2
+    ]
+    copied_paragraphs.sort(
+        key=lambda item: (-item["cjk"], -item["count"], item["paragraph_sha256"])
+    )
+    if copied_paragraphs:
+        findings.append(
+            {
+                "code": "cross-chapter-paragraph-copy",
+                "severity": "blocking",
+                "detail": (
+                    f"检测到 {len(copied_paragraphs)} 个跨章逐字复制的长段落。"
+                ),
+                "examples": copied_paragraphs[:5],
+            }
+        )
+
+    malformed_by_chapter = [
+        {
+            "chapter": name,
+            "count": len(_NESTED_SPEAKER_RE.findall(text)),
+        }
+        for name, text in chapters
+    ]
+    malformed_by_chapter = [
+        item for item in malformed_by_chapter if item["count"] > 0
+    ]
+    malformed_count = sum(item["count"] for item in malformed_by_chapter)
+    if malformed_count:
+        findings.append(
+            {
+                "code": "malformed-dialogue-structure",
+                "severity": (
+                    "blocking" if malformed_count >= 2 else "advisory"
+                ),
+                "detail": (
+                    "检测到对白内部重复嵌套说话人标签："
+                    f"{malformed_count} 处。"
+                ),
+                "chapters": malformed_by_chapter,
+            }
+        )
+    blocking = [
+        finding for finding in findings if finding["severity"] == "blocking"
+    ]
     return {
         "chapters": profiles,
         "findings": findings,
-        "human_likeness_risk": len(findings) >= 2,
+        "blocking": blocking,
+        "human_likeness_risk": bool(blocking) or len(findings) >= 2,
     }
 
 

@@ -12,6 +12,7 @@ constants (section headings, chapter states, review roles) come from
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .planning_spec import (
     REVIEW_ROLES,
     genre_preset,
 )
+from .session_audit import harness_contract
 
 
 class ProjectTemplateError(Exception):
@@ -130,7 +132,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v3.8（精简文学闭环）
+- 工作流版本: v3.9（外置 Harness 护栏）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -141,19 +143,29 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 ## 每章只做八步
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
 
-1. `project-status`，再用 `set-draft-mode` 固定 formal/exploration。
+1. 先读 `evaluation/harness-contract.json`（或调用 `harness-contract`），再运行
+   `project-status` 并用 `set-draft-mode` 固定 formal/exploration。任何 Harness
+   都必须保留真实 session id，并能输出 `novel-forge-runtime/v1` 累计快照。
 2. `memory-status` 必须 clean；formal 运行 `build-memory-context`。
 3. 只读 voice bible、故事发动机、本章相关 Canon/承诺、上一章末段和一页式 scene package。不要读全书审稿史。
 4. 一次写完整章；正式章 ≥5000 CJK。正文默认 standard/medium，Max/长思考仅在用户明确做基准实验时用于正文。
-5. 记录 generation；如实填写缓存 token、请求数、正文写/改次数与审稿调用数。初稿后只允许一次集中 patch，即最多两份不同正文 SHA-256。
-6. 运行门禁并推进 `surface_checked`。Markdown 粗体、工作流标记、`——`、`……` 等 blocking 立即短路。
-7. 默认只做两角色审稿：blind-reader 只读正文并给 `human_likeness`；chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
+5. 记录 generation；`run_id`、provider/model/Harness/思考强度和工具失败必须来自
+   真实会话。初稿后只允许一次集中 patch，即最多两份不同正文 SHA-256。
+6. 每次模型响应后更新累计快照并运行 `session-audit`；若
+   `budget.continue_allowed=false`，必须在下一次模型请求前停止。结束时再经
+   `record-session-audit` 固化脱敏审计。预算超限、来源不一致、逐字复用覆盖过高、
+   长段复制、损坏对白、Markdown 粗体、工作流标记、`——`、`……` 等任一 blocking
+   都立即短路。
+7. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
+   只读正文并给 `human_likeness`；同会话只能标记 `simulated_blind` 且不能 pass。
+   chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
 8. 第五章做 checkpoint audit；用 `evidence-status` / `record-evidence` 留痕。
 
 ## 文学目标
 - 问题不是“表格填完了吗”，而是：人物是否在压力中选择，世界是否有独立意志，细节是否改变行动，声音是否在章际保持活性。
 - blind-reader 必须回答 `human_likeness: convincing|uncertain|synthetic`；只有 convincing 可通过。
-- 机器只拦高置信破绽并报告跨章复读、句长塌缩等风险，不认证文学价值。
+- 机器只拦高置信结构破绽：极端跨章逐字复用、长段复制、损坏对白；句长塌缩和低量
+  复沓仍只报告风险，不认证文学价值。
 - {mechanism}
 
 ## 不可绕过
@@ -170,7 +182,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v3.8；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v3.9；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -185,8 +197,9 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `memory/canon/` — Markdown 权威记忆；`memory/candidates/` — 待审增量
 - `.novel-forge/` — 可重建 SQLite 索引与 manifest（不入版本库）
 - `planning/` — 故事发动机、研究边界、场景包、章节状态
+- `evaluation/harness-contract.json` — 任意 Agent/Harness 的机器可读运行协议
 - `evaluation/` — 评测宪法、实验与证据输入模板
-- `evidence/` — 不可变创作证据：生成、分支、盲评、偏好、跨章审计、规则决定
+- `evidence/` — 不可变创作证据与脱敏 runtime audit
 - `reviews/` — 审稿记录（每个角色一份，含 verdict）
 - `patches/` — 局部修订 patch
 - `.snapshots/` — 临时快照
@@ -554,7 +567,10 @@ def _evaluation_generation_template_md() -> str:
 > provider、model、外层 Agent/harness 与上下文清单必须按实际运行填写。
 > 来源不明或元数据与真实运行不一致的样本不得进入跨模型比较。
 > token、请求、正文写改与审稿调用只填写本 generation 的增量；不得把整场会话
-> 累计值复制到每个 generation。未知保持 null，预算状态会显示 unassessed/partial。
+> 累计值复制到每个 generation。未知保持 null。正式 Harness 应先读取
+> `evaluation/harness-contract.json`，把原生遥测规范化为
+> `novel-forge-runtime/v1`；正式稿还必须运行 `record-session-audit`，外部审计
+> 优先于本文件自报字段。
 > 第三个及后续不同正文 SHA-256 需要 author/human_delegate 明确授权，并额外填写
 > `"human_regeneration_authorized": true` 与 `"human_decision_reference": "<决定引用>"`；
 > 前两代或未授权记录不得填写这两个字段。
@@ -603,6 +619,18 @@ def _evaluation_generation_template_md() -> str:
 }
 ```
 """
+
+
+def _evaluation_harness_contract_json() -> str:
+    return (
+        json.dumps(
+            harness_contract(),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def _evaluation_degraded_run_template_md() -> str:
@@ -905,7 +933,8 @@ def _agent_chapter_editor_md() -> str:
 2. 再读一页式 scene package、当前记忆包和上一章末段；不读旧专业审稿。
 3. 一次完成五项检查：因果与有限认知、人物和世界的独立目标、对白与信息流、
    句子肌理及跨章连续性。
-4. 机器报告出现跨章复读或句长塌缩时，必须结合原文判断它是有意复沓还是模板化填充。
+4. 机器报告出现句长塌缩或低量跨章复读时，结合原文判断它是有意复沓还是模板化填充；
+   极端逐字复用覆盖、长段复制和损坏对白属于上游 blocking，不得由本角色豁免。
 5. 只有发现具体专业风险时，才请求一个 specialist review；不得默认扩成六审。
 
 写入 `reviews/chXX-chapter-editor.md`。每条 MUST/MAY 都要有原文证据和读者效果；
@@ -922,7 +951,10 @@ def _agent_blind_reader_md() -> str:
     return """# Blind Reader
 
 ## 角色
-盲读者。只读当前章的 `正文.md`——严禁读取 `planning/`、`memory/`、voice-bible、其他章节或任何规划材料。用"规划知识"填补正文未渲染的画面，正是本环节要抓的作弊。
+盲读者。必须运行在不同于 writer `run_id` 的独立会话，只读当前章的
+`正文.md`——严禁读取 `planning/`、`memory/`、voice-bible、其他章节或任何规划材料。
+用"规划知识"填补正文未渲染的画面，正是本环节要抓的作弊。同一写作会话若只能自检，
+必须填写 `context_scope=simulated_blind` 并给 `needs_revision`，不能冒充 pass。
 
 ## 任务
 仅凭正文重建以下六项：
@@ -975,9 +1007,10 @@ def _reviews_review_template_md() -> str:
 - previous_chapter_quote: <ch02+ consistency/chapter-editor 必填；ch01 填 not_applicable>
 - reviewer_type: <human|agent|model>
 - reviewer_id: <stable reviewer/session id>
+- review_session_id: <真实审稿会话 id；blind-reader pass 必须不同于 writer run_id>
 - provider: <provider or not_applicable>
 - model: <model or not_applicable>
-- context_scope: <prose_only|full_review_context>
+- context_scope: <prose_only|simulated_blind|full_review_context>
 - independence_note: <同源评审时必填；角色名不同不等于独立>
 - human_likeness: <blind-reader 填 convincing|uncertain|synthetic；其他角色填 not_applicable>
 
@@ -1296,11 +1329,14 @@ def _agent_orchestrator_md() -> str:
 `{_STATE_CHAIN}`
 
 ## 默认闭环
-1. context collector 产出一页最小上下文。
-2. 一页式 scene package 完成后，一名 writer 一次写完整章。
-3. generation 记录真实请求、缓存 token、写/改次数和工具失败。
-4. `surface_checked` 失败立即短路。
-5. 自动运行 blind-reader 与 chapter-editor 两角色；不得询问是否开始审核。
+1. 启动时读取 `evaluation/harness-contract.json`；原生遥测必须规范化为
+   `novel-forge-runtime/v1`。
+2. context collector 产出一页最小上下文；一名 writer 一次写完整章。
+3. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
+   `session-audit`；返回 `continue_allowed=false` 时在下一次请求前停机。
+4. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
+   质量、叙事或文学结构 gate 有 blocking 立即短路。
+5. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得询问是否开始审核。
 6. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
    进入 `human_decision_required`，不得自动产生第三份不同正文 SHA-256。
 
@@ -1340,6 +1376,10 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "evaluation/experiment-template.md": (_evaluation_experiment_template_md, ()),
     "evaluation/rule-registry.md": (_evaluation_rule_registry_md, ()),
     "evaluation/generation-template.md": (_evaluation_generation_template_md, ()),
+    "evaluation/harness-contract.json": (
+        _evaluation_harness_contract_json,
+        (),
+    ),
     "evaluation/degraded-run-template.md": (
         _evaluation_degraded_run_template_md,
         (),
@@ -1382,6 +1422,7 @@ REQUIRED_DIRECTORIES = [
     "planning/chapter-state",
     "evaluation/cases",
     "evaluation/experiments",
+    "evidence/runtime-audits",
     "reviews/archive",
     *(f"evidence/{directory}" for directory in EVIDENCE_DIRECTORIES.values()),
     "patches",
@@ -1409,6 +1450,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "evaluation/case-template.md",
     "evaluation/experiment-template.md",
     "evaluation/generation-template.md",
+    "evaluation/harness-contract.json",
     "evaluation/degraded-run-template.md",
     "evaluation/branch-decision-template.md",
     "evaluation/blind-evaluation-template.md",

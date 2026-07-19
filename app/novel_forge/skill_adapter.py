@@ -26,6 +26,11 @@ from app.novel_forge.book_memory import (
     record_candidate,
 )
 from app.novel_forge.models import ReviewFinding, ScenePlan
+from app.novel_forge.session_audit import (
+    audit_book_session,
+    harness_contract,
+    record_runtime_audit,
+)
 from app.novel_forge.service import NovelForgeError, NovelForgeService
 
 
@@ -72,6 +77,7 @@ MUTATING_OPS = {
     "build-memory-context",
     "record-evidence",
     "set-draft-mode",
+    "record-session-audit",
 }
 
 
@@ -134,6 +140,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Read-only / diagnostic
     sub.add_parser("status", help="Show book or chapter status.")
+    sub.add_parser(
+        "harness-contract",
+        help="Return the vendor-neutral runtime contract for any Agent harness.",
+    )
 
     p = sub.add_parser("lint", help="Run prose lint on the current revision.")
     p.add_argument("slug", help="Book slug.")
@@ -600,6 +610,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p = sub.add_parser(
+        "session-audit",
+        help="Audit a standard runtime snapshot or compatibility export.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument(
+        "--file",
+        required=True,
+        type=Path,
+        help="Absolute path to the UTF-8 session JSON export.",
+    )
+
+    p = sub.add_parser(
+        "record-session-audit",
+        help="Store a sanitized immutable runtime audit for ready-state verification.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument(
+        "--file",
+        required=True,
+        type=Path,
+        help="Absolute path to the UTF-8 session JSON export.",
+    )
+
+    p = sub.add_parser(
         "record-evidence",
         help="Validate and store one Markdown creative evidence record.",
     )
@@ -942,6 +976,14 @@ def run(argv: list[str] | None = None) -> int:
     if op in MUTATING_OPS and not _check_confirm(args):
         return _fail("confirmation_required", f"Operation '{op}' requires --confirm {op}")
 
+    if op == "harness-contract":
+        if remaining:
+            return _fail(
+                "invalid_arguments",
+                "harness-contract does not accept positional arguments.",
+            )
+        return _ok(op, harness_contract())
+
     svc = NovelForgeService(root)
 
     # Status accepts exactly <slug> [number].
@@ -1128,6 +1170,22 @@ def run(argv: list[str] | None = None) -> int:
 
     if op == "evidence-status":
         return _ok(op, evidence_status(root, slug, args.chapter))
+
+    if op in {"session-audit", "record-session-audit"}:
+        book_dir, report = audit_book_session(root, slug, args.file)
+        if op == "session-audit":
+            return _ok(op, report)
+        stored = record_runtime_audit(book_dir, report)
+        return _ok(
+            op,
+            {
+                **stored,
+                "budget": report["budget"],
+                "provenance_status": report["provenance_status"],
+                "provenance_mismatches": report["provenance_mismatches"],
+            },
+            state_changed=True,
+        )
 
     if op == "record-evidence":
         data = record_evidence(root, slug, args.file)

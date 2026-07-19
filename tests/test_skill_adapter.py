@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.novel_forge.service import NovelForgeService
+from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.skill_adapter import main
 from tests.conftest import ready_memo
 
@@ -246,6 +247,121 @@ def test_export_book_requires_confirm_and_returns_manifest(tmp_path: Path, capsy
     assert "file_path" in data["data"]
     assert "manifest" in data["data"]
     assert "source_revisions" in data["data"]["manifest"]
+
+
+def test_session_audit_is_content_free_and_record_requires_confirm(
+    tmp_path: Path, capsys
+):
+    init_book_project(tmp_path, "demo", "演示书", "现实悬疑")
+    log = tmp_path / "session.json"
+    log.write_text(
+        json.dumps(
+            {
+                "session_id": "mvs-adapter-test",
+                "first_message_at": 1_000,
+                "last_message_at": 2_000,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "data": {
+                            "role": "assistant",
+                            "msg_type": 2,
+                            "msg_content": "SECRET PROSE",
+                            "thinking_content": "SECRET REASONING",
+                            "usage": {
+                                "total_tokens": 100,
+                                "input_tokens": 10,
+                                "output_tokens": 20,
+                                "cache_read": 70,
+                            },
+                            "tool_calls": [],
+                        },
+                    }
+                ],
+                "session": {
+                    "session_id": "mvs-adapter-test",
+                    "record": {
+                        "sessionId": "mvs-adapter-test",
+                        "runtime": "pi-agent",
+                        "agentName": "mavis",
+                        "effectiveModel": "minimax/MiniMax-M3",
+                        "effectiveModelVariant": "thinking",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "session-audit",
+            "demo",
+            "--file",
+            str(log),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    assert data["data"]["session_id"] == "mvs-adapter-test"
+    serialized = json.dumps(data, ensure_ascii=False)
+    assert "SECRET" not in serialized
+    assert "msg_content" not in serialized
+
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "record-session-audit",
+            "demo",
+            "--file",
+            str(log),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is False
+    assert data["error"]["code"] == "confirmation_required"
+
+    code = main(
+        [
+            "--root",
+            str(tmp_path),
+            "--confirm",
+            "record-session-audit",
+            "record-session-audit",
+            "demo",
+            "--file",
+            str(log),
+        ]
+    )
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    audit_path = (
+        tmp_path / "books" / "demo" / data["data"]["path"]
+    )
+    assert audit_path.is_file()
+    assert "SECRET" not in audit_path.read_text(encoding="utf-8")
+
+
+def test_harness_contract_operation_requires_no_vendor_or_book(
+    tmp_path: Path, capsys
+):
+    code = main(["--root", str(tmp_path), "harness-contract"])
+
+    assert code == 0
+    data = _json_output(capsys)
+    assert data["ok"] is True
+    assert data["operation"] == "harness-contract"
+    assert data["data"]["schema"] == "novel-forge-harness-contract/v1"
+    assert data["data"]["runtime_report_schema"]["const"] == (
+        "novel-forge-runtime/v1"
+    )
 
 
 # ---------------------------------------------------------------------------
