@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .book_git import initialize_book_git
 from .planning_spec import (
     CHAPTER_STATES,
     EVIDENCE_DIRECTORIES,
@@ -132,13 +133,22 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.1（文学防过拟合与序列真实性）
+- 工作流版本: v4.2（每书本地版本控制）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
 - `memory/canon/**/*.md` 是连续性权威源，SQLite 只是缓存；新事实先进入 candidate。
 - 严禁复制其他书的正文、记忆、审稿或已填写模板。
 - `evidence/` 证明过程，不代表作者批准；`ready` 也不代表发布许可。
+
+## 本地版本历史
+- 本书使用独立本地 Git；工作区内 `.git` 只指向主仓库忽略的
+  `.local-book-git/{slug}.git`，不得配置 remote 或上传。
+- generation 绑定后自动提交 `chapter: chNN draft`；进入 ready 后自动提交
+  `chapter: chNN ready`；第 5/10/15... 章创建本地 checkpoint tag。
+- Git 只负责 diff 与恢复，不替代 evidence、ready、作者批准或发布决定。
+- 用 `book-git-status` 检查 head、dirty 与 remote_count；adapter 仍显式传入
+  Novel Forge 主仓库的绝对 `--root`。
 
 ## 每章只做八步
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
@@ -195,7 +205,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.1；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -224,6 +234,11 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
+
+## 本地 Git
+本书的 Git 元数据位于主仓库 `.local-book-git/{slug}.git`，不得配置 remote。
+generation 绑定后保留 draft 提交，进入 ready 后保留 ready 提交。Git 只用于本地
+diff、恢复和实验回放，不代表作者批准。用 `book-git-status` 查看状态。
 
 所有 v3 资产只在本书目录内使用；不得复制其他书的正文、记忆、审稿报告、上下文缓存或已填写章节实例。完整约定见 `.agents/skills/novel-forge/SKILL.md`。
 """
@@ -1561,9 +1576,11 @@ def init_book_project(root: Path, slug: str, title: str, genre: str) -> dict[str
         target.write_text(content, encoding="utf-8")
         created_files.append(rel_path)
 
+    local_git = initialize_book_git(root, slug, title.strip())
     return {
         "book_dir": str(book_dir),
         "created_directories": created_dirs,
         "created_files": created_files,
         "skipped_files": skipped_files,
+        "local_git": local_git,
     }

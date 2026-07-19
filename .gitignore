@@ -15,4 +15,5 @@ books/
 .reasonix/
 upstream/
 .worktrees/
+.local-book-git/
 

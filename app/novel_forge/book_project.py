@@ -3,9 +3,8 @@
 These functions power the skill adapter's book-project ops
 (`project-status`, `set-draft-mode`, `run-gates`, `record-review`,
 `advance-state`, `evidence-status`, `record-evidence`, `sync-tools`).
-They only read/write Markdown and run the canonical gates; they never return
-chapter prose, never touch `data/`, and never perform git mutations (that
-stays in `autonomous.git_checkpoint`).
+They only read/write Markdown, run canonical gates, and create local-only
+per-book Git checkpoints; they never return chapter prose or touch `data/`.
 """
 
 from __future__ import annotations
@@ -20,6 +19,12 @@ from typing import Any
 
 from . import book_gates
 from .book_evidence import evidence_status, find_evidence_record
+from .book_git import (
+    BookGitError,
+    book_git_status,
+    checkpoint_book,
+    initialize_book_git,
+)
 from .lint import lint_file
 from .models import NovelForgeError
 from .planning_spec import (
@@ -50,6 +55,28 @@ from .voice_signature import analyze_serial_style
 
 class BookProjectError(NovelForgeError):
     """Raised for books/<slug>/ project-level problems."""
+
+
+def _local_git_checkpoint(
+    root: Path,
+    slug: str,
+    message: str,
+    *,
+    tag: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return {
+            "status": "recorded",
+            **checkpoint_book(root, slug, message, tag=tag),
+        }
+    except BookGitError as exc:
+        return {
+            "status": "failed",
+            "committed": False,
+            "commit_hash": None,
+            "message": str(exc),
+            "tag": None,
+        }
 
 
 BLIND_RECONSTRUCTION_FIELDS: tuple[str, ...] = (
@@ -977,13 +1004,25 @@ def advance_state(
     state_text = _set_fields(state_text, **fields)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(state_text, encoding="utf-8")
-    return {
+    result = {
         "chapter_state": f"planning/chapter-state/{ch_id}.md",
         "from": from_state,
         "to": to_state,
         "author_approval": False,
         "publication_eligibility": False,
     }
+    if to_state == "ready":
+        tag = None
+        if number % 5 == 0:
+            start = number - 4
+            tag = f"checkpoint/ch{start:02d}-ch{number:02d}"
+        result["local_git"] = _local_git_checkpoint(
+            root,
+            slug,
+            f"chapter: {ch_id} ready",
+            tag=tag,
+        )
+    return result
 
 
 def set_draft_mode(
@@ -1036,6 +1075,11 @@ def bind_generation(
         "chapter_state": state_path.relative_to(book_dir).as_posix(),
         "generation_id": generation_id,
         "evidence_path": path.relative_to(book_dir).as_posix(),
+        "local_git": _local_git_checkpoint(
+            root,
+            slug,
+            f"chapter: {_chapter_id(number)} draft",
+        ),
     }
 
 
@@ -1054,6 +1098,13 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         "author_approval": False,
         "publication_eligibility": False,
     }
+    try:
+        data["local_git"] = book_git_status(root, slug)
+    except BookGitError as exc:
+        data["local_git"] = {
+            "initialized": False,
+            "error": str(exc),
+        }
     state_dir = book_dir / "planning" / "chapter-state"
     chapter_numbers: set[int] = set()
     if state_dir.is_dir():
@@ -1544,11 +1595,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.0)(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1))(?:\s|（|\()"
         ),
         "README.md": re.compile(
             r"(?m)^-\s*默认工作流\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.0)(?:$|[\s；;。])"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1))(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1611,12 +1662,22 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v4.1 migration: continue from "
+                            "v4.2 migration: continue from "
                             f"{new_status}"
                         ),
                     ),
                     encoding="utf-8",
                 )
+    if dry_run:
+        try:
+            local_git = book_git_status(root, slug)
+        except BookGitError:
+            local_git = {"initialized": False, "planned": True}
+    else:
+        try:
+            local_git = book_git_status(root, slug)
+        except BookGitError:
+            local_git = initialize_book_git(root, slug, title)
     return {
         "dry_run": dry_run,
         "created": created,
@@ -1624,4 +1685,5 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
         "identical": identical,
         "preserved": preserved,
         "migrated_states": migrated_states,
+        "local_git": local_git,
     }

@@ -2,11 +2,15 @@
 
 import json
 import hashlib
+import os
 from pathlib import Path
+import shutil
+import stat
 
 import pytest
 
 from app.novel_forge import book_project
+from app.novel_forge.book_git import book_git_status
 from app.novel_forge.chapter_sequence import (
     ChapterSequenceError,
     advance_chapter_sequence,
@@ -23,6 +27,14 @@ from app.novel_forge.skill_adapter import main as adapter_main
 def _json_output(capsys) -> dict:
     out = capsys.readouterr().out.strip()
     return json.loads(out)
+
+
+def _remove_readonly_tree(path: Path) -> None:
+    def make_writable_and_retry(function, target, _):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 def _make_book(tmp_path: Path, slug: str = "demo") -> Path:
@@ -278,6 +290,16 @@ def _record_generation(
             },
         )
     return generation_id
+
+
+def test_bind_generation_creates_local_draft_checkpoint(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+
+    _record_generation(tmp_path, book_dir)
+
+    status = book_git_status(tmp_path, "demo")
+    assert status["last_message"] == "chapter: ch01 draft"
+    assert status["dirty"] is True  # runtime audit is recorded after the draft commit
 
 
 # --- business layer -----------------------------------------------------------
@@ -554,6 +576,9 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
         evidence="project-status/current",
     )
     assert result["to"] == "ready"
+    assert result["local_git"]["committed"] is True
+    assert result["local_git"]["message"] == "chapter: ch01 ready"
+    assert book_git_status(tmp_path, "demo")["dirty"] is False
 
 
 def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
@@ -1357,21 +1382,23 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v40_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v41_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
+    (book_dir / ".git").unlink()
+    _remove_readonly_tree(tmp_path / ".local-book-git" / "demo.git")
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v4.2（每书本地版本控制）",
             "- 工作流版本: v4.1（文学防过拟合与序列真实性）",
-            "- 工作流版本: v4.0（章节独立会话编排）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v4.2",
             "- 默认工作流: v4.1",
-            "- 默认工作流: v4.0",
         ),
         encoding="utf-8",
     )
@@ -1380,8 +1407,11 @@ def test_sync_tools_migrates_generated_v40_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.1" in claude.read_text(encoding="utf-8")
-    assert "v4.1" in readme.read_text(encoding="utf-8")
+    assert "v4.2" in claude.read_text(encoding="utf-8")
+    assert "v4.2" in readme.read_text(encoding="utf-8")
+    assert result["local_git"]["initialized"] is True
+    assert result["local_git"]["commit_created"] is True
+    assert result["local_git"]["remote_count"] == 0
 
 
 def test_sync_tools_preserves_handwritten_constitution_without_version_marker(

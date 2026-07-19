@@ -240,6 +240,17 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         contract["limits_per_chapter"]["cached_input_tokens_interpretation"]
         == "hard_ceiling_not_target"
     )
+    assert contract["local_git_policy"] == {
+        "mode": "per_book_external_gitdir",
+        "metadata_directory": ".local-book-git/<slug>.git",
+        "remote_allowed": False,
+        "automatic_checkpoints": [
+            "generation_bound_draft",
+            "chapter_ready",
+        ],
+        "checkpoint_interval": 5,
+        "authority": "recovery_not_approval",
+    }
     assert contract["adapter_operations"]["audit_snapshot"].startswith(
         "session-audit "
     )

@@ -32,6 +32,13 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     book_dir = Path(result["book_dir"])
     assert book_dir == tmp_path / "books" / "test-book"
+    assert result["local_git"]["initialized"] is True
+    assert result["local_git"]["commit_created"] is True
+    assert result["local_git"]["remote_count"] == 0
+    assert Path(result["local_git"]["git_dir"]) == (
+        tmp_path / ".local-book-git" / "test-book.git"
+    )
+    assert (book_dir / ".git").is_file()
     assert (book_dir / ".gitignore").exists()
     assert (book_dir / "CLAUDE.md").exists()
     assert (book_dir / "README.md").exists()
@@ -92,7 +99,11 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.1" in claude_md
+    assert "v4.2" in claude_md
+    assert "book-git-status" in claude_md
+    assert "draft" in claude_md
+    assert "ready" in claude_md
+    assert "不得配置 remote" in claude_md
     assert "begin-chapter-sequence" in claude_md
     assert "最多 4 章" in claude_md
     assert "上一章完整 ready" in claude_md
@@ -116,11 +127,15 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.1" in readme
+    assert "默认工作流: v4.2" in readme
+    assert ".local-book-git" in readme
     assert "不得复制其他书的正文" in readme
 
     gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
     assert ".novel-forge/" in gitignore
+    assert ".local-book-git/" in (
+        _REPO_ROOT / ".gitignore"
+    ).read_text(encoding="utf-8")
 
     constitution = (book_dir / "evaluation" / "constitution.md").read_text(
         encoding="utf-8"
@@ -176,6 +191,17 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         "review_default": "standard_or_medium",
         "max_reasoning": "named_exception_only",
         "numeric_style_targets_visible_to_writer": False,
+    }
+    assert harness_contract["local_git_policy"] == {
+        "mode": "per_book_external_gitdir",
+        "metadata_directory": ".local-book-git/<slug>.git",
+        "remote_allowed": False,
+        "automatic_checkpoints": [
+            "generation_bound_draft",
+            "chapter_ready",
+        ],
+        "checkpoint_interval": 5,
+        "authority": "recovery_not_approval",
     }
     assert harness_contract["runtime_report_schema"]["const"] == (
         "novel-forge-runtime/v1"
@@ -317,6 +343,7 @@ def test_adapter_init_novel_project_success(tmp_path: Path, capsys):
     assert data["operation"] == "init-novel-project"
     assert data["state_changed"] is True
     assert "created_files" in data["data"]
+    assert data["data"]["local_git"]["initialized"] is True
     assert (tmp_path / "books" / "new-book" / "CLAUDE.md").exists()
     # Adapter must not leak file contents.
     assert "小说宪法" not in json.dumps(data)
@@ -405,12 +432,12 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v41_literary_anti_overfit_workflow():
+def test_skill_documents_v42_per_book_local_git_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.1" in text
+    assert "v4.2" in text
     assert "begin-chapter-sequence" in text
     assert "claim-chapter-session" in text
     assert "advance-chapter-sequence" in text
@@ -429,6 +456,12 @@ def test_skill_documents_v41_literary_anti_overfit_workflow():
     assert "标准或中等推理" in text
     assert "明确决定" in text
     assert "触发事件原文" in text
+    assert ".local-book-git" in text
+    assert "book-git-status" in text
+    assert "chapter: chNN draft" in text
+    assert "chapter: chNN ready" in text
+    assert "不得配置 remote" in text
+    assert "同时清除" in text
     assert "tool_failures" in text
     assert "Markdown 粗体" in text
     assert "surface_checked" in text

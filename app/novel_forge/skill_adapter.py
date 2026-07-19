@@ -24,6 +24,12 @@ from app.novel_forge.chapter_sequence import (
     claim_chapter_session,
 )
 from app.novel_forge.book_evidence import evidence_status, record_evidence
+from app.novel_forge.book_git import (
+    book_git_status,
+    checkpoint_book,
+    initialize_book_git,
+    restore_book_worktree,
+)
 from app.novel_forge.book_memory import (
     build_context_packet,
     memory_status,
@@ -87,6 +93,9 @@ MUTATING_OPS = {
     "begin-chapter-sequence",
     "claim-chapter-session",
     "advance-chapter-sequence",
+    "init-book-git",
+    "book-git-checkpoint",
+    "restore-book-git",
 }
 
 
@@ -526,6 +535,37 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, nargs="?", default=None, help="Chapter number.")
+
+    p = sub.add_parser(
+        "book-git-status",
+        help="Show metadata-only status for a book's local Git history.",
+    )
+    p.add_argument("slug", help="Book slug.")
+
+    p = sub.add_parser(
+        "init-book-git",
+        help="Initialize isolated local-only Git history for an existing book.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--title", required=True, help="Book title for the initial commit.")
+
+    p = sub.add_parser(
+        "book-git-checkpoint",
+        help="Create an explicit checkpoint in a book's local Git history.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("--message", required=True, help="Checkpoint commit message.")
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="Optional immutable tag such as checkpoint/ch01-ch05.",
+    )
+
+    p = sub.add_parser(
+        "restore-book-git",
+        help="Restore a missing book worktree from its external local Git history.",
+    )
+    p.add_argument("slug", help="Book slug.")
 
     p = sub.add_parser(
         "begin-chapter-sequence",
@@ -1161,6 +1201,21 @@ def run(argv: list[str] | None = None) -> int:
     if op == "init-novel-project":
         result = svc.init_novel_project(slug, args.title, args.genre)
         return _ok(op, result, state_changed=True)
+
+    if op == "book-git-status":
+        return _ok(op, {"local_git": book_git_status(root, slug)})
+
+    if op == "init-book-git":
+        data = initialize_book_git(root, slug, args.title)
+        return _ok(op, {"local_git": data}, state_changed=True)
+
+    if op == "book-git-checkpoint":
+        data = checkpoint_book(root, slug, args.message, tag=args.tag)
+        return _ok(op, {"local_git": data}, state_changed=data["committed"])
+
+    if op == "restore-book-git":
+        data = restore_book_worktree(root, slug)
+        return _ok(op, {"local_git": data}, state_changed=True)
 
     if op == "project-status":
         data = book_project.project_status(root, slug, args.number)

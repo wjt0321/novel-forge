@@ -141,6 +141,17 @@ def harness_contract() -> dict[str, Any]:
             "max_reasoning": "named_exception_only",
             "numeric_style_targets_visible_to_writer": False,
         },
+        "local_git_policy": {
+            "mode": "per_book_external_gitdir",
+            "metadata_directory": ".local-book-git/<slug>.git",
+            "remote_allowed": False,
+            "automatic_checkpoints": [
+                "generation_bound_draft",
+                "chapter_ready",
+            ],
+            "checkpoint_interval": 5,
+            "authority": "recovery_not_approval",
+        },
         "chapter_sequence": {
             "default_chapter_count": DEFAULT_CHAPTERS_PER_SEQUENCE,
             "maximum_chapter_count": MAX_CHAPTERS_PER_SEQUENCE,

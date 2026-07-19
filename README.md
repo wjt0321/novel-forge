@@ -21,7 +21,7 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v4.1 项目骨架）
+# 创建一本新书（生成 v4.2 项目骨架，并初始化每书本地 Git）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -40,7 +40,9 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
    章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
 5. 在独立会话运行 prose-only blind-reader，再由 chapter-editor 综合审读；
-6. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
+6. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
+   `chapter: chNN ready`；每五章建立一个本地 checkpoint 标签；
+7. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
 
 ## 两种工作流
 
@@ -48,10 +50,26 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 |---|---|---|
 | 用途 | 写作 Agent 项目内写作，质量门完整 | SQLite 审计、不可变 revision、Canon 事实库、Pandoc 导出 |
 | 正文 | `chapters/eXX/ch-XX/正文.md` | `manuscript/revisions/` 不可变文件 |
-| 驱动 | adapter：`project-status` / `session-audit` / `run-gates` / `record-review` / `advance-state` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
+| 驱动 | adapter：`project-status` / `session-audit` / `run-gates` / `record-review` / `advance-state` / `book-git-status` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
 | 数据库 | 不需要 | `data/novel-forge.db`（可重建的审计索引） |
 
 两者不得静默混用；选择标准见 SKILL.md。
+
+## 每书本地版本历史
+
+主仓库继续忽略整个 `books/`，因此小说正文不会随 Harness 推送。每个
+`books/<slug>/` 同时是一个独立的本地 Git 工作区；书内 `.git` 只是指针，真实历史
+位于主仓库同级管理的 `.local-book-git/<slug>.git`，主仓库也会忽略该目录。
+
+- 新书创建时自动生成初始提交，不配置 remote；
+- generation 绑定与章节 `ready` 分别形成草稿、定稿 checkpoint；
+- 第 5、10、15……章 `ready` 时建立 `checkpoint/ch01-ch05` 一类标签；
+- `book-git-checkpoint` 可建立人工恢复点，`restore-book-git` 可从外置历史恢复
+  被误删的工作区；
+- Git 只负责 diff 与恢复，不替代 evidence、审稿、作者批准或发布许可。
+
+实验书若要彻底清理，必须同时删除 `books/<slug>/` 和
+`.local-book-git/<slug>.git`；只删正文目录会有意保留可恢复历史。
 
 ## Skill 集成
 
@@ -76,12 +94,14 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   lint.py            #   中文网文 prose 规则（单源，各书 tools 是它的薄壳）
   book_gates.py      #   narrative gate 规范实现
   book_project.py    #   books/ 业务层（无数据库）
+  book_git.py        #   每书本地 Git、自动 checkpoint 与恢复
   session_audit.py   #   厂商无关 Harness Contract、标准快照审计与兼容导入
   project_templates.py # 新书骨架生成（Voice Bible、七角色、薄壳工具）
 tests/               # pytest 回归测试
 docs/                # 里程碑与实验审计文档
 docs/examples/       # 人味解剖 + AI 味反模式（起草与审稿前必读）
 books/               # 小说项目（一书一目录，项目级隔离；gitignored，仅存本地不上传）
+.local-book-git/     # 每书外置 Git 元数据（gitignored、本地、无 remote）
 library/             # legacy 审计资产（gitignore）
 data/                # SQLite 账本（gitignore，可重建）
 research/            # 前期调研
@@ -96,6 +116,7 @@ research/            # 前期调研
 - 外置 Harness 护栏：`docs/24-external-harness-guardrails.md`
 - 章节独立会话：`docs/25-chapter-session-orchestration.md`
 - 文学防过拟合与序列真实性：`docs/26-literary-anti-overfit-and-sequence-truth.md`
+- 每书本地版本历史：`docs/27-per-book-local-git.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 
@@ -104,7 +125,8 @@ research/            # 前期调研
 - 严禁直接修改 `data/novel-forge.db` 与 `library/<slug>/manuscript/revisions/`。
 - 正式章节硬门槛：≥ 5000 CJK 汉字（不可下调）。
 - 正文里不得出现提示词、工作流标记或 Agent 身份。
-- 未经用户明确批准，不得宣称"已批准"；Git commit / push 需用户明确要求。
+- 未经用户明确批准，不得宣称"已批准"。Harness 主仓库的 commit / push 需用户
+  明确要求；每书本地 Git 的自动 checkpoint 属于工作流恢复机制，永不 push。
 
 ## 技术栈
 
