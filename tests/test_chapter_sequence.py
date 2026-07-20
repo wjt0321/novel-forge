@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from app.novel_forge import chapter_sequence as chapter_sequence_module
 from app.novel_forge.chapter_sequence import (
     ChapterSequenceError,
     begin_chapter_sequence,
     chapter_sequence_status,
     claim_chapter_session,
     advance_chapter_sequence,
+    invalidate_chapter_session,
 )
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.skill_adapter import main as adapter_main
@@ -297,3 +300,81 @@ def test_sequence_status_marks_forged_complete_record_inconsistent(
     assert status["effective_status"] == "inconsistent"
     assert status["integrity"]["status"] == "blocked"
     assert status["integrity"]["findings"]
+
+
+def test_complete_sequence_uses_successful_session_after_invalidation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    book_dir = _sequence_book(tmp_path)
+    begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=1,
+        sequence_id="recovered-complete",
+    )
+    claim_chapter_session(
+        tmp_path,
+        "demo",
+        "recovered-complete",
+        "writer-native-compromised",
+    )
+    invalidate_chapter_session(
+        tmp_path,
+        "demo",
+        "recovered-complete",
+        "writer-native-compromised",
+        reason="guardian_capsule_compromised",
+    )
+    claim_chapter_session(
+        tmp_path,
+        "demo",
+        "recovered-complete",
+        "writer-native-clean",
+    )
+    path = (
+        book_dir
+        / "planning/chapter-sequences/recovered-complete.json"
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record.update(
+        {
+            "status": "complete",
+            "current_index": 1,
+            "active_session_id": None,
+            "completed_chapters": [1],
+            "completed_sessions": {"1": "writer-native-clean"},
+        }
+    )
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        chapter_sequence_module,
+        "_require_ready",
+        lambda *_: (book_dir, {"generation_id": "generation.clean"}),
+    )
+    monkeypatch.setattr(
+        chapter_sequence_module,
+        "find_evidence_record",
+        lambda *_: (
+            SimpleNamespace(data={"run_id": "writer-native-clean"}),
+            Path("generation.clean.md"),
+        ),
+    )
+
+    status = chapter_sequence_status(
+        tmp_path,
+        "demo",
+        "recovered-complete",
+    )
+
+    assert status["used_session_ids"] == [
+        "writer-native-compromised",
+        "writer-native-clean",
+    ]
+    assert status["invalidated_session_count"] == 1
+    assert status["effective_status"] == "complete"
+    assert status["integrity"] == {"status": "clean", "findings": []}

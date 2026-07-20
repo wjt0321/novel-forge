@@ -399,6 +399,9 @@ def _public(record: dict[str, Any]) -> dict[str, Any]:
         "current_chapter": current_chapter,
         "active_session_id": record["active_session_id"],
         "used_session_ids": list(record["used_session_ids"]),
+        "invalidated_session_count": len(
+            record.get("invalidated_sessions", [])
+        ),
         "completed_chapters": list(record["completed_chapters"]),
         "orchestrator_run_id": record.get("orchestrator_run_id"),
         "created_at": record["created_at"],
@@ -462,6 +465,8 @@ def begin_chapter_sequence(
         "current_index": 0,
         "active_session_id": None,
         "used_session_ids": [],
+        "invalidated_sessions": [],
+        "completed_sessions": {},
         "completed_chapters": [],
         "orchestrator_run_id": (
             orchestrator_run_id.strip() if orchestrator_run_id else None
@@ -540,6 +545,7 @@ def advance_chapter_sequence(
         )
 
     record["completed_chapters"].append(chapter)
+    record.setdefault("completed_sessions", {})[str(chapter)] = session_id
     record["active_session_id"] = None
     record["current_index"] += 1
     if record["current_index"] >= len(record["chapters"]):
@@ -551,6 +557,43 @@ def advance_chapter_sequence(
         handoff = build_chapter_handoff(root, slug, next_chapter)
         record["handoffs"][str(next_chapter)] = handoff
         record["status"] = "awaiting_session"
+    record["updated_at"] = _now()
+    _atomic_json(path, record)
+    return _public(record)
+
+
+def invalidate_chapter_session(
+    root: Path,
+    slug: str,
+    sequence_id: str,
+    session_id: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Invalidate a compromised writer session and require a fresh claim."""
+    reason = reason.strip()
+    if not reason:
+        raise ChapterSequenceError("session invalidation reason 不能为空。")
+    _, path, record = _load_sequence(root, slug, sequence_id)
+    if record.get("status") != "running":
+        raise ChapterSequenceError(
+            "只有正在运行的章节 session 可以失效。"
+        )
+    if record.get("active_session_id") != session_id:
+        raise ChapterSequenceError(
+            "session_id 与当前章节绑定的原生 writer session 不一致。"
+        )
+    chapter = record["chapters"][record["current_index"]]
+    record.setdefault("invalidated_sessions", []).append(
+        {
+            "session_id": session_id,
+            "chapter": chapter,
+            "reason": reason,
+            "invalidated_at": _now(),
+        }
+    )
+    record["active_session_id"] = None
+    record["status"] = "awaiting_session"
     record["updated_at"] = _now()
     _atomic_json(path, record)
     return _public(record)
@@ -569,14 +612,24 @@ def chapter_sequence_status(
         chapters = list(record.get("chapters", []))
         completed = list(record.get("completed_chapters", []))
         sessions = list(record.get("used_session_ids", []))
+        completed_sessions = record.get("completed_sessions")
+        if not isinstance(completed_sessions, dict):
+            completed_sessions = {}
+        if (
+            not completed_sessions
+            and not record.get("invalidated_sessions")
+            and len(sessions) == len(chapters)
+        ):
+            completed_sessions = {
+                str(chapter): sessions[index]
+                for index, chapter in enumerate(chapters)
+            }
         if completed != chapters:
             findings.append("complete 序列的 completed_chapters 与 chapters 不一致")
         if record.get("current_index") != len(chapters):
             findings.append("complete 序列的 current_index 未越过最后一章")
         if record.get("active_session_id") is not None:
             findings.append("complete 序列仍绑定 active_session_id")
-        if len(sessions) != len(chapters):
-            findings.append("complete 序列的 writer session 数与章节数不一致")
         for index, chapter in enumerate(chapters):
             try:
                 _, state = _require_ready(root, slug, chapter)
@@ -591,9 +644,13 @@ def chapter_sequence_status(
                     f"第 {chapter:02d} 章无法证明 ready：{exc}"
                 )
                 continue
-            if index >= len(sessions):
+            completed_session = completed_sessions.get(str(chapter))
+            if not isinstance(completed_session, str) or not completed_session:
+                findings.append(
+                    f"第 {chapter:02d} 章缺少成功 writer session 绑定"
+                )
                 continue
-            if generation.data.get("run_id") != sessions[index]:
+            if generation.data.get("run_id") != completed_session:
                 findings.append(
                     f"第 {chapter:02d} 章 generation.run_id "
                     "与序列 writer session 不一致"

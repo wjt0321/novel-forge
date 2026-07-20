@@ -16,4 +16,5 @@ books/
 upstream/
 .worktrees/
 .local-book-git/
+.local-guardian/
 

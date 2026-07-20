@@ -21,7 +21,7 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v4.3 项目骨架，并初始化每书本地 Git）
+# 创建一本新书（生成 v4.4 项目骨架，并初始化每书本地 Git）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -32,11 +32,13 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
 1. 收集最小上下文，填写 Voice Bible、故事发动机与一页式场景包；
-2. 每章新开 writer session；正文使用标准或中等推理，一次写完整章，并绑定真实
-   writer `run_id`；
-3. 任意 Harness 先读 `evaluation/harness-contract.json`，输出
+2. 每章新开 writer session，绑定真实 `run_id`，再由外部 Harness 创建仓库外
+   writer capsule；writer 只能读取有界 handoff，只能写正文；
+3. 任意 Harness 先读 `evaluation/harness-contract.json` 与
+   `evaluation/guardian-contract.json`，输出
    `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
-   超预算或来源不实立即停止，结束时再 `record-session-audit`；
+   超预算或来源不实立即停止，结束时由 Guardian 导入正文并固化隔离回执，再
+   `record-session-audit`；
 4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
    章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
 5. 在独立会话运行 prose-only blind-reader，记录 `human_likeness`、追读意愿与
@@ -51,7 +53,7 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 |---|---|---|
 | 用途 | 写作 Agent 项目内写作，质量门完整 | SQLite 审计、不可变 revision、Canon 事实库、Pandoc 导出 |
 | 正文 | `chapters/eXX/ch-XX/正文.md` | `manuscript/revisions/` 不可变文件 |
-| 驱动 | adapter：`project-status` / `session-audit` / `run-gates` / `record-review` / `advance-state` / `book-git-status` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
+| 驱动 | adapter：`prepare-writer-capsule` / `ingest-writer-capsule` / `project-status` / `session-audit` / `run-gates` / `record-review` / `advance-state` / `book-git-status` / `sync-tools` | adapter：`write-revision` / `lint` / `review` / `approve-chapter` 等 45+ ops |
 | 数据库 | 不需要 | `data/novel-forge.db`（可重建的审计索引） |
 
 两者不得静默混用；选择标准见 SKILL.md。
@@ -69,8 +71,9 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
   被误删的工作区；
 - Git 只负责 diff 与恢复，不替代 evidence、审稿、作者批准或发布许可。
 
-实验书若要彻底清理，必须同时删除 `books/<slug>/` 和
-`.local-book-git/<slug>.git`；只删正文目录会有意保留可恢复历史。
+实验书若要彻底清理，必须同时删除 `books/<slug>/`、
+`.local-book-git/<slug>.git` 和 `.local-guardian/<slug>/`；只删正文目录会有意
+保留可恢复历史或 Guardian 权威账本。
 
 ## Skill 集成
 
@@ -97,6 +100,8 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   book_project.py    #   books/ 业务层（无数据库）
   book_git.py        #   每书本地 Git、自动 checkpoint 与恢复
   session_audit.py   #   厂商无关 Harness Contract、标准快照审计与兼容导入
+  guardian_contract.py # 隔离 writer capsule 的纯机器合同
+  guardian.py        #   仓库外 capsule、原子导入、不可变回执与会话失效
   project_templates.py # 新书骨架生成（Voice Bible、七角色、薄壳工具）
 tests/               # pytest 回归测试
 docs/                # 里程碑与实验审计文档
@@ -119,6 +124,7 @@ research/            # 前期调研
 - 文学防过拟合与序列真实性：`docs/26-literary-anti-overfit-and-sequence-truth.md`
 - 每书本地版本历史：`docs/27-per-book-local-git.md`
 - 读者追读与运行真相：`docs/28-reader-pull-and-runtime-truth.md`
+- 隔离 Writer Capsule：`docs/29-isolated-writer-capsule.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

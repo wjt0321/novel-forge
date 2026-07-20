@@ -159,6 +159,14 @@ def _validate_generation(data: dict[str, Any]) -> None:
         )
     if data.get("writer_type") not in {"human", "agent", "model"}:
         raise BookEvidenceError("generation.writer_type 必须是 human、agent 或 model。")
+    if (
+        data.get("writer_type") == "human"
+        and data.get("authority") not in {"author", "human_delegate"}
+    ):
+        raise BookEvidenceError(
+            "generation.writer_type=human 时 authority 必须是 "
+            "author 或 human_delegate。"
+        )
     _require_string(data, "provider")
     _require_string(data, "model")
     _require_string(data, "content_path")

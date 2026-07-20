@@ -409,6 +409,19 @@ def test_generation_requires_consistent_authority_and_runtime_identity():
         )
 
 
+def test_generation_rejects_agent_claiming_human_writer():
+    fake_human = _base(
+        "generation",
+        "generation.ch01.fake-human",
+        authority="agent",
+        writer_type="human",
+        content_sha256="0" * 64,
+    )
+
+    with pytest.raises(BookEvidenceError, match="writer_type=human"):
+        render_evidence_markdown(fake_human)
+
+
 def test_record_generation_rejects_duplicate_content_version(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"

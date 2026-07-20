@@ -57,6 +57,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "memory" / "memory-record-template.md").exists()
     assert (book_dir / "planning" / "events").is_dir()
     assert (book_dir / "planning" / "chapter-sequences").is_dir()
+    assert (book_dir / "planning" / "guardian-sessions").is_dir()
     assert (book_dir / "reviews" / "archive").is_dir()
     assert (book_dir / "patches").is_dir()
     assert (book_dir / ".snapshots").is_dir()
@@ -73,6 +74,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evaluation" / "rule-registry.md").exists()
     assert (book_dir / "evaluation" / "generation-template.md").exists()
     assert (book_dir / "evaluation" / "harness-contract.json").exists()
+    assert (book_dir / "evaluation" / "guardian-contract.json").exists()
     assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
     assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
@@ -84,6 +86,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evidence" / "evaluations").is_dir()
     assert (book_dir / "evidence" / "generations").is_dir()
     assert (book_dir / "evidence" / "runtime-audits").is_dir()
+    assert (book_dir / "evidence" / "guardian-receipts").is_dir()
     assert (book_dir / "evidence" / "arc-audits").is_dir()
     assert (book_dir / "evidence" / "rule-decisions").is_dir()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
@@ -99,12 +102,18 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.3" in claude_md
+    assert "v4.4" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
     assert "不得配置 remote" in claude_md
     assert "begin-chapter-sequence" in claude_md
+    assert "prepare-writer-capsule" in claude_md
+    assert "record-capsule-runtime" in claude_md
+    assert "authorize-regeneration" in claude_md
+    assert "ingest-writer-capsule" in claude_md
+    assert "仓库外" in claude_md
+    assert "控制面" in claude_md
     assert "最多 4 章" in claude_md
     assert "上一章完整 ready" in claude_md
     assert "record-session-audit" in claude_md
@@ -129,13 +138,19 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.3" in readme
+    assert "默认工作流: v4.4" in readme
+    assert "guardian-contract.json" in readme
+    assert ".local-guardian" in readme
+    assert "隔离" in readme
     assert ".local-book-git" in readme
     assert "不得复制其他书的正文" in readme
 
     gitignore = (book_dir / ".gitignore").read_text(encoding="utf-8")
     assert ".novel-forge/" in gitignore
     assert ".local-book-git/" in (
+        _REPO_ROOT / ".gitignore"
+    ).read_text(encoding="utf-8")
+    assert ".local-guardian/" in (
         _REPO_ROOT / ".gitignore"
     ).read_text(encoding="utf-8")
 
@@ -209,6 +224,32 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         "novel-forge-runtime/v1"
     )
     assert harness_contract["chapter_sequence"]["maximum_chapter_count"] == 4
+    assert harness_contract["guardian"]["contract_operation"] == (
+        "guardian-contract"
+    )
+    assert harness_contract["guardian"]["formal_writer_workspace"] == (
+        "isolated_writer_capsule"
+    )
+    assert harness_contract["guardian"]["runtime_operation"] == (
+        "record-capsule-runtime"
+    )
+    assert harness_contract["guardian"]["authorization_operation"] == (
+        "authorize-regeneration"
+    )
+    assert harness_contract["guardian"]["acp_required"] is False
+
+    guardian_contract = json.loads(
+        (book_dir / "evaluation" / "guardian-contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert guardian_contract["schema"] == "novel-forge-guardian-contract/v1"
+    assert guardian_contract["workspace"]["book_control_plane_visible"] is False
+    assert guardian_contract["runtime"]["full_transcript_required"] is False
+    assert guardian_contract["runtime"]["stored_in_external_guardian_sidecar"] is True
+    assert guardian_contract["session"]["authorization_operation"] == (
+        "authorize-regeneration"
+    )
 
     degraded_template = (
         book_dir / "evaluation" / "degraded-run-template.md"
@@ -440,12 +481,17 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v43_reader_pull_and_runtime_truth_workflow():
+def test_skill_documents_v44_isolated_writer_and_runtime_truth_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.3" in text
+    assert "v4.4" in text
+    assert "guardian-contract" in text
+    assert "prepare-writer-capsule" in text
+    assert "ingest-writer-capsule" in text
+    assert "capsule-only" in text
+    assert "ACP 和完整 transcript 不是" in text
     assert "begin-chapter-sequence" in text
     assert "claim-chapter-session" in text
     assert "advance-chapter-sequence" in text

@@ -9,7 +9,7 @@ import stat
 
 import pytest
 
-from app.novel_forge import book_project
+from app.novel_forge import book_project, guardian as guardian_module
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.chapter_sequence import (
     ChapterSequenceError,
@@ -19,6 +19,10 @@ from app.novel_forge.chapter_sequence import (
 )
 from app.novel_forge.book_evidence import record_evidence, render_evidence_markdown
 from app.novel_forge.book_project import BookProjectError
+from app.novel_forge.guardian import (
+    CAPSULE_SCHEMA,
+    GUARDIAN_RECEIPT_SCHEMA,
+)
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.session_audit import record_runtime_audit
 from app.novel_forge.skill_adapter import main as adapter_main
@@ -218,6 +222,7 @@ def _record_generation(
     chapter_number: int = 1,
     run_id: str = "writer-session-001",
     record_audit: bool = True,
+    record_guardian: bool = True,
     audit_generation_ids: list[str] | None = None,
     **metrics,
 ) -> str:
@@ -266,6 +271,58 @@ def _record_generation(
     book_project.bind_generation(
         tmp_path, "demo", chapter_number, generation_id
     )
+    if record_guardian:
+        capsule_id = (
+            "test-"
+            + hashlib.sha256(generation_id.encode("utf-8")).hexdigest()[:16]
+        )
+        receipt_relative = (
+            Path("evidence/guardian-receipts")
+            / f"{capsule_id}.json"
+        )
+        runtime_sha256 = "0" * 64
+        receipt = {
+            "schema": GUARDIAN_RECEIPT_SCHEMA,
+            "capsule_id": capsule_id,
+            "slug": "demo",
+            "chapter": chapter_number,
+            "sequence_id": "synthetic-test-sequence",
+            "session_id": run_id,
+            "target_path": content_path,
+            "handoff_sha256": "0" * 64,
+            "status": "clean",
+            "isolation_attested": True,
+            "control_plane_exposed": False,
+            "unexpected_files": [],
+            "reasons": [],
+            "body_sha256": generation_data["content_sha256"],
+            "runtime_snapshot_sha256": runtime_sha256,
+            "recorded_at": "2026-07-17T12:00:00Z",
+            "author_approval": False,
+            "publication_eligibility": False,
+        }
+        guardian_module._atomic_json(
+            (
+                book_dir
+                / "planning/guardian-sessions"
+                / f"{capsule_id}.json"
+            ),
+            {
+                "schema": CAPSULE_SCHEMA,
+                "capsule_id": capsule_id,
+                "status": "imported",
+                "receipt_path": receipt_relative.as_posix(),
+                "body_sha256": generation_data["content_sha256"],
+                "runtime_snapshot_sha256": runtime_sha256,
+            },
+        )
+        guardian_module._write_signed_receipt(
+            tmp_path,
+            "demo",
+            book_dir,
+            capsule_id,
+            receipt,
+        )
     if record_audit:
         source_hash = hashlib.sha256(
             f"{run_id}:{provider}:{model}".encode("utf-8")
@@ -1561,7 +1618,7 @@ def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v4.3（读者追读与运行真相）",
+            "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
             "- 工作流版本: v4.2（每书本地版本控制）",
         ),
         encoding="utf-8",
@@ -1569,7 +1626,7 @@ def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "- 默认工作流: v4.3",
+            "- 默认工作流: v4.4",
             "- 默认工作流: v4.2",
         ),
         encoding="utf-8",
@@ -1579,8 +1636,8 @@ def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.3" in claude.read_text(encoding="utf-8")
-    assert "v4.3" in readme.read_text(encoding="utf-8")
+    assert "v4.4" in claude.read_text(encoding="utf-8")
+    assert "v4.4" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

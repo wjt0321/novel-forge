@@ -22,6 +22,7 @@ from app.novel_forge.chapter_sequence import (
     begin_chapter_sequence,
     chapter_sequence_status,
     claim_chapter_session,
+    invalidate_chapter_session,
 )
 from app.novel_forge.book_evidence import evidence_status, record_evidence
 from app.novel_forge.book_git import (
@@ -38,6 +39,13 @@ from app.novel_forge.book_memory import (
     record_candidate,
 )
 from app.novel_forge.models import ReviewFinding, ScenePlan
+from app.novel_forge.guardian import (
+    authorize_regeneration,
+    guardian_contract,
+    ingest_writer_capsule,
+    prepare_writer_capsule,
+    record_capsule_runtime,
+)
 from app.novel_forge.session_audit import (
     audit_book_session,
     harness_contract,
@@ -93,6 +101,11 @@ MUTATING_OPS = {
     "begin-chapter-sequence",
     "claim-chapter-session",
     "advance-chapter-sequence",
+    "invalidate-chapter-session",
+    "authorize-regeneration",
+    "prepare-writer-capsule",
+    "record-capsule-runtime",
+    "ingest-writer-capsule",
     "init-book-git",
     "book-git-checkpoint",
     "restore-book-git",
@@ -161,6 +174,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "harness-contract",
         help="Return the vendor-neutral runtime contract for any Agent harness.",
+    )
+    sub.add_parser(
+        "guardian-contract",
+        help="Return the vendor-neutral isolated writer capsule contract.",
     )
 
     p = sub.add_parser("lint", help="Run prose lint on the current revision.")
@@ -598,6 +615,57 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("slug", help="Book slug.")
     p.add_argument("sequence_id", help="Chapter sequence ID.")
     p.add_argument("--session-id", required=True)
+
+    p = sub.add_parser(
+        "invalidate-chapter-session",
+        help="Invalidate a compromised writer session and require a fresh claim.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
+    p.add_argument("--session-id", required=True)
+    p.add_argument("--reason", required=True)
+
+    p = sub.add_parser(
+        "authorize-regeneration",
+        help=(
+            "Record one signed human authorization for a third distinct body."
+        ),
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
+    p.add_argument("--session-id", required=True)
+    p.add_argument(
+        "--authority",
+        required=True,
+        choices=["author", "human_delegate"],
+    )
+    p.add_argument("--decision-reference", required=True)
+
+    p = sub.add_parser(
+        "prepare-writer-capsule",
+        help="Create a repository-external isolated workspace for one writer.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("sequence_id", help="Chapter sequence ID.")
+    p.add_argument("--session-id", required=True)
+    p.add_argument("--capsule-dir", required=True, type=Path)
+    p.add_argument("--target-path", required=True)
+    p.add_argument("--regeneration-authorization-id", default=None)
+
+    p = sub.add_parser(
+        "record-capsule-runtime",
+        help="Store a Harness-owned runtime sidecar outside the book workspace.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("capsule_id", help="Writer capsule ID.")
+    p.add_argument("--file", required=True, type=Path)
+
+    p = sub.add_parser(
+        "ingest-writer-capsule",
+        help="Import one isolated draft and record a Guardian receipt.",
+    )
+    p.add_argument("slug", help="Book slug.")
+    p.add_argument("capsule_id", help="Writer capsule ID.")
 
     p = sub.add_parser(
         "chapter-sequence-status",
@@ -1064,13 +1132,16 @@ def run(argv: list[str] | None = None) -> int:
     if op in MUTATING_OPS and not _check_confirm(args):
         return _fail("confirmation_required", f"Operation '{op}' requires --confirm {op}")
 
-    if op == "harness-contract":
+    if op in {"harness-contract", "guardian-contract"}:
         if remaining:
             return _fail(
                 "invalid_arguments",
-                "harness-contract does not accept positional arguments.",
+                f"{op} does not accept positional arguments.",
             )
-        return _ok(op, harness_contract())
+        return _ok(
+            op,
+            harness_contract() if op == "harness-contract" else guardian_contract(),
+        )
 
     svc = NovelForgeService(root)
 
@@ -1247,6 +1318,58 @@ def run(argv: list[str] | None = None) -> int:
             slug,
             args.sequence_id,
             args.session_id,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "invalidate-chapter-session":
+        data = invalidate_chapter_session(
+            root,
+            slug,
+            args.sequence_id,
+            args.session_id,
+            reason=args.reason,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "prepare-writer-capsule":
+        data = prepare_writer_capsule(
+            root,
+            slug,
+            args.sequence_id,
+            args.session_id,
+            args.capsule_dir,
+            args.target_path,
+            regeneration_authorization_id=(
+                args.regeneration_authorization_id
+            ),
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "authorize-regeneration":
+        data = authorize_regeneration(
+            root,
+            slug,
+            args.sequence_id,
+            args.session_id,
+            authority=args.authority,
+            decision_reference=args.decision_reference,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "ingest-writer-capsule":
+        data = ingest_writer_capsule(
+            root,
+            slug,
+            args.capsule_id,
+        )
+        return _ok(op, data, state_changed=True)
+
+    if op == "record-capsule-runtime":
+        data = record_capsule_runtime(
+            root,
+            slug,
+            args.capsule_id,
+            args.file,
         )
         return _ok(op, data, state_changed=True)
 

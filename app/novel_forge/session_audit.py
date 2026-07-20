@@ -105,6 +105,7 @@ def harness_contract() -> dict[str, Any]:
         },
         "adapter_operations": {
             "get_contract": "harness-contract",
+            "get_guardian_contract": "guardian-contract",
             "begin_sequence": (
                 "begin-chapter-sequence <slug> --start-chapter <n> "
                 "--chapter-count <1..4>"
@@ -127,6 +128,45 @@ def harness_contract() -> dict[str, Any]:
                 "--confirm record-session-audit record-session-audit "
                 "<slug> --file <absolute-runtime-json>"
             ),
+            "prepare_writer_capsule": (
+                "--confirm prepare-writer-capsule prepare-writer-capsule "
+                "<slug> <sequence-id> --session-id <native-session-id> "
+                "--capsule-dir <absolute-external-path> "
+                "--target-path chapters/eXX/ch-XX/正文.md "
+                "[--regeneration-authorization-id <authorization-id>]"
+            ),
+            "authorize_regeneration": (
+                "--confirm authorize-regeneration authorize-regeneration "
+                "<slug> <sequence-id> --session-id <native-session-id> "
+                "--authority <author|human_delegate> "
+                "--decision-reference <decision-ref>"
+            ),
+            "ingest_writer_capsule": (
+                "--confirm ingest-writer-capsule ingest-writer-capsule "
+                "<slug> <capsule-id>"
+            ),
+            "record_capsule_runtime": (
+                "--confirm record-capsule-runtime record-capsule-runtime "
+                "<slug> <capsule-id> --file <absolute-runtime-json>"
+            ),
+            "invalidate_writer_session": (
+                "--confirm invalidate-chapter-session "
+                "invalidate-chapter-session <slug> <sequence-id> "
+                "--session-id <native-session-id> --reason <reason>"
+            ),
+        },
+        "guardian": {
+            "contract_operation": "guardian-contract",
+            "formal_writer_workspace": "isolated_writer_capsule",
+            "prepare_operation": "prepare-writer-capsule",
+            "ingest_operation": "ingest-writer-capsule",
+            "runtime_operation": "record-capsule-runtime",
+            "authorization_operation": "authorize-regeneration",
+            "invalidate_operation": "invalidate-chapter-session",
+            "book_control_plane_visible_to_writer": False,
+            "validator_source_visible_to_writer": False,
+            "full_transcript_required": False,
+            "acp_required": False,
         },
         "limits_per_chapter": {
             "request_count": MAX_REQUESTS_PER_CHAPTER,

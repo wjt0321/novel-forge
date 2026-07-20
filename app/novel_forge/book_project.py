@@ -927,6 +927,13 @@ def _runtime_audit_errors(
                 f"actual={generation['review_call_count']}，"
                 f"limit={MAX_REVIEW_CALLS_PER_CHAPTER}。"
             )
+    chapter = generation.get("chapter")
+    if isinstance(chapter, int) and not isinstance(chapter, bool):
+        from .guardian import guardian_receipt_errors
+
+        errors.extend(
+            guardian_receipt_errors(book_dir, chapter, generation)
+        )
     return errors
 
 
@@ -1741,11 +1748,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2))(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3))(?:\s|（|\()"
         ),
         "README.md": re.compile(
             r"(?m)^-\s*默认工作流\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2))(?:$|[\s；;。])"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3))(?:$|[\s；;。])"
         ),
     }
     refresh_set = (
@@ -1808,7 +1815,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                         status=new_status,
                         updated_at=_now(),
                         next_action=(
-                            "v4.3 migration: continue from "
+                            "v4.4 migration: continue from "
                             f"{new_status}"
                         ),
                     ),

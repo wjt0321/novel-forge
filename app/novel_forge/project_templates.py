@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .book_git import initialize_book_git
+from .guardian_contract import guardian_contract
 from .planning_spec import (
     CHAPTER_STATES,
     EVIDENCE_DIRECTORIES,
@@ -133,7 +134,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.3（读者追读与运行真相）
+- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -150,35 +151,44 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 用 `book-git-status` 检查 head、dirty 与 remote_count；adapter 仍显式传入
   Novel Forge 主仓库的绝对 `--root`。
 
-## 每章只做八步
+## 每章状态链与执行闭环
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
 
-1. 先读 `evaluation/harness-contract.json`（或调用 `harness-contract`）。用户要求
-   写 1 章时运行 `begin-chapter-sequence --chapter-count 1`；要求连续写多章时，
+1. Orchestrator 先读 `evaluation/harness-contract.json` 与
+   `evaluation/guardian-contract.json`。用户要求写 1 章时运行
+   `begin-chapter-sequence --chapter-count 1`；要求连续写多章时，
    仍由同一编排器按顺序执行，但单次最多 4 章，五章及以上必须拆分。用
-   `set-draft-mode` 固定 formal/exploration。
+   `set-draft-mode` 固定 formal/exploration。起草前确认 `memory-status=clean`，
+   并运行 `build-memory-context` 生成当前章有界上下文。
 2. 每章都用 launch directive 创建新的原生 writer session，并立即用
    `claim-chapter-session` 绑定真实 session id。不得把编排器 session、角色名或
    上一章 session 冒充新会话。
-3. writer 只读 `chXX-handoff.md` 指定的 Voice exemplar、相关 Canon/承诺、
-   上一章末段和本章 scene package；不要读取旧会话消息、旧工具输出或全书审稿史。
-   单章记忆诊断仍可运行 `memory-status` / `build-memory-context`。
-4. 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
+3. Orchestrator 运行 `prepare-writer-capsule`，把当前章有界 handoff 放进仓库外
+   capsule。启动 writer 时必须把文件系统限制在 capsule；writer 只能读取
+   `handoff.md`，只能输出 `draft/正文.md`，看不到本书控制面、evidence、sequence、
+   校验器源码或其他章节。外部 Harness 在 capsule 外生成标准累计 runtime，并用
+   `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
+4. writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
    standard/medium；默认审稿也用 standard/medium。Max/长思考只处理被明确命名的
    困难问题，不用于整章自由生成。
-5. 记录 generation；`run_id`、provider/model/Harness/思考强度和工具失败必须来自
+5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
+   runtime 缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
+   失效，必须 claim 新会话。一次集中 patch 必须使用新 capsule，它会预置当前正文；
+   第三个潜在正文版本必须先用 `authorize-regeneration` 记录绑定当前章节、
+   session 与前两份正文哈希的签名人类授权，再把 authorization ID 交给新 capsule。
+6. 记录 generation；`run_id`、provider/model/Harness/思考强度和工具失败必须来自
    真实会话，并经 `record-evidence` 落盘。初稿后只允许一次集中 patch，即最多
    两份不同正文 SHA-256。
-6. 每次模型响应后更新累计快照并运行 `session-audit`；若
+7. 每次模型响应后更新累计快照并运行 `session-audit`；若
    `budget.continue_allowed=false`，必须在下一次模型请求前停止。结束时再经
    `record-session-audit` 固化脱敏审计。预算超限、来源不一致、逐字复用覆盖过高、
    长段复制、损坏对白、Markdown 粗体、工作流标记、`——`、`……` 等任一 blocking
    都立即短路。
-7. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
+8. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
    只读正文并给 `human_likeness`、`reader_desire` 与追读证据；同会话只能标记
    `simulated_blind` 且不能 pass。
    chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
-8. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
+9. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
    `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
    新 session；否则停止。第五章做 checkpoint audit，并用 `evidence-status`
    核对证据闭环。
@@ -208,7 +218,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.3；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.4；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -224,19 +234,23 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.novel-forge/` — 可重建 SQLite 索引与 manifest（不入版本库）
 - `planning/` — 故事发动机、研究边界、场景包、章节状态
 - `evaluation/harness-contract.json` — 任意 Agent/Harness 的机器可读运行协议
+- `evaluation/guardian-contract.json` — 仓库外隔离 writer capsule 协议
 - `evaluation/` — 评测宪法、实验与证据输入模板
 - `evidence/` — 不可变创作证据与脱敏 runtime audit
+- `.local-guardian/{slug}/` — 主仓库忽略的签名 Guardian key、授权、runtime sidecar 与权威回执
 - `reviews/` — 审稿记录（每个角色一份，含 verdict）
 - `patches/` — 局部修订 patch
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-章节序列签发 → 新 writer session claim → 有界 handoff → 一次完整初稿 →
-机器门禁 → blind-reader → chapter-editor → 至多一次集中 patch → ready →
+章节序列签发 → 新 writer session claim → 仓库外隔离 capsule → 一次完整初稿 →
+Guardian 导入回执 → 机器门禁 → blind-reader → chapter-editor → 至多一次集中 patch → ready →
 结束本章 session → 顺序签发下一章。
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
+第三个不同正文版本必须先经 `authorize-regeneration` 取得签名控制面授权；公开
+`evidence/guardian-receipts/` 副本不能脱离 `.local-guardian/{slug}/` 权威账本单独通过。
 
 ## 本地 Git
 本书的 Git 元数据位于主仓库 `.local-book-git/{slug}.git`，不得配置 remote。
@@ -614,6 +628,8 @@ def _evaluation_generation_template_md() -> str:
 > `evaluation/harness-contract.json`，把原生遥测规范化为
 > `novel-forge-runtime/v1`；正式稿还必须运行 `record-session-audit`，外部审计
 > 优先于本文件自报字段。
+> 正式 Agent 正文还必须经仓库外 writer capsule 导入，并存在匹配当前正文与
+> `run_id` 的干净 Guardian 回执；writer 不得直接写 `books/` 控制面。
 > 第三个及后续不同正文 SHA-256 需要 author/human_delegate 明确授权，并额外填写
 > `"human_regeneration_authorized": true` 与 `"human_decision_reference": "<决定引用>"`；
 > 前两代或未授权记录不得填写这两个字段。
@@ -668,6 +684,18 @@ def _evaluation_harness_contract_json() -> str:
     return (
         json.dumps(
             harness_contract(),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _evaluation_guardian_contract_json() -> str:
+    return (
+        json.dumps(
+            guardian_contract(),
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
@@ -1381,29 +1409,41 @@ def _agent_orchestrator_md() -> str:
 `{_STATE_CHAIN}`
 
 ## 默认闭环
-1. 启动时读取 `evaluation/harness-contract.json`；原生遥测必须规范化为
+1. 启动时读取 `evaluation/harness-contract.json` 与
+   `evaluation/guardian-contract.json`；原生遥测必须规范化为
    `novel-forge-runtime/v1`。
 2. 用户要 1 章时运行 `begin-chapter-sequence --chapter-count 1`；用户要连续多章
-   时按请求建立序列，但最多 4 章，五章及以上必须拆分。
+   时按请求建立序列，但最多 4 章，五章及以上必须拆分。起草前确认
+   `memory-status=clean`，并运行 `build-memory-context`。
 3. 每次 launch directive 只允许当前一章。创建新的原生 writer session 后立即
-   `claim-chapter-session`；writer 只读该章 `chXX-handoff.md`，一次写完整章。
-   Writer 不接收句长、段落长度、对白占比等数字目标，也不得照抄 Voice exemplar
-   的具体名词、动作、收束物件或句法骨架。
-4. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
+   `claim-chapter-session`，再由外部 Harness 运行 `prepare-writer-capsule`，
+   把仓库外目录作为该 writer session 唯一可见、可写的文件系统范围。
+4. Writer 只读 capsule 内的 `handoff.md`，只写 `draft/正文.md`；Harness 在
+   capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
+   Guardian sidecar。Writer 不接收句长、段落长度、对白占比等数字目标，
+   也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。
+5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
+   隔离证明缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
+   失效，必须 claim 新会话。一次集中 patch 使用预置当前正文的新 capsule；第三个
+   潜在正文版本必须先由 `authorize-regeneration` 记录绑定当前章节、session 与
+   前两份正文哈希的 author/human_delegate 签名授权，再引用其 authorization ID。
+6. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
    `session-audit`；返回 `continue_allowed=false` 时在下一次请求前停机。
-5. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
+7. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
-6. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
+8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
    “要不要审核”一类开放式问题。
-7. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
+9. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
    进入 `human_decision_required`，不得自动产生第三份不同正文 SHA-256。
-8. 上一章完整 `ready` 后结束该 writer session，运行
+10. 上一章完整 `ready` 后结束该 writer session，运行
    `advance-chapter-sequence`。只有返回 `launch_next_session=true` 才能按顺序
    创建下一章的新 session；不得提前并发起草。
 
 ## 成本边界
 - 每章独立会话；跨章只传有界 handoff，不携带旧会话消息、旧工具输出和审稿全文。
+- Guardian 清单、哈希、预算和回执校验在本地执行，不占模型上下文；ACP 或完整
+  transcript 不是 formal 依赖，也不得为审计而回灌给 writer。
 - 2,000,000 cached-input tokens 是每章硬停止上限，不是应当吃满的目标。
 - 正文一次完整 Write，最多一次集中 Edit；禁止边查 CJK 边连续补写。
 - 规划和疑难因果核验可用 high；正文与默认审稿使用 standard/medium。
@@ -1418,6 +1458,13 @@ def _agent_orchestrator_md() -> str:
 
 ## 不可绕过
 {policy_lines}
+
+- Formal writer 不得看到或修改 `books/` 控制面、验证器源码、evidence、状态文件或
+  其他章节；外部 Harness 无法落实 capsule-only 文件系统时只能降级探索。
+- compromised capsule 必须废弃当前 session；不得在同一 session 中删除违规文件后
+  重新导入，也不得由 writer 自己填写隔离证明或 Guardian 回执。
+- 公开 `evidence/guardian-receipts/` 副本不能单独证明通过；必须匹配
+  `.local-guardian/<slug>/` 的签名权威账本与 imported 控制记录。
 """
 
 
@@ -1442,6 +1489,10 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "evaluation/generation-template.md": (_evaluation_generation_template_md, ()),
     "evaluation/harness-contract.json": (
         _evaluation_harness_contract_json,
+        (),
+    ),
+    "evaluation/guardian-contract.json": (
+        _evaluation_guardian_contract_json,
         (),
     ),
     "evaluation/degraded-run-template.md": (
@@ -1485,9 +1536,11 @@ REQUIRED_DIRECTORIES = [
     "planning/events",
     "planning/chapter-state",
     "planning/chapter-sequences",
+    "planning/guardian-sessions",
     "evaluation/cases",
     "evaluation/experiments",
     "evidence/runtime-audits",
+    "evidence/guardian-receipts",
     "reviews/archive",
     *(f"evidence/{directory}" for directory in EVIDENCE_DIRECTORIES.values()),
     "patches",
@@ -1516,6 +1569,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "evaluation/experiment-template.md",
     "evaluation/generation-template.md",
     "evaluation/harness-contract.json",
+    "evaluation/guardian-contract.json",
     "evaluation/degraded-run-template.md",
     "evaluation/branch-decision-template.md",
     "evaluation/blind-evaluation-template.md",

@@ -264,6 +264,19 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
     assert contract["adapter_operations"]["begin_sequence"].startswith(
         "begin-chapter-sequence "
     )
+    assert contract["guardian"] == {
+        "contract_operation": "guardian-contract",
+        "formal_writer_workspace": "isolated_writer_capsule",
+        "prepare_operation": "prepare-writer-capsule",
+        "ingest_operation": "ingest-writer-capsule",
+        "runtime_operation": "record-capsule-runtime",
+        "authorization_operation": "authorize-regeneration",
+        "invalidate_operation": "invalidate-chapter-session",
+        "book_control_plane_visible_to_writer": False,
+        "validator_source_visible_to_writer": False,
+        "full_transcript_required": False,
+        "acp_required": False,
+    }
     serialized = json.dumps(contract, ensure_ascii=False).lower()
     for vendor in ("minimax", "reasonix", "claude", "deepseek"):
         assert vendor not in serialized
