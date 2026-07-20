@@ -21,7 +21,7 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v4.4 项目骨架，并初始化每书本地 Git）
+# 创建一本新书（生成 v4.5 项目骨架，并初始化每书本地 Git）
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
@@ -33,7 +33,8 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 
 1. 收集最小上下文，填写 Voice Bible、故事发动机与一页式场景包；
 2. 每章新开 writer session，绑定真实 `run_id`，再由外部 Harness 创建仓库外
-   writer capsule；writer 只能读取有界 handoff，只能写正文；
+   writer capsule；Guardian 将固定边界编译为不超过 1200 字符的
+   `formal-writer/v1` `instructions.md`，writer 只读取它与有界 handoff，只能写正文；
 3. 任意 Harness 先读 `evaluation/harness-contract.json` 与
    `evaluation/guardian-contract.json`，输出
    `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
@@ -100,6 +101,7 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   book_project.py    #   books/ 业务层（无数据库）
   book_git.py        #   每书本地 Git、自动 checkpoint 与恢复
   session_audit.py   #   厂商无关 Harness Contract、标准快照审计与兼容导入
+  writer_prompt.py   #   厂商无关的一章式短提示词编译器
   guardian_contract.py # 隔离 writer capsule 的纯机器合同
   guardian.py        #   仓库外 capsule、原子导入、不可变回执与会话失效
   project_templates.py # 新书骨架生成（Voice Bible、七角色、薄壳工具）
@@ -125,6 +127,7 @@ research/            # 前期调研
 - 每书本地版本历史：`docs/27-per-book-local-git.md`
 - 读者追读与运行真相：`docs/28-reader-pull-and-runtime-truth.md`
 - 隔离 Writer Capsule：`docs/29-isolated-writer-capsule.md`
+- 编译 Writer Prompt：`docs/30-compiled-writer-prompt.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

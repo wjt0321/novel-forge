@@ -26,6 +26,7 @@ from app.novel_forge.guardian import (
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.session_audit import record_runtime_audit
 from app.novel_forge.skill_adapter import main as adapter_main
+from app.novel_forge.writer_prompt import FORMAL_WRITER_PROMPT_ID
 
 
 def _json_output(capsys) -> dict:
@@ -241,6 +242,9 @@ def _record_generation(
         "review_call_count": 2,
     }
     observed_metrics.update(metrics)
+    prompt_sha256 = hashlib.sha256(
+        b"test formal writer prompt"
+    ).hexdigest()
     source = tmp_path / f"{generation_id}.md"
     generation_data = {
         "schema_version": 1,
@@ -261,6 +265,8 @@ def _record_generation(
         "tool_failures": [],
         "content_path": content_path,
         "content_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
+        "prompt_template_id": FORMAL_WRITER_PROMPT_ID,
+        "prompt_sha256": prompt_sha256,
         **observed_metrics,
     }
     source.write_text(
@@ -290,6 +296,8 @@ def _record_generation(
             "session_id": run_id,
             "target_path": content_path,
             "handoff_sha256": "0" * 64,
+            "prompt_template_id": FORMAL_WRITER_PROMPT_ID,
+            "prompt_sha256": prompt_sha256,
             "status": "clean",
             "isolation_attested": True,
             "control_plane_exposed": False,
@@ -314,6 +322,8 @@ def _record_generation(
                 "receipt_path": receipt_relative.as_posix(),
                 "body_sha256": generation_data["content_sha256"],
                 "runtime_snapshot_sha256": runtime_sha256,
+                "prompt_template_id": FORMAL_WRITER_PROMPT_ID,
+                "prompt_sha256": prompt_sha256,
             },
         )
         guardian_module._write_signed_receipt(
@@ -1611,23 +1621,23 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     (book_dir / ".git").unlink()
     _remove_readonly_tree(tmp_path / ".local-book-git" / "demo.git")
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v4.5（编译 Writer Prompt 与提示词来源证明）",
             "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
-            "- 工作流版本: v4.2（每书本地版本控制）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v4.5",
             "- 默认工作流: v4.4",
-            "- 默认工作流: v4.2",
         ),
         encoding="utf-8",
     )
@@ -1636,8 +1646,8 @@ def test_sync_tools_migrates_generated_v42_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.4" in claude.read_text(encoding="utf-8")
-    assert "v4.4" in readme.read_text(encoding="utf-8")
+    assert "v4.5" in claude.read_text(encoding="utf-8")
+    assert "v4.5" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

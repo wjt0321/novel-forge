@@ -28,6 +28,10 @@ from .planning_spec import (
     genre_preset,
 )
 from .session_audit import harness_contract
+from .writer_prompt import (
+    FORMAL_WRITER_PROMPT_ID,
+    MAX_FORMAL_WRITER_PROMPT_CHARS,
+)
 
 
 class ProjectTemplateError(Exception):
@@ -134,7 +138,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）
+- 工作流版本: v4.5（编译 Writer Prompt 与提示词来源证明）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -165,10 +169,11 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    上一章 session 冒充新会话。
 3. Orchestrator 运行 `prepare-writer-capsule`，把当前章有界 handoff 放进仓库外
    capsule。启动 writer 时必须把文件系统限制在 capsule；writer 只能读取
-   `handoff.md`，只能输出 `draft/正文.md`，看不到本书控制面、evidence、sequence、
-   校验器源码或其他章节。外部 Harness 在 capsule 外生成标准累计 runtime，并用
-   `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
-4. writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
+   `instructions.md` 与 `handoff.md`，只能输出 `draft/正文.md`，看不到本书控制面、
+   evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
+   `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。外部 Harness 在 capsule 外生成标准
+   累计 runtime，并用 `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
+4. 一次只做一章，writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
    standard/medium；默认审稿也用 standard/medium。Max/长思考只处理被明确命名的
    困难问题，不用于整章自由生成。
 5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
@@ -176,9 +181,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    失效，必须 claim 新会话。一次集中 patch 必须使用新 capsule，它会预置当前正文；
    第三个潜在正文版本必须先用 `authorize-regeneration` 记录绑定当前章节、
    session 与前两份正文哈希的签名人类授权，再把 authorization ID 交给新 capsule。
-6. 记录 generation；`run_id`、provider/model/Harness/思考强度和工具失败必须来自
-   真实会话，并经 `record-evidence` 落盘。初稿后只允许一次集中 patch，即最多
-   两份不同正文 SHA-256。
+6. 记录 generation；`run_id`、provider/model/Harness/思考强度、工具失败、
+   `prompt_template_id` 与 `prompt_sha256` 必须来自真实 capsule/回执，并经
+   `record-evidence` 落盘。初稿后只允许一次集中 patch，即最多两份不同正文 SHA-256。
 7. 每次模型响应后更新累计快照并运行 `session-audit`；若
    `budget.continue_allowed=false`，必须在下一次模型请求前停止。结束时再经
    `record-session-audit` 固化脱敏审计。预算超限、来源不一致、逐字复用覆盖过高、
@@ -218,7 +223,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.4；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.5；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -243,12 +248,14 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-章节序列签发 → 新 writer session claim → 仓库外隔离 capsule → 一次完整初稿 →
+章节序列签发 → 新 writer session claim → 编译短提示词 → 仓库外隔离 capsule → 一次完整初稿 →
 Guardian 导入回执 → 机器门禁 → blind-reader → chapter-editor → 至多一次集中 patch → ready →
 结束本章 session → 顺序签发下一章。
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
+日常使用一次只做一章；Guardian 把简短用户意图与固定边界编译为
+`{FORMAL_WRITER_PROMPT_ID}` 的 `instructions.md`，无需把完整 Skill 反复塞入模型上下文。
 第三个不同正文版本必须先经 `authorize-regeneration` 取得签名控制面授权；公开
 `evidence/guardian-receipts/` 副本不能脱离 `.local-guardian/{slug}/` 权威账本单独通过。
 
@@ -653,6 +660,8 @@ def _evaluation_generation_template_md() -> str:
   "model": "model-name",
   "content_path": "chapters/e01/ch-01/正文.md",
   "content_sha256": "替换为正文文件的64位sha256",
+  "prompt_template_id": "__FORMAL_WRITER_PROMPT_ID__",
+  "prompt_sha256": "替换为instructions.md的64位sha256",
   "elapsed_seconds": null,
   "input_tokens": null,
   "output_tokens": null,
@@ -677,7 +686,7 @@ def _evaluation_generation_template_md() -> str:
   "tool_failures": []
 }
 ```
-"""
+""".replace("__FORMAL_WRITER_PROMPT_ID__", FORMAL_WRITER_PROMPT_ID)
 
 
 def _evaluation_harness_contract_json() -> str:
@@ -1418,17 +1427,19 @@ def _agent_orchestrator_md() -> str:
 3. 每次 launch directive 只允许当前一章。创建新的原生 writer session 后立即
    `claim-chapter-session`，再由外部 Harness 运行 `prepare-writer-capsule`，
    把仓库外目录作为该 writer session 唯一可见、可写的文件系统范围。
-4. Writer 只读 capsule 内的 `handoff.md`，只写 `draft/正文.md`；Harness 在
-   capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
-   Guardian sidecar。Writer 不接收句长、段落长度、对白占比等数字目标，
+4. Guardian 按 `{FORMAL_WRITER_PROMPT_ID}` 编译短小的 `instructions.md`。Writer 只读
+   capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；Harness
+   在 capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
+   Guardian sidecar。Writer 不接收完整 Skill、句长、段落长度、对白占比等数字目标，
    也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。
 5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
    隔离证明缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
    失效，必须 claim 新会话。一次集中 patch 使用预置当前正文的新 capsule；第三个
    潜在正文版本必须先由 `authorize-regeneration` 记录绑定当前章节、session 与
    前两份正文哈希的 author/human_delegate 签名授权，再引用其 authorization ID。
-6. generation 绑定真实 writer `run_id`。每次模型响应后对累计快照运行
-   `session-audit`；返回 `continue_allowed=false` 时在下一次请求前停机。
+6. generation 绑定真实 writer `run_id`、`prompt_template_id` 与 `prompt_sha256`。
+   每次模型响应后对累计快照运行 `session-audit`；返回
+   `continue_allowed=false` 时在下一次请求前停机。
 7. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
 8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
@@ -1442,6 +1453,8 @@ def _agent_orchestrator_md() -> str:
 
 ## 成本边界
 - 每章独立会话；跨章只传有界 handoff，不携带旧会话消息、旧工具输出和审稿全文。
+- 一次只做一章；简短用户意图由 Guardian 编译成不超过 {MAX_FORMAL_WRITER_PROMPT_CHARS} 字符的正式提示词，
+  不重复注入完整 Skill。
 - Guardian 清单、哈希、预算和回执校验在本地执行，不占模型上下文；ACP 或完整
   transcript 不是 formal 依赖，也不得为审计而回灌给 writer。
 - 2,000,000 cached-input tokens 是每章硬停止上限，不是应当吃满的目标。

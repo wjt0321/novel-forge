@@ -257,6 +257,43 @@ def test_generation_accepts_auditable_runtime_lineage_and_rejects_bad_metrics():
         render_evidence_markdown({**data, "request_count": -1})
 
 
+def test_generation_prompt_provenance_is_paired_and_hashed():
+    data = _base(
+        "generation",
+        "generation.ch01.prompt",
+        content_sha256="0" * 64,
+        prompt_template_id="formal-writer/v1",
+        prompt_sha256="1" * 64,
+    )
+
+    record = parse_evidence_markdown(render_evidence_markdown(data))
+
+    assert record.data["prompt_template_id"] == "formal-writer/v1"
+    assert record.data["prompt_sha256"] == "1" * 64
+
+    with pytest.raises(BookEvidenceError, match="必须同时提供"):
+        render_evidence_markdown(
+            {
+                **data,
+                "prompt_sha256": None,
+            }
+        )
+    with pytest.raises(BookEvidenceError, match="必须同时提供"):
+        render_evidence_markdown(
+            {
+                **data,
+                "prompt_template_id": None,
+            }
+        )
+    with pytest.raises(BookEvidenceError, match="SHA-256"):
+        render_evidence_markdown(
+            {
+                **data,
+                "prompt_sha256": "not-a-hash",
+            }
+        )
+
+
 def test_evidence_status_reports_runtime_budget_pressure(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"

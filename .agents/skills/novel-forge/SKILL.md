@@ -18,7 +18,7 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
 Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 `--confirm <operation>`。先用 `--help` 查看参数，不在 Skill 中复制全部 CLI。
 
-## Books v4.4
+## Books v4.5
 
 默认状态链只有八态：
 
@@ -41,7 +41,8 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 Formal Agent writer 不直接进入 `books/<slug>/`。外部 Harness 先读取
 `evaluation/guardian-contract.json` 或调用 `guardian-contract`，在仓库外创建
 capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同、`handoff.md`
-和可写的 `draft/正文.md`；runtime 快照由 Harness 在 capsule 外生成，并经
+、Guardian 以 `formal-writer/v1` 编译且不超过 1200 字符的受保护
+`instructions.md`，以及可写的 `draft/正文.md`；runtime 快照由 Harness 在 capsule 外生成，并经
 `record-capsule-runtime` 写入外置 Guardian sidecar。`ingest-writer-capsule`
 本地核对文件、哈希、session、预算与证明后原子导入正文。
 额外文件、路径逃逸、保护输入变化或证明不实均为 `compromised`，session 失效。
@@ -50,7 +51,7 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 
 ### 章节序列与新会话
 
-正式生产的执行单位不是“一次写几章”，而是**一章一个原生 writer session**。
+正式生产一次只做一章，执行单位是**一章一个原生 writer session**。
 系统用 `planning/chapter-sequences/<sequence-id>.json` 返回 launch directive：
 
 1. 用户要求 1 章：运行 `begin-chapter-sequence --chapter-count 1`。
@@ -100,7 +101,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    出现的触发事件原文，不能用事后解释替代桥接。
    本章开头短引在 `scene_packaged` 可写 `deferred_until_drafted`；完成后推进
    `scene_packaged`，起草后回填真实短引，formal gate 前不得保留 deferred 标记。
-5. 一名 writer 在 capsule 内一次写完整章。正式章不少于 5000 CJK；不要边查字数
+5. 一名 writer 只读 instructions、handoff 与 patch 时预置正文，在 capsule 内处理一章。
+   正式章不少于 5000 CJK；不要边查字数
    边连续补写。writer 只写 `draft/正文.md`；Harness 先经
    `record-capsule-runtime` 写入外置 runtime，再运行 `ingest-writer-capsule`，
    取得干净 Guardian 回执。集中 patch 使用预置当前正文的新 capsule；第三个潜在
@@ -110,7 +112,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    `正文.md` 除标题外只含叙事文本，不得出现 Markdown 粗体、提示词、Agent 身份、
    `ch05`、`正文.md`、generation evidence/id、SHA-256、surface_checked、ready
    等生产元数据。
-6. Guardian 导入成功后记录并绑定 generation evidence；运行期间持续审计标准累计
+6. Guardian 导入成功后记录并绑定 generation evidence；其中
+   `prompt_template_id`/`prompt_sha256` 必须匹配签名回执。运行期间持续审计标准累计
    快照，结束时经
    `record-session-audit` 固化脱敏运行证据。之后运行 `run-gates` 并推进
    `surface_checked`。runtime、来源、质量、叙事或文学结构任一 blocking 都立即
@@ -168,7 +171,7 @@ advisory。机器不认证文学价值。
 
 ## Token 边界与外置 Guardian
 
-- 每章独立会话，只传有界 handoff；Guardian 的哈希、预算、回执都在本地执行，
+- 每章独立会话，只传编译短提示词与有界 handoff，不重复注入完整 Skill；Guardian 的哈希、预算、回执都在本地执行，
   不回灌 ACP、完整 transcript、旧工具结果或验证器源码。
 - `session-audit` 只认 `novel-forge-runtime/v1`。每章上限：30 请求、2,000,000
   cached-input tokens、单请求 120,000 context tokens；超限即停止。
@@ -207,8 +210,8 @@ advisory。机器不认证文学价值。
 `advance-chapter-sequence`、`sync-tools`、
 `init-book-git`、`book-git-checkpoint`、`restore-book-git`、memory candidate/promotion。
 
-`sync-tools` 会受控迁移带 v3.7/v3.8/v3.9/v4.0/v4.1/v4.2/v4.3 生成标记的
-`CLAUDE.md`/`README.md`，补齐 v4.4 隔离 capsule、读者追读、运行真相、每书本地 Git 与章节序列，
+`sync-tools` 会受控迁移带 v3.7/v3.8/v3.9/v4.0/v4.1/v4.2/v4.3/v4.4 生成标记的
+`CLAUDE.md`/`README.md`，补齐 v4.5 编译提示词、隔离 capsule、运行真相、本地 Git 与章节序列，
 并把旧状态映射到八态链；没有版本标记的手写项目宪法保持
 不动。旧专业 Agent 文件可保留为历史兼容资产，但不再属于默认闭环。
 

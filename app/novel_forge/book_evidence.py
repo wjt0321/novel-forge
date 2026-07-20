@@ -173,6 +173,19 @@ def _validate_generation(data: dict[str, Any]) -> None:
     digest = _require_string(data, "content_sha256")
     if not SHA256_RE.fullmatch(digest):
         raise BookEvidenceError("generation.content_sha256 必须是 SHA-256。")
+    prompt_template_id = data.get("prompt_template_id")
+    prompt_sha256 = data.get("prompt_sha256")
+    if (prompt_template_id is None) != (prompt_sha256 is None):
+        raise BookEvidenceError(
+            "generation.prompt_template_id 与 prompt_sha256 必须同时提供。"
+        )
+    if prompt_template_id is not None:
+        _require_string(data, "prompt_template_id")
+        prompt_digest = _require_string(data, "prompt_sha256")
+        if not SHA256_RE.fullmatch(prompt_digest):
+            raise BookEvidenceError(
+                "generation.prompt_sha256 必须是 SHA-256。"
+            )
     _optional_nonnegative_number(data, "elapsed_seconds")
     for field in (
         "input_tokens",

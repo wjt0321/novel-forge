@@ -19,6 +19,10 @@ from .planning_spec import (
     MAX_REQUEST_CONTEXT_TOKENS,
     MAX_REQUESTS_PER_CHAPTER,
 )
+from .writer_prompt import (
+    FORMAL_WRITER_PROMPT_ID,
+    MAX_FORMAL_WRITER_PROMPT_CHARS,
+)
 
 
 RUNTIME_AUDIT_SCHEMA_VERSION = 1
@@ -163,6 +167,9 @@ def harness_contract() -> dict[str, Any]:
             "runtime_operation": "record-capsule-runtime",
             "authorization_operation": "authorize-regeneration",
             "invalidate_operation": "invalidate-chapter-session",
+            "prompt_template_id": FORMAL_WRITER_PROMPT_ID,
+            "prompt_file": "instructions.md",
+            "prompt_max_characters": MAX_FORMAL_WRITER_PROMPT_CHARS,
             "book_control_plane_visible_to_writer": False,
             "validator_source_visible_to_writer": False,
             "full_transcript_required": False,

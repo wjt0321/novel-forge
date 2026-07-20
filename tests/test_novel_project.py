@@ -102,13 +102,16 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.4" in claude_md
+    assert "v4.5" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
     assert "不得配置 remote" in claude_md
     assert "begin-chapter-sequence" in claude_md
     assert "prepare-writer-capsule" in claude_md
+    assert "instructions.md" in claude_md
+    assert "formal-writer/v1" in claude_md
+    assert "一次只做一章" in claude_md
     assert "record-capsule-runtime" in claude_md
     assert "authorize-regeneration" in claude_md
     assert "ingest-writer-capsule" in claude_md
@@ -138,7 +141,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.4" in readme
+    assert "默认工作流: v4.5" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -194,6 +197,8 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert '"sandbox_profile"' in generation_template
     assert '"tool_capabilities"' in generation_template
     assert '"tool_failures"' in generation_template
+    assert '"prompt_template_id"' in generation_template
+    assert '"prompt_sha256"' in generation_template
     assert generation_template.count("chapters/e01/ch-") == 2
 
     harness_contract = json.loads(
@@ -236,6 +241,11 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert harness_contract["guardian"]["authorization_operation"] == (
         "authorize-regeneration"
     )
+    assert harness_contract["guardian"]["prompt_template_id"] == (
+        "formal-writer/v1"
+    )
+    assert harness_contract["guardian"]["prompt_file"] == "instructions.md"
+    assert harness_contract["guardian"]["prompt_max_characters"] == 1200
     assert harness_contract["guardian"]["acp_required"] is False
 
     guardian_contract = json.loads(
@@ -247,6 +257,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert guardian_contract["workspace"]["book_control_plane_visible"] is False
     assert guardian_contract["runtime"]["full_transcript_required"] is False
     assert guardian_contract["runtime"]["stored_in_external_guardian_sidecar"] is True
+    assert guardian_contract["prompt"]["template_id"] == "formal-writer/v1"
+    assert guardian_contract["prompt"]["compiled_file"] == "instructions.md"
+    assert guardian_contract["prompt"]["max_characters"] == 1200
     assert guardian_contract["session"]["authorization_operation"] == (
         "authorize-regeneration"
     )
@@ -481,16 +494,19 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v44_isolated_writer_and_runtime_truth_workflow():
+def test_skill_documents_v45_compiled_prompt_and_runtime_truth_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.4" in text
+    assert "v4.5" in text
     assert "guardian-contract" in text
     assert "prepare-writer-capsule" in text
     assert "ingest-writer-capsule" in text
     assert "capsule-only" in text
+    assert "instructions.md" in text
+    assert "formal-writer/v1" in text
+    assert "一次只做一章" in text
     assert "ACP 和完整 transcript 不是" in text
     assert "begin-chapter-sequence" in text
     assert "claim-chapter-session" in text

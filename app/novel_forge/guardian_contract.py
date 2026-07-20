@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from .session_audit import RUNTIME_REPORT_SCHEMA
+from .writer_prompt import (
+    FORMAL_WRITER_PROMPT_ID,
+    MAX_FORMAL_WRITER_PROMPT_CHARS,
+)
 
 
 GUARDIAN_CONTRACT_SCHEMA = "novel-forge-guardian-contract/v1"
@@ -31,6 +35,7 @@ def guardian_contract() -> dict[str, Any]:
             "allowed": [
                 "capsule.json",
                 "guardian-contract.json",
+                "instructions.md",
                 "handoff.md",
                 "draft/正文.md for a bounded patch capsule",
             ],
@@ -38,6 +43,13 @@ def guardian_contract() -> dict[str, Any]:
             "patch_capsule_seeds_current_draft": True,
             "full_project_context_forbidden": True,
             "old_session_context_forbidden": True,
+        },
+        "prompt": {
+            "template_id": FORMAL_WRITER_PROMPT_ID,
+            "compiled_file": "instructions.md",
+            "max_characters": MAX_FORMAL_WRITER_PROMPT_CHARS,
+            "protected_input": True,
+            "full_skill_reinjection": False,
         },
         "outputs": {
             "allowed": [

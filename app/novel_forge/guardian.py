@@ -27,6 +27,7 @@ from .session_audit import (
     audit_session_log,
     evaluate_session_budget,
 )
+from .writer_prompt import render_formal_writer_instructions
 
 
 CAPSULE_SCHEMA = "novel-forge-writer-capsule/v1"
@@ -44,6 +45,7 @@ _CAPSULE_ALLOWED_FILES = frozenset(
         "capsule.json",
         "guardian-contract.json",
         "handoff.md",
+        "instructions.md",
         "draft/正文.md",
     }
 )
@@ -52,6 +54,7 @@ _CAPSULE_PROTECTED_FILES = (
     "capsule.json",
     "guardian-contract.json",
     "handoff.md",
+    "instructions.md",
 )
 
 
@@ -398,6 +401,15 @@ def prepare_writer_capsule(
         raise GuardianError("当前章节 handoff 已被修改，不能创建 writer capsule。")
 
     capsule_id = f"cap-ch{chapter:02d}-{uuid.uuid4().hex[:12]}"
+    prompt = render_formal_writer_instructions(
+        chapter,
+        operation=operation,
+    )
+    (capsule / "instructions.md").write_text(
+        prompt.text,
+        encoding="utf-8",
+    )
+    prompt_sha256 = _sha256(capsule / "instructions.md")
     manifest = {
         "schema": CAPSULE_SCHEMA,
         "capsule_id": capsule_id,
@@ -406,6 +418,8 @@ def prepare_writer_capsule(
         "sequence_id": sequence_id,
         "session_id": session_id,
         "handoff_sha256": handoff_sha256,
+        "prompt_template_id": prompt.template_id,
+        "prompt_sha256": prompt_sha256,
         "target_path": target,
         "operation": operation,
         "input_body_sha256": input_body_sha256,
@@ -472,6 +486,8 @@ def prepare_writer_capsule(
         "sequence_id": sequence_id,
         "session_id": session_id,
         "handoff_sha256": handoff_sha256,
+        "prompt_template_id": prompt.template_id,
+        "prompt_sha256": prompt_sha256,
         "target_path": target,
         "operation": operation,
         "input_body_sha256": input_body_sha256,
@@ -790,6 +806,8 @@ def _record_compromised(
             False,
         ),
         "human_decision_reference": control.get("human_decision_reference"),
+        "prompt_template_id": control.get("prompt_template_id"),
+        "prompt_sha256": control.get("prompt_sha256"),
         "regeneration_authorization_id": control.get(
             "regeneration_authorization_id"
         ),
@@ -1085,6 +1103,8 @@ def ingest_writer_capsule(
             False,
         ),
         "human_decision_reference": control.get("human_decision_reference"),
+        "prompt_template_id": control.get("prompt_template_id"),
+        "prompt_sha256": control.get("prompt_sha256"),
         "regeneration_authorization_id": control.get(
             "regeneration_authorization_id"
         ),
@@ -1128,6 +1148,8 @@ def ingest_writer_capsule(
             False,
         ),
         "human_decision_reference": control.get("human_decision_reference"),
+        "prompt_template_id": control.get("prompt_template_id"),
+        "prompt_sha256": control.get("prompt_sha256"),
         "regeneration_authorization_id": control.get(
             "regeneration_authorization_id"
         ),
@@ -1156,6 +1178,16 @@ def guardian_receipt_errors(
     run_id = str(generation.get("run_id") or "").strip()
     content_path = str(generation.get("content_path") or "").strip()
     content_sha256 = str(generation.get("content_sha256") or "").strip()
+    prompt_template_id = str(
+        generation.get("prompt_template_id") or ""
+    ).strip()
+    prompt_sha256 = str(generation.get("prompt_sha256") or "").strip()
+    if not prompt_template_id:
+        return [
+            "formal agent generation 缺少 Guardian prompt_template_id。"
+        ]
+    if not prompt_sha256:
+        return ["formal agent generation 缺少 Guardian prompt_sha256。"]
     directory = Path(book_dir) / GUARDIAN_RECEIPT_DIRECTORY
     receipts: list[dict[str, Any]] = []
     if directory.is_dir():
@@ -1216,6 +1248,9 @@ def guardian_receipt_errors(
         or control.get("body_sha256") != receipt.get("body_sha256")
         or control.get("runtime_snapshot_sha256")
         != receipt.get("runtime_snapshot_sha256")
+        or control.get("prompt_template_id")
+        != receipt.get("prompt_template_id")
+        or control.get("prompt_sha256") != receipt.get("prompt_sha256")
     ):
         return ["Guardian 回执与 imported capsule 控制记录不一致。"]
     if receipt.get("control_plane_exposed") is not False:
@@ -1226,6 +1261,12 @@ def guardian_receipt_errors(
         return ["Guardian 回执包含未声明输出文件。"]
     if receipt.get("target_path") != content_path:
         return ["Guardian 回执 target_path 与 generation 不一致。"]
+    if receipt.get("prompt_template_id") != prompt_template_id:
+        return [
+            "Guardian 回执 prompt_template_id 与 generation 不一致。"
+        ]
+    if receipt.get("prompt_sha256") != prompt_sha256:
+        return ["Guardian 回执 prompt_sha256 与 generation 不一致。"]
     pure = PurePosixPath(content_path)
     target = Path(book_dir) / Path(*pure.parts)
     if not target.is_file():
