@@ -1,0 +1,130 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "claude-teams-kimi-code-novel-workflow-comparison-20260721",
+  "recorded_at": "2026-07-21",
+  "purpose": "Preserve a sanitized comparison of two single-chapter Novel Forge demos before recycling all raw book, per-book Git, and Guardian assets.",
+  "comparison_boundary": "The stories, harnesses, orchestration capabilities, and workflow modes differ. This is a workflow diagnostic sample, not a controlled model benchmark or literary ranking.",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "samples": [
+    {
+      "slug": "old-roof-repair",
+      "title": "天倾时，我在旧城修屋脊",
+      "chapter_title": "黑水",
+      "chapter": {
+        "cjk": 7772,
+        "sha256": "a7564316e5cb23e5b8a3b82946a67230ff97305e5210cda98fc407615d2521fb",
+        "quality_blocking": 0,
+        "quality_advisory": 23,
+        "workflow_status": "ready",
+        "sequence_effective_status": "complete"
+      },
+      "observed_stack": {
+        "orchestrator": "Claude Code Agent Teams",
+        "native_members_verified": [
+          "writer-ch01",
+          "writer-ch01-v2",
+          "writer-ch01-patch",
+          "blind-reader-ch01",
+          "chapter-editor-ch01"
+        ],
+        "team_metadata_model": "deepseek-v4-pro[1m]",
+        "project_evidence_model": "deepseek-v4-flash",
+        "provenance_conflict": true
+      },
+      "workflow_truth": {
+        "first_capsule_compromised_and_invalidated": true,
+        "clean_draft_receipt_present": true,
+        "clean_patch_receipt_present": true,
+        "native_separate_review_agents": true,
+        "same_provider_model_for_writer_and_reviews": true,
+        "review_confidence": "single_origin",
+        "runtime_numbers_look_estimated": true,
+        "writer_prompt_claimed_capsule_only_access": true,
+        "team_member_actual_cwd_was_repository_root": true,
+        "filesystem_hard_isolation_verified": false
+      },
+      "literary_observations": {
+        "strengths": [
+          "古建职业细节能进入动作链",
+          "城市灾变意象与章末追读钩子较强",
+          "主角在关键节点有主动选择"
+        ],
+        "risks": [
+          "开头存在必须天亮前完成与不准天亮前完成的语义矛盾",
+          "否定翻转句式在局部修订后仍有残留",
+          "中后段生理机制解释偏多",
+          "ASCII直引号、比喻密度和固定句首形成模型痕迹"
+        ]
+      },
+      "local_git": {
+        "head": "bbc8b851ddb4269da150a548a60afb1c1e42ebb0",
+        "dirty_before_recycle": true,
+        "uncommitted_path": "planning/chapter-sequences/seq-01-cf385c1bde46.json"
+      }
+    },
+    {
+      "slug": "dead-memory-notarization",
+      "title": "死者记忆不予公证",
+      "chapter_title": "三个程雾砚",
+      "chapter": {
+        "cjk": 5713,
+        "sha256": "777e7ace400db7c6b6196cd0447b082b48e874e9aead340dc81bb8d677791c7d",
+        "quality_blocking": 0,
+        "quality_advisory": 26,
+        "workflow_status": "editorial_reviewed",
+        "draft_mode": "exploration",
+        "ready_eligible": false
+      },
+      "observed_stack": {
+        "orchestrator": "Kimi Code CLI single session",
+        "project_evidence_provider": "moonshot",
+        "project_evidence_model": "deepseek-v4-flash",
+        "thinking_depth": "not_exposed",
+        "runtime_metrics": "unavailable"
+      },
+      "workflow_truth": {
+        "guardian_receipt_status": "compromised",
+        "guardian_isolation_attested": false,
+        "runtime_audit_present": false,
+        "independent_blind_reader_present": false,
+        "independent_chapter_editor_present": false,
+        "same_session_simulated_reviews_disclosed": true,
+        "blind_reader_verdict": "needs_revision",
+        "chapter_editor_verdict": "ready_for_editor_decision",
+        "reached_ready": false,
+        "unknown_runtime_values_left_null": true
+      },
+      "literary_observations": {
+        "strengths": [
+          "三个自我与第四次审查记录构成清晰高概念钩子",
+          "记忆公证职业规则具有可操作感",
+          "叙事推进直接，比喻密度较低"
+        ],
+        "risks": [
+          "未落实推人版本的硬锚点",
+          "核心异常进入偏晚",
+          "过度依赖系统日志宣布答案",
+          "私人记忆代价未落实为现实物件与人物消失",
+          "主角隐瞒异常并建议入证据链的动机不足",
+          "ASCII直引号、冒号和独词句形成模型痕迹"
+        ]
+      },
+      "local_git": {
+        "head": "3ab7b15a2a9b9ba0aec04d9a9c0ed88d140d6dbb",
+        "dirty_before_recycle": false
+      }
+    }
+  ],
+  "conclusion": {
+    "current_best_workflow_fit": "Claude Code Agent Teams",
+    "reason": "Native role spawning and workflow orchestration fit Novel Forge better in the observed runs, although provenance truth and filesystem isolation still require verification.",
+    "kimi_code_result": "Readable high-concept draft with honest limitations, but the single-session run did not complete the formal workflow.",
+    "next_planned_experiment_user_stated": "Three separately opened Claude sessions using DeepSeek V4 Flash with thinking enabled for writer, blind reader, and chapter editor roles."
+  },
+  "disposition": {
+    "book_workspaces_recycled": ["old-roof-repair", "dead-memory-notarization"],
+    "local_book_gits_recycled": ["old-roof-repair", "dead-memory-notarization"],
+    "local_guardian_ledgers_recycled": ["old-roof-repair", "dead-memory-notarization"]
+  }
+}

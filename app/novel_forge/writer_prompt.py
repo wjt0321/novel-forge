@@ -28,6 +28,7 @@ def render_formal_writer_instructions(
     chapter: int,
     *,
     operation: str = "draft",
+    patch_directive: str | None = None,
 ) -> WriterPrompt:
     """Render the bounded instructions for one formal chapter writer."""
     if (
@@ -39,10 +40,20 @@ def render_formal_writer_instructions(
     if operation not in {"draft", "patch"}:
         raise WriterPromptError("operation 必须是 draft 或 patch。")
     if operation == "patch":
+        directive = str(patch_directive or "").strip()
+        if len(directive) > 420:
+            raise WriterPromptError("MUST 修订指令超过字符预算。")
+        directive_text = (
+            "\n\n本次只处理以下 MUST，不扩写 MAY 或无关段落：\n"
+            f"{directive}"
+            if directive
+            else ""
+        )
         writing_task = (
             "读取 handoff.md 与已预置的 draft/正文.md，按审稿结论完成一次"
             "集中修订。保留未受影响的正文，不得借 patch 重写整章；修订后"
             "仍须形成清晰的场景压力、人物选择、行动后果和停止点。"
+            f"{directive_text}"
         )
     else:
         writing_task = (

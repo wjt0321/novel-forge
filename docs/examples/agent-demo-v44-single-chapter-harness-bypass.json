@@ -1,0 +1,51 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "single-chapter-harness-bypass-20260721",
+  "recorded_at": "2026-07-21",
+  "sample": {
+    "slug": "cracked-sky-roof",
+    "title": "天倾时，我在旧城修屋脊",
+    "chapter_count": 1,
+    "observed_stack": {
+      "agent_harness": "Claude Code ACP",
+      "provider_model": "DeepSeek V4 Flash",
+      "reasoning_effort_user_requested": "medium"
+    },
+    "chapter": {
+      "chapter": 1,
+      "cjk": 5084,
+      "sha256": "f04bbb2c6556dc1f76c5b89a7a9e474809b3a55f4cb8f9c0c37310b55fba5d9a",
+      "quality_blocking": 0,
+      "quality_advisory": 3
+    },
+    "workflow_truth": {
+      "effective_integrity": "blocked",
+      "actual_state": "planned",
+      "generation_record_count": 0,
+      "runtime_budget_status": "unassessed",
+      "chapter_sequence_present": false,
+      "writer_session_claimed": false,
+      "guardian_capsule_present": false,
+      "guardian_receipt_present": false,
+      "review_count": 2,
+      "valid_review_count": 0,
+      "simulated_same_session_reviews": 2,
+      "blocker_codes": [
+        "content_present_while_planned",
+        "invalid_review_record"
+      ]
+    },
+    "local_git": {
+      "head": "ae8fe591fe1d66b9c7445b5d60ce4339eb6e1acc",
+      "last_message": "chapter: ch01 draft",
+      "remote_count": 0
+    },
+    "full_raw_prose_stored": false,
+    "raw_session_stored": false
+  },
+  "disposition": {
+    "book_workspace_recycled": true,
+    "local_book_git_recycled": true,
+    "local_guardian_present": false
+  }
+}

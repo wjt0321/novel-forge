@@ -330,6 +330,7 @@ def prepare_writer_capsule(
     target_path: str,
     *,
     regeneration_authorization_id: str | None = None,
+    patch_directive: str | None = None,
 ) -> dict[str, Any]:
     """Create a repository-external capsule for one claimed writer session."""
     root = Path(root).resolve()
@@ -404,6 +405,7 @@ def prepare_writer_capsule(
     prompt = render_formal_writer_instructions(
         chapter,
         operation=operation,
+        patch_directive=patch_directive,
     )
     (capsule / "instructions.md").write_text(
         prompt.text,

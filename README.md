@@ -25,6 +25,11 @@ PYTHONPATH=. python -m pytest tests/ -q
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
+# 自动三角色工作流（外部 Harness 命令由 NOVEL_FORGE_HARNESS_COMMAND 配置）
+PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> start my-novel \
+  --title "我的小说" --genre "都市" --protagonist "主角设定" \
+  --world "世界观" --conflict "本章核心冲突" --hook "本章结尾钩子"
+
 # 对任意 Markdown 直接跑规则 lint
 PYTHONPATH=. python -m app.novel_forge.lint <file>
 ```
@@ -128,6 +133,7 @@ research/            # 前期调研
 - 读者追读与运行真相：`docs/28-reader-pull-and-runtime-truth.md`
 - 隔离 Writer Capsule：`docs/29-isolated-writer-capsule.md`
 - 编译 Writer Prompt：`docs/30-compiled-writer-prompt.md`
+- 自动三角色工作流：`docs/31-automatic-three-role-workflow.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

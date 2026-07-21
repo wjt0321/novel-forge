@@ -599,6 +599,41 @@ def invalidate_chapter_session(
     return _public(record)
 
 
+def rotate_chapter_session(
+    root: Path,
+    slug: str,
+    sequence_id: str,
+    session_id: str,
+    *,
+    reason: str = "consolidated_patch_required",
+) -> dict[str, Any]:
+    """Retire a valid writer after review and require a fresh patch session."""
+    reason = reason.strip()
+    if not reason:
+        raise ChapterSequenceError("session rotation reason 不能为空。")
+    _, path, record = _load_sequence(root, slug, sequence_id)
+    if record.get("status") != "running":
+        raise ChapterSequenceError("只有正在运行的章节 session 可以轮换。")
+    if record.get("active_session_id") != session_id:
+        raise ChapterSequenceError(
+            "session_id 与当前章节绑定的原生 writer session 不一致。"
+        )
+    chapter = record["chapters"][record["current_index"]]
+    record.setdefault("retired_sessions", []).append(
+        {
+            "session_id": session_id,
+            "chapter": chapter,
+            "reason": reason,
+            "retired_at": _now(),
+        }
+    )
+    record["active_session_id"] = None
+    record["status"] = "awaiting_session"
+    record["updated_at"] = _now()
+    _atomic_json(path, record)
+    return _public(record)
+
+
 def chapter_sequence_status(
     root: Path, slug: str, sequence_id: str
 ) -> dict[str, Any]:

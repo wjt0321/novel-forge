@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import shutil
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -793,6 +794,45 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
     return out
 
 
+def list_review_history(
+    book_dir: Path, ch_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Return immutable review records with staleness computed from bindings."""
+    history_dir = Path(book_dir) / "reviews/history"
+    out: list[dict[str, Any]] = []
+    if not history_dir.is_dir():
+        return out
+    for path in sorted(history_dir.glob("review-*.md")):
+        text = path.read_text(encoding="utf-8-sig")
+        parsed = parse_review(text)
+        chapter_id = parsed.get("chapter")
+        role = parsed.get("role")
+        if not isinstance(chapter_id, str) or not chapter_id.startswith("ch"):
+            continue
+        if ch_id and chapter_id != ch_id:
+            continue
+        try:
+            number = int(chapter_id.removeprefix("ch"))
+            current = _review_binding_for_book(book_dir, number, role)
+            stale = parsed.get("source_fingerprint") != current[
+                "source_fingerprint"
+            ]
+        except (BookProjectError, TypeError, ValueError):
+            stale = True
+        out.append(
+            {
+                "review_id": path.stem,
+                "chapter": chapter_id,
+                "role": role,
+                "verdict": parsed.get("verdict"),
+                "review_session_id": parsed.get("review_session_id"),
+                "path": path.relative_to(book_dir).as_posix(),
+                "stale": stale,
+            }
+        )
+    return out
+
+
 def record_review(
     root: Path, slug: str, number: int, role: str, review_file: Path
 ) -> dict[str, Any]:
@@ -824,6 +864,19 @@ def record_review(
     ch_id = _chapter_id(number)
     target = book_dir / "reviews" / _review_filename(ch_id, role)
     target.parent.mkdir(parents=True, exist_ok=True)
+    history = book_dir / "reviews/history"
+    history.mkdir(parents=True, exist_ok=True)
+    review_id = (
+        f"review-{ch_id}-{role}-"
+        f"{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}-"
+        f"{uuid.uuid4().hex[:8]}"
+    )
+    history_target = history / f"{review_id}.md"
+    if history_target.exists():
+        raise BookProjectError(
+            f"审稿历史记录已存在，不得覆盖：{history_target.name}"
+        )
+    history_target.write_text(text, encoding="utf-8")
     # The review may already sit at its canonical location (reviewers write
     # directly into reviews/); only copy when source and target differ.
     if review_file.resolve() != target.resolve():
@@ -841,6 +894,8 @@ def record_review(
 
     return {
         "review_file": f"reviews/{target.name}",
+        "review_record": history_target.relative_to(book_dir).as_posix(),
+        "review_id": review_id,
         "role": role,
         "verdict": parsed["verdict"],
         "must_open": parsed["must_open"],
@@ -1067,6 +1122,17 @@ def advance_state(
         if blind_review.get("session_isolated") is not True:
             raise BookProjectError(
                 "进入 ready 前 blind-reader 必须绑定不同于写作 run_id 的独立会话。"
+            )
+        editor_review = reviews.get("chapter-editor", {})
+        role_sessions = {
+            str(generation.data.get("run_id") or "").strip(),
+            str(blind_review.get("review_session_id") or "").strip(),
+            str(editor_review.get("review_session_id") or "").strip(),
+        }
+        if "" in role_sessions or len(role_sessions) != 3:
+            raise BookProjectError(
+                "进入 ready 前 Writer、Blind Reader 与 Chapter Editor "
+                "必须绑定三个不同的真实会话。"
             )
         runtime_errors = _runtime_audit_errors(book_dir, generation.data)
         if runtime_errors:
@@ -1393,6 +1459,9 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             )
     data["chapters"] = chapters
     data["reviews"] = list_reviews(
+        book_dir, _chapter_id(number) if number is not None else None
+    )
+    data["review_history"] = list_review_history(
         book_dir, _chapter_id(number) if number is not None else None
     )
     duplicate_review_artifacts: list[str] = []

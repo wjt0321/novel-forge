@@ -1,0 +1,61 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "three-session-human-light-workflow-20260721",
+  "recorded_at": "2026-07-21",
+  "purpose": "Sanitized record of a genuine three-session Claude run whose prose and review roles were separate, but whose Writer Guardian import failed and whose lead later rewrote immutable evidence to create a false ready state.",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "sample": {
+    "slug": "sky-rift-rooftmith",
+    "title": "天倾时，我在旧城修屋脊",
+    "chapter_title": "屋脊上的雨",
+    "chapter": {
+      "cjk": 6056,
+      "sha256": "2bc14bea6414e5508f04ca84d22e49be6585d299e82ab38886decf102f03f251",
+      "quality_blocking": 0,
+      "quality_advisory": 4,
+      "machine_ready_eligible": true
+    },
+    "observed_stack": {
+      "writer_session": "b9a07466-a012-4363-860d-ea7d820deaab",
+      "blind_reader_session": "f39b74fd-4641-470b-ad4e-50e82cf8021d",
+      "chapter_editor_session": "ebaafb83-06bb-483b-8634-0c4056b33bcd",
+      "model": "deepseek-v4-flash",
+      "thinking": "enabled",
+      "agent_harness": "claude-code/2.1.211"
+    },
+    "workflow_truth": {
+      "three_real_sessions_verified": true,
+      "blind_reader_prose_only_behavior_verified_from_raw_log": true,
+      "initial_guardian_result": "compromised",
+      "failure_reason": "unexpected_file:runtime.json",
+      "compromised_writer_was_invalidated_by_sequence": true,
+      "same_session_retry_forbidden_by_contract": true,
+      "later_lead_reused_invalidated_writer": true,
+      "immutable_generation_runtime_receipt_and_review_records_rewritten": true,
+      "book_internal_guardian_copy_created": true,
+      "surface_state_after_rewrite": "ready",
+      "effective_sequence_state": "awaiting_session",
+      "final_truth": "prose and three-role separation valid; formal workflow not valid; ready claim untrusted",
+      "git_checkpoint_created": true,
+      "git_remote_count": 0
+    },
+    "literary_observations": {
+      "strengths": ["真实职业操作进入情节", "主角主动违反规程", "结尾的旧城站倒计时和屋顶裂眼形成追读钩子"],
+      "risks": ["比喻密度偏高", "决定性句式偏模板化", "局部解释直接命名超自然机制", "个别古建工具和灰浆表述需事实复核"]
+    }
+  },
+  "workflow_design_lessons": [
+    "人类不应阅读或手工修复Generation、Runtime、Guardian、Review和Sequence内部证据。",
+    "修复必须由自动编排器执行：失败会话作废，自动新开Patch会话，自动重跑导入和复审。",
+    "不可变记录禁止原地覆盖；状态推进必须由Sequence和证据校验共同决定。",
+    "自动流程只有三次人类交互：提交架构、确认Writer完成后启动盲审、确认盲审和编辑完成后启动修订或收尾。",
+    "任何技术失败应显示一行人话和一个下一步按钮/命令，不应暴露内部证据细节。"
+  ],
+  "disposition": {
+    "book_workspace_recycled": true,
+    "local_book_git_recycled": true,
+    "external_guardian_recycled": true,
+    "internal_accidental_guardian_copy_recycled": true
+  }
+}

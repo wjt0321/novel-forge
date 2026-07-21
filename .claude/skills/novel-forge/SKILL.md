@@ -26,6 +26,8 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 
 `ready` 只是材料齐备，不是作者批准或发布许可。
 
+自动入口：`tools/novel-workflow.py`。
+
 ### 通用 Harness Contract
 
 开始 formal 写作前，任何 Agent/Harness 都先读取本书
