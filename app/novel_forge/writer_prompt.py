@@ -51,7 +51,9 @@ def render_formal_writer_instructions(
         )
         writing_task = (
             "读取 handoff.md 与已预置的 draft/正文.md，按审稿结论完成一次"
-            "集中修订。保留未受影响的正文，不得借 patch 重写整章；修订后"
+            "集中修订。只做最小且因果完整的改动，保留未受影响的正文，不得"
+            "借 patch 重写整章；不得把 finding 改写成解释段或审稿口吻。"
+            "优先把必要动机分散到动作、停顿、关系反应和物件后果中。修订后"
             "仍须形成清晰的场景压力、人物选择、行动后果和停止点。"
             f"{directive_text}"
         )
@@ -61,10 +63,15 @@ def render_formal_writer_instructions(
             "场景压力、人物选择、行动后果和停止点；保持既有叙事距离与信息释放"
             "方式，但不要复制 Voice exemplar 的具体措辞、动作、物件或句法。"
         )
+    literary_boundary = (
+        "规划是后台故事义务，不得在正文中逐条证明。允许人物误判、遗漏、自欺和"
+        "反应迟半拍；让认知通过动作、关系和后果显形。高压对白不得退化为整齐问答"
+        "记录，但也不要按固定句数机械插入动作。"
+    )
     text = (
         f"# Formal Writer Instructions - 第 {chapter:02d} 章\n\n"
         "你是本次 formal chapter writer，只负责当前一章。\n\n"
-        f"{writing_task}\n\n"
+        f"{writing_task}\n\n{literary_boundary}\n\n"
         "唯一允许写入的文件是 draft/正文.md。除 Markdown 章节标题外，"
         f"文件中只能包含小说叙事正文；正式章节不少于 {MIN_FORMAL_CJK} 个"
         " CJK 汉字。\n\n"

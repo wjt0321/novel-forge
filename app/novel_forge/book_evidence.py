@@ -857,7 +857,8 @@ def evidence_status(
         if len(group) > 1
     ]
 
-    def _review_cycle(count: int) -> str:
+    def _review_cycle(records: list[EvidenceRecord]) -> str:
+        count = len(records)
         if count == 0:
             return "unrecorded"
         if count == 1:
@@ -866,6 +867,17 @@ def evidence_status(
             return "consolidated_patch"
         if count == MAX_AUTOMATIC_GENERATIONS:
             return "budget_exhausted"
+        authorized_regenerations = sum(
+            record.data.get("human_regeneration_authorized") is True
+            and record.data.get("authority") in {"author", "human_delegate"}
+            and isinstance(
+                record.data.get("human_decision_reference"), str
+            )
+            and bool(record.data["human_decision_reference"].strip())
+            for record in records
+        )
+        if authorized_regenerations >= count - MAX_AUTOMATIC_GENERATIONS:
+            return "human_regeneration"
         return "budget_exceeded"
 
     generations_by_chapter: dict[int, list[EvidenceRecord]] = {}
@@ -877,7 +889,7 @@ def evidence_status(
         {
             "chapter": generation_chapter,
             "generation_count": len(chapter_records),
-            "review_cycle_status": _review_cycle(len(chapter_records)),
+            "review_cycle_status": _review_cycle(chapter_records),
             "another_generation_requires_human": (
                 len(chapter_records) >= MAX_AUTOMATIC_GENERATIONS
             ),
@@ -889,7 +901,7 @@ def evidence_status(
     generation_record_count = len(generation_records)
     generation_count = len(semantic_generation_records)
     review_cycle_status = (
-        _review_cycle(generation_count)
+        _review_cycle(semantic_generation_records)
         if chapter is not None
         else "not_applicable"
     )

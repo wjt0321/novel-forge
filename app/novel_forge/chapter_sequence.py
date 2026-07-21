@@ -28,6 +28,7 @@ from .planning_spec import (
     MAX_HANDOFF_SCENE_PACKAGE_CHARS,
     MAX_HANDOFF_TOTAL_CHARS,
     MAX_HANDOFF_VOICE_EXEMPLAR_CHARS,
+    WRITER_VISIBLE_SCENE_SECTIONS,
 )
 
 
@@ -206,10 +207,22 @@ def _scene_package(book_dir: Path, chapter: int) -> tuple[Path, str]:
             f"缺少第 {chapter:02d} 章 scene package："
             f"planning/scene-package-ch{chapter:02d}.md"
         )
-    return path, _bounded(
-        path.read_text(encoding="utf-8-sig"),
-        MAX_HANDOFF_SCENE_PACKAGE_CHARS,
+    source = path.read_text(encoding="utf-8-sig")
+    sections: list[str] = []
+    for heading in WRITER_VISIBLE_SCENE_SECTIONS:
+        content = _section(source, heading)
+        if content:
+            sections.extend((f"## {heading}", content, ""))
+    if not sections:
+        raise ChapterSequenceError(
+            f"第 {chapter:02d} 章 scene package 没有 Writer 可见的故事内容。"
+        )
+    brief = (
+        "完整 Scene Package 是编辑控制面。以下只是后台故事义务，"
+        "不得在正文中逐条证明；审计推理、替代解释和验证清单未传给 Writer。\n\n"
+        + "\n".join(sections).strip()
     )
+    return path, _bounded(brief, MAX_HANDOFF_SCENE_PACKAGE_CHARS)
 
 
 def build_chapter_handoff(
@@ -285,9 +298,9 @@ def build_chapter_handoff(
         "",
         memory_text,
         "",
-        "## 当前章 Scene Package",
+        "## 当前章 Writer Story Brief",
         "",
-        f"- 来源: `{scene_path.relative_to(book_dir).as_posix()}`",
+        f"- 来源 Scene Package: `{scene_path.relative_to(book_dir).as_posix()}`",
         "",
         scene_text,
         "",

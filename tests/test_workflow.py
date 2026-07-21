@@ -94,7 +94,10 @@ class ScriptedBackend:
         self.review_rounds = list(review_rounds)
         self.sessions: list[SessionIdentity] = []
         self.review_contexts: list[tuple[str, set[str]]] = []
+        self.review_instructions: list[tuple[str, str, str]] = []
         self.planning_calls: list[tuple[str, int]] = []
+        self.planning_instructions: list[tuple[str, str]] = []
+        self.writer_directives: list[tuple[str, tuple[str, ...]]] = []
         self._role_counts: dict[str, int] = {}
         self._review_index = 0
 
@@ -120,6 +123,7 @@ class ScriptedBackend:
         runtime_path: Path,
         must_findings: tuple[str, ...],
     ) -> None:
+        self.writer_directives.append((session.session_id, must_findings))
         step = self.writer_steps.pop(0)
         (capsule_dir / "draft/正文.md").write_text(
             step.prose,
@@ -147,8 +151,11 @@ class ScriptedBackend:
         request: WorkflowRequest,
         chapter: int,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> PlanningOutcome:
         self.planning_calls.append((session.session_id, chapter))
+        self.planning_instructions.append((instructions, reasoning_effort))
         handoff = ""
         if chapter > 1:
             previous_quote = next(
@@ -270,8 +277,13 @@ class ScriptedBackend:
         *,
         role: str,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> ReviewOutcome:
         self.review_contexts.append((role, set(context)))
+        self.review_instructions.append(
+            (role, instructions, reasoning_effort)
+        )
         round_index = self._review_index // 2
         role_index = 0 if role == "blind-reader" else 1
         outcome = self.review_rounds[round_index][role_index]
@@ -421,6 +433,7 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         "native-chapter-editor-01",
     ]
     assert backend.planning_calls == [("native-writer-01", 1)]
+    assert backend.planning_instructions[0][1] == "high"
     assert backend.review_contexts[0] == ("blind-reader", {"prose"})
     assert backend.review_contexts[1][0] == "chapter-editor"
     assert backend.review_contexts[1][1] == {
@@ -428,7 +441,12 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         "scene_package",
         "canon",
         "blind_review",
+        "machine_diagnostics",
     }
+    assert backend.review_instructions[0][2] == "medium"
+    assert backend.review_instructions[1][2] == "medium"
+    assert "谜题成立不等于愿意追读" in backend.review_instructions[0][1]
+    assert "每轮都完整执行五项审查" in backend.review_instructions[1][1]
     blind_review = (
         orchestrator.root / "books/demo/reviews/ch01-blind-reader.md"
     ).read_text(encoding="utf-8")
@@ -602,6 +620,12 @@ def test_patch_uses_new_writer_session_and_replaces_reviews_without_mutation(
     ]
     assert writer_ids == ["native-writer-01", "native-writer-02"]
     assert backend.planning_calls == [("native-writer-01", 1)]
+    patch_directive = backend.writer_directives[1][1]
+    assert len(patch_directive) == 1
+    assert "开场" in patch_directive[0]
+    assert "林舟握住门把" in patch_directive[0]
+    assert "阻力出现得太晚" in patch_directive[0]
+    assert "把追兵的压力提前到第一段" in patch_directive[0]
     history = sorted(
         (
             orchestrator.root / "books/demo/reviews/history"
@@ -716,6 +740,96 @@ def test_retry_restarts_failed_chapter_with_a_fresh_session(tmp_path: Path):
     assert [
         item.session_id for item in backend.sessions if item.role == "writer"
     ] == ["native-writer-01", "native-writer-02"]
+
+
+def test_second_review_must_persists_decision_and_retires_patch_writer(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(_prose("初稿")),
+            WriterStep(_prose("集中修订")),
+        ],
+        [_must_reviews(), _must_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    status = orchestrator.status("demo")
+    sequence = chapter_sequence_status(
+        orchestrator.root,
+        "demo",
+        result.sequence_id,
+    )
+
+    assert result.user_state == "decision_required"
+    assert status.user_state == "decision_required"
+    assert status.message == "自动修订后仍有问题，请选择下一步。"
+    assert sequence["effective_status"] == "awaiting_session"
+    assert sequence["active_session_id"] is None
+    sequence_file = next(
+        (
+            orchestrator.root
+            / "books/demo/planning/chapter-sequences"
+        ).glob("*.json")
+    )
+    sequence_record = json.loads(
+        sequence_file.read_text(encoding="utf-8")
+    )
+    assert {
+        item["session_id"]
+        for item in sequence_record["retired_sessions"]
+    } == {"native-writer-01", "native-writer-02"}
+
+
+def test_user_retry_after_two_literary_versions_authorizes_fresh_third_writer(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(_prose("初稿")),
+            WriterStep(_prose("集中修订")),
+            WriterStep(_prose("人工选择后的回炉稿")),
+        ],
+        [_must_reviews(), _must_reviews(), _pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    failed = orchestrator.start("demo", _request(), chapter=1)
+
+    result = orchestrator.retry("demo")
+
+    assert failed.user_state == "decision_required"
+    assert result.user_state == "chapter_complete"
+    assert [
+        item.session_id for item in backend.sessions if item.role == "writer"
+    ] == [
+        "native-writer-01",
+        "native-writer-02",
+        "native-writer-03",
+    ]
+    evidence = evidence_status(orchestrator.root, "demo", 1)
+    assert evidence["generation_count"] == 3
+    current_generation = next(
+        item for item in evidence["records"] if item["stale"] is False
+    )
+    third = (
+        orchestrator.root / "books/demo" / current_generation["path"]
+    ).read_text(encoding="utf-8")
+    assert '"authority": "human_delegate"' in third
+    assert '"human_regeneration_authorized": true' in third
+    assert (
+        '"human_decision_reference": '
+        '"automatic-workflow:user-selected-regenerate"'
+        in third
+    )
+    current_reviews = list_reviews(
+        orchestrator.root / "books/demo",
+        "ch01",
+    )
+    assert {item["verdict"] for item in current_reviews} == {
+        "pass",
+        "ready_for_editor_decision",
+    }
 
 
 @pytest.mark.parametrize(

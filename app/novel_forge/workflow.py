@@ -31,12 +31,17 @@ from .chapter_sequence import (
 )
 from .guardian import (
     GuardianError,
+    authorize_regeneration,
     ingest_writer_capsule,
     prepare_writer_capsule,
     record_capsule_runtime,
 )
 from .models import NovelForgeError
 from .project_templates import init_book_project
+from .review_prompt import (
+    render_planning_instructions,
+    render_review_instructions,
+)
 from .session_audit import (
     audit_session_log,
     evaluate_session_budget,
@@ -161,6 +166,8 @@ class SessionBackend(Protocol):
         request: WorkflowRequest,
         chapter: int,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> PlanningOutcome: ...
 
     def run_writer(
@@ -179,6 +186,8 @@ class SessionBackend(Protocol):
         *,
         role: str,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> ReviewOutcome: ...
 
 
@@ -234,7 +243,16 @@ class CommandSessionBackend:
             return payload
 
     def create_session(self, role: str) -> SessionIdentity:
-        payload = self._invoke({"action": "create_session", "role": role})
+        payload = self._invoke(
+            {
+                "action": "create_session",
+                "role": role,
+                "requirements": {
+                    "fresh_native_session": True,
+                    "context_isolation": "required",
+                },
+            }
+        )
         try:
             return SessionIdentity(
                 session_id=str(payload["session_id"]).strip(),
@@ -264,6 +282,10 @@ class CommandSessionBackend:
                 "capsule_id": capsule_id,
                 "runtime_output": str(runtime_path),
                 "must_findings": list(must_findings),
+                "execution_profile": {
+                    "reasoning_effort": "medium",
+                    "response_count_limit": 1,
+                },
             }
         )
 
@@ -274,6 +296,8 @@ class CommandSessionBackend:
         request: WorkflowRequest,
         chapter: int,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> PlanningOutcome:
         payload = self._invoke(
             {
@@ -284,6 +308,11 @@ class CommandSessionBackend:
                 "chapter": chapter,
                 "request": asdict(request),
                 "context": context,
+                "instructions": instructions,
+                "execution_profile": {
+                    "reasoning_effort": reasoning_effort,
+                    "response_count_limit": 1,
+                },
             }
         )
         files = payload.get("files")
@@ -300,6 +329,8 @@ class CommandSessionBackend:
         *,
         role: str,
         context: dict[str, str],
+        instructions: str,
+        reasoning_effort: str,
     ) -> ReviewOutcome:
         payload = self._invoke(
             {
@@ -307,6 +338,11 @@ class CommandSessionBackend:
                 "role": role,
                 "session_id": session.session_id,
                 "context": context,
+                "instructions": instructions,
+                "execution_profile": {
+                    "reasoning_effort": reasoning_effort,
+                    "response_count_limit": 1,
+                },
             }
         )
         findings = tuple(
@@ -474,6 +510,10 @@ class NovelWorkflowOrchestrator:
         sequence_id: str,
         phase: str,
         retries: int,
+        decision_kind: str | None = None,
+        decision_message: str | None = None,
+        must_findings: tuple[str, ...] = (),
+        parent_generation_id: str | None = None,
     ) -> None:
         _atomic_json(
             self._control_path(slug),
@@ -484,6 +524,10 @@ class NovelWorkflowOrchestrator:
                 "sequence_id": sequence_id,
                 "phase": phase,
                 "technical_retry_count": retries,
+                "decision_kind": decision_kind,
+                "decision_message": decision_message,
+                "must_findings": list(must_findings),
+                "parent_generation_id": parent_generation_id,
                 "request": asdict(request),
                 "updated_at": _now(),
                 "author_approval": False,
@@ -665,6 +709,8 @@ class NovelWorkflowOrchestrator:
             request=request,
             chapter=chapter,
             context=self._planning_context(book_dir, chapter),
+            instructions=render_planning_instructions().text,
+            reasoning_effort="high",
         )
         self._write_writer_planning(book_dir, chapter, planning)
         sequence_id = f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
@@ -716,6 +762,7 @@ class NovelWorkflowOrchestrator:
         must_findings: tuple[str, ...],
         parent_generation_id: str | None,
         initial_session: SessionIdentity | None = None,
+        human_decision_reference: str | None = None,
     ) -> tuple[SessionIdentity, str, int] | None:
         target_path = f"chapters/e01/ch-{chapter:02d}/正文.md"
         for attempt in range(self.max_technical_retries + 1):
@@ -730,6 +777,17 @@ class NovelWorkflowOrchestrator:
                 sequence_id,
                 session.session_id,
             )
+            authorization_id = None
+            if human_decision_reference is not None:
+                authorization = authorize_regeneration(
+                    self.root,
+                    slug,
+                    sequence_id,
+                    session.session_id,
+                    authority="human_delegate",
+                    decision_reference=human_decision_reference,
+                )
+                authorization_id = authorization["authorization_id"]
             capsule = (
                 self.capsule_root
                 / slug
@@ -749,6 +807,7 @@ class NovelWorkflowOrchestrator:
                 session.session_id,
                 capsule,
                 target_path,
+                regeneration_authorization_id=authorization_id,
                 patch_directive=directive or None,
             )
             try:
@@ -824,7 +883,11 @@ class NovelWorkflowOrchestrator:
             "id": generation_id,
             "kind": "generation",
             "created_at": _now(),
-            "authority": "agent",
+            "authority": (
+                "human_delegate"
+                if prepared.get("human_regeneration_authorized") is True
+                else "agent"
+            ),
             "source_paths": [imported["target_path"]],
             "summary": "自动三角色工作流记录的当前章节正文。",
             "chapter": chapter,
@@ -854,6 +917,11 @@ class NovelWorkflowOrchestrator:
             "parent_generation_id": parent_generation_id,
             **metrics,
         }
+        if prepared.get("human_regeneration_authorized") is True:
+            record["human_regeneration_authorized"] = True
+            record["human_decision_reference"] = prepared[
+                "human_decision_reference"
+            ]
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -1009,6 +1077,8 @@ class NovelWorkflowOrchestrator:
             blind_session,
             role="blind-reader",
             context={"prose": prose},
+            instructions=render_review_instructions("blind-reader").text,
+            reasoning_effort="medium",
         )
         blind_text = self._render_review(
             slug,
@@ -1033,6 +1103,14 @@ class NovelWorkflowOrchestrator:
             "scene_package": scene,
             "canon": "\n".join(canon_parts)[:12000],
             "blind_review": blind_text,
+            "machine_diagnostics": self._machine_diagnostics(
+                book_project.run_gates(
+                    self.root,
+                    slug,
+                    chapter,
+                    expected_mode="formal",
+                )
+            ),
         }
         if chapter > 1:
             previous_text = book_project.find_chapter_file(
@@ -1045,6 +1123,8 @@ class NovelWorkflowOrchestrator:
             editor_session,
             role="chapter-editor",
             context=editor_context,
+            instructions=render_review_instructions("chapter-editor").text,
+            reasoning_effort="medium",
         )
         editor_text = self._render_review(
             slug,
@@ -1058,7 +1138,7 @@ class NovelWorkflowOrchestrator:
         )
         must = tuple(
             dict.fromkeys(
-                f"{item.location}：{item.revision_intent}"
+                self._patch_directive(item)
                 for outcome in (blind, editor)
                 for item in outcome.findings
                 if item.severity.upper() == "MUST"
@@ -1066,6 +1146,48 @@ class NovelWorkflowOrchestrator:
             )
         )
         return must, editor_text
+
+    @staticmethod
+    def _patch_directive(item: ReviewFinding) -> str:
+        """Compile one evidence-aware, bounded Patch Writer obligation."""
+        def clean(value: str, limit: int) -> str:
+            return re.sub(r"\s+", " ", value).strip(" |｜")[:limit]
+
+        return (
+            f"{clean(item.location, 48)}｜"
+            f"原文：{clean(item.evidence, 96)}｜"
+            f"读者效果：{clean(item.reader_effect, 96)}｜"
+            f"修订目标：{clean(item.revision_intent, 128)}"
+        )
+
+    @staticmethod
+    def _machine_diagnostics(gates: dict[str, Any]) -> str:
+        """Render a bounded editor-only summary without exposing it to Blind Reader."""
+        lines = [
+            "机器诊断只提供定位，不替代文学判断，也不得按数值机械改稿。"
+        ]
+        quality = gates.get("quality")
+        if isinstance(quality, dict):
+            for finding in quality.get("findings", [])[:12]:
+                if not isinstance(finding, dict):
+                    continue
+                lines.append(
+                    "- line "
+                    f"{finding.get('line_number')}: "
+                    f"{finding.get('rule_code')} / "
+                    f"{finding.get('message')} / "
+                    f"{finding.get('evidence')}"
+                )
+        literary = gates.get("literary")
+        if isinstance(literary, dict):
+            for finding in literary.get("findings", [])[:8]:
+                if not isinstance(finding, dict):
+                    continue
+                lines.append(
+                    f"- {finding.get('code')}: "
+                    f"{finding.get('detail') or finding.get('message')}"
+                )
+        return "\n".join(lines)[:4000]
 
     def _record_review_text(
         self,
@@ -1093,6 +1215,127 @@ class NovelWorkflowOrchestrator:
         finally:
             source.unlink(missing_ok=True)
 
+    def _decision_result(
+        self,
+        slug: str,
+        request: WorkflowRequest,
+        chapter: int,
+        sequence_id: str,
+        *,
+        message: str,
+        retries: int,
+        decision_kind: str,
+        must_findings: tuple[str, ...] = (),
+        parent_generation_id: str | None = None,
+    ) -> WorkflowResult:
+        self._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="decision_required",
+            retries=retries,
+            decision_kind=decision_kind,
+            decision_message=message,
+            must_findings=must_findings,
+            parent_generation_id=parent_generation_id,
+        )
+        return _user_result(
+            "decision_required",
+            message,
+            sequence_id,
+            retries=retries,
+            options=USER_OPTIONS,
+        )
+
+    def _finish_chapter(
+        self,
+        slug: str,
+        request: WorkflowRequest,
+        chapter: int,
+        sequence_id: str,
+        writer_session: SessionIdentity,
+        retries: int,
+    ) -> WorkflowResult:
+        ready = book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "ready",
+            evidence="automatic-workflow/current",
+        )
+        if ready.get("local_git", {}).get("status") != "recorded":
+            book_project.advance_state(
+                self.root,
+                slug,
+                chapter,
+                "editorial_reviewed",
+                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+            )
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="本章尚未形成可恢复版本，请选择下一步。",
+                retries=retries,
+                decision_kind="git_checkpoint_failed",
+            )
+        advance_chapter_sequence(
+            self.root,
+            slug,
+            sequence_id,
+            writer_session.session_id,
+        )
+        sequence = chapter_sequence_status(
+            self.root, slug, sequence_id
+        )
+        if sequence["effective_status"] != "complete":
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="本章状态尚未一致，请选择下一步。",
+                retries=retries,
+                decision_kind="sequence_inconsistent",
+            )
+        checkpoint = checkpoint_book(
+            self.root,
+            slug,
+            f"workflow: ch{chapter:02d} complete",
+        )
+        git_ok = (
+            checkpoint.get("commit_hash") is not None
+            and checkpoint.get("remote_count") == 0
+        )
+        if not git_ok:
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="本章尚未形成可恢复版本，请选择下一步。",
+                retries=retries,
+                decision_kind="git_checkpoint_failed",
+            )
+        self._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="complete",
+            retries=retries,
+        )
+        return _user_result(
+            "chapter_complete",
+            f"第{_chapter_label(chapter)}章完成，"
+            f"是否继续第{_chapter_label(chapter + 1)}章？",
+            sequence_id,
+            retries=retries,
+            git_ok=True,
+        )
+
     def _run_sequence(
         self,
         slug: str,
@@ -1112,20 +1355,14 @@ class NovelWorkflowOrchestrator:
         )
         if initial is None:
             retries = self.max_technical_retries
-            self._save_control(
+            return self._decision_result(
                 slug,
-                request=request,
-                chapter=chapter,
-                sequence_id=sequence_id,
-                phase="decision_required",
-                retries=retries,
-            )
-            return _user_result(
-                "decision_required",
-                "自动重试仍未完成，请选择下一步。",
+                request,
+                chapter,
                 sequence_id,
+                message="自动重试仍未完成，请选择下一步。",
                 retries=retries,
-                options=USER_OPTIONS,
+                decision_kind="initial_generation_failed",
             )
         writer_session, generation_id, retries = initial
         self._finalize_scene_handoff(slug, chapter)
@@ -1176,12 +1413,16 @@ class NovelWorkflowOrchestrator:
             )
             if patched is None:
                 total_retries = retries + self.max_technical_retries
-                return _user_result(
-                    "decision_required",
-                    "自动重试仍未完成，请选择下一步。",
+                return self._decision_result(
+                    slug,
+                    request,
+                    chapter,
                     sequence_id,
+                    message="自动重试仍未完成，请选择下一步。",
                     retries=total_retries,
-                    options=USER_OPTIONS,
+                    decision_kind="patch_generation_failed",
+                    must_findings=must,
+                    parent_generation_id=generation_id,
                 )
             writer_session, generation_id, patch_retries = patched
             self._finalize_scene_handoff(slug, chapter)
@@ -1219,84 +1460,31 @@ class NovelWorkflowOrchestrator:
                 evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
             )
             if must:
-                return _user_result(
-                    "decision_required",
-                    "自动修订后仍有问题，请选择下一步。",
+                rotate_chapter_session(
+                    self.root,
+                    slug,
                     sequence_id,
-                    retries=retries,
-                    options=USER_OPTIONS,
+                    writer_session.session_id,
+                    reason="additional_human_regeneration_required",
                 )
-        ready = book_project.advance_state(
-            self.root,
+                return self._decision_result(
+                    slug,
+                    request,
+                    chapter,
+                    sequence_id,
+                    message="自动修订后仍有问题，请选择下一步。",
+                    retries=retries,
+                    decision_kind="literary_revision_required",
+                    must_findings=must,
+                    parent_generation_id=generation_id,
+                )
+        return self._finish_chapter(
             slug,
+            request,
             chapter,
-            "ready",
-            evidence="automatic-workflow/current",
-        )
-        if ready.get("local_git", {}).get("status") != "recorded":
-            book_project.advance_state(
-                self.root,
-                slug,
-                chapter,
-                "editorial_reviewed",
-                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
-            )
-            return _user_result(
-                "decision_required",
-                "本章尚未形成可恢复版本，请选择下一步。",
-                sequence_id,
-                retries=retries,
-                options=USER_OPTIONS,
-            )
-        advance_chapter_sequence(
-            self.root,
-            slug,
             sequence_id,
-            writer_session.session_id,
-        )
-        sequence = chapter_sequence_status(
-            self.root, slug, sequence_id
-        )
-        if sequence["effective_status"] != "complete":
-            return _user_result(
-                "decision_required",
-                "本章状态尚未一致，请选择下一步。",
-                sequence_id,
-                retries=retries,
-                options=USER_OPTIONS,
-            )
-        self._save_control(
-            slug,
-            request=request,
-            chapter=chapter,
-            sequence_id=sequence_id,
-            phase="complete",
-            retries=retries,
-        )
-        checkpoint = checkpoint_book(
-            self.root,
-            slug,
-            f"workflow: ch{chapter:02d} complete",
-        )
-        git_ok = (
-            checkpoint.get("commit_hash") is not None
-            and checkpoint.get("remote_count") == 0
-        )
-        if not git_ok:
-            return _user_result(
-                "decision_required",
-                "本章尚未形成可恢复版本，请选择下一步。",
-                sequence_id,
-                retries=retries,
-                options=USER_OPTIONS,
-            )
-        return _user_result(
-            "chapter_complete",
-            f"第{_chapter_label(chapter)}章完成，"
-            f"是否继续第{_chapter_label(chapter + 1)}章？",
-            sequence_id,
-            retries=retries,
-            git_ok=True,
+            writer_session,
+            retries,
         )
 
     def status(self, slug: str) -> WorkflowResult:
@@ -1325,7 +1513,10 @@ class NovelWorkflowOrchestrator:
         if phase == "decision_required":
             return _user_result(
                 "decision_required",
-                "自动重试仍未完成，请选择下一步。",
+                str(
+                    control.get("decision_message")
+                    or "自动重试仍未完成，请选择下一步。"
+                ),
                 sequence_id,
                 retries=int(control.get("technical_retry_count") or 0),
                 options=USER_OPTIONS,
@@ -1358,15 +1549,129 @@ class NovelWorkflowOrchestrator:
                 sequence_id,
                 options=USER_OPTIONS,
             )
+        decision_kind = str(control.get("decision_kind") or "")
+        must_findings = tuple(
+            str(item)
+            for item in control.get("must_findings", [])
+            if str(item).strip()
+        )
+        parent_generation_id = (
+            str(control["parent_generation_id"])
+            if control.get("parent_generation_id")
+            else None
+        )
+        previous_retries = int(
+            control.get("technical_retry_count") or 0
+        )
         self._save_control(
             slug,
             request=request,
             chapter=chapter,
             sequence_id=sequence_id,
             phase="writing",
-            retries=int(control.get("technical_retry_count") or 0),
+            retries=previous_retries,
         )
-        return self._run_sequence(slug, request, chapter, sequence_id)
+        if decision_kind == "initial_generation_failed":
+            return self._run_sequence(slug, request, chapter, sequence_id)
+        if decision_kind not in {
+            "patch_generation_failed",
+            "literary_revision_required",
+        }:
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="当前草稿需要人工选择保留、重写或停止。",
+                retries=previous_retries,
+                decision_kind=decision_kind or "manual_decision_required",
+                must_findings=must_findings,
+                parent_generation_id=parent_generation_id,
+            )
+        patched = self._execute_generation(
+            slug,
+            chapter,
+            sequence_id,
+            must_findings=must_findings,
+            parent_generation_id=parent_generation_id,
+            human_decision_reference=(
+                "automatic-workflow:user-selected-regenerate"
+                if decision_kind == "literary_revision_required"
+                else None
+            ),
+        )
+        if patched is None:
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="自动重试仍未完成，请选择下一步。",
+                retries=previous_retries + self.max_technical_retries,
+                decision_kind=decision_kind,
+                must_findings=must_findings,
+                parent_generation_id=parent_generation_id,
+            )
+        writer_session, generation_id, patch_retries = patched
+        retries = previous_retries + patch_retries
+        self._finalize_scene_handoff(slug, chapter)
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "drafted",
+            evidence=f"evidence/generations/{generation_id}.md",
+        )
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "surface_checked",
+            evidence="run-gates/current",
+        )
+        self.on_status("正在自动审稿。")
+        must, _ = self._review_round(slug, chapter, writer_session)
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "blind_read",
+            evidence=f"reviews/ch{chapter:02d}-blind-reader.md",
+        )
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "editorial_reviewed",
+            evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+        )
+        if must:
+            rotate_chapter_session(
+                self.root,
+                slug,
+                sequence_id,
+                writer_session.session_id,
+                reason="additional_human_regeneration_required",
+            )
+            return self._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="重新生成后仍有问题，请选择下一步。",
+                retries=retries,
+                decision_kind="literary_revision_required",
+                must_findings=must,
+                parent_generation_id=generation_id,
+            )
+        return self._finish_chapter(
+            slug,
+            request,
+            chapter,
+            sequence_id,
+            writer_session,
+            retries,
+        )
 
     def stop(self, slug: str) -> WorkflowResult:
         path = self._control_path(slug)

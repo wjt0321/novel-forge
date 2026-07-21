@@ -171,11 +171,15 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    capsule。启动 writer 时必须把文件系统限制在 capsule；writer 只能读取
    `instructions.md` 与 `handoff.md`，只能输出 `draft/正文.md`，看不到本书控制面、
    evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
-   `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。外部 Harness 在 capsule 外生成标准
+   `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。handoff 中只放过滤后的
+   Writer Story Brief；完整 Scene Package 的决策问题、替代解释、可证伪假设、因果
+   归属和专业判断审计只供 Chapter Editor 使用。外部 Harness 在 capsule 外生成标准
    累计 runtime，并用 `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
 4. 一次只做一章，writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
    standard/medium；默认审稿也用 standard/medium。Max/长思考只处理被明确命名的
-   困难问题，不用于整章自由生成。
+   困难问题，不用于整章自由生成。规划是后台故事义务，不得在正文中逐项证明；
+   人物允许误判、遗漏、自欺和延迟反应。对白按回应关系、身体位置和权力变化判断，
+   不按固定句数机械插动作。
 5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
    runtime 缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
    失效，必须 claim 新会话。一次集中 patch 必须使用新 capsule，它会预置当前正文；
@@ -192,7 +196,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 8. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
    只读正文并给 `human_likeness`、`reader_desire` 与追读证据；同会话只能标记
    `simulated_blind` 且不能 pass。
-   chapter-editor 合并因果、人物、行文、肌理和连续性。专业角色仅在明确风险下按需调用。
+   blind-reader 还要识别控制面泄漏、整齐问答、职业证明与修补接缝。
+   chapter-editor 每轮重新完成因果、人物、行文、肌理和连续性五项审查。专业角色仅在
+   明确风险下按需调用。
 9. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
    `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
    新 session；否则停止。第五章做 checkpoint audit，并用 `evidence-status`
@@ -459,9 +465,11 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 - ______（主角）：
 - ______：
 
-### 对白铁律（仅 2 条）
-- 台词卡禁止：连续四句以上仅有引号、无动作/心理/场景穿插的纯对白 → MUST。
-- 归属感强制：三句以上无说话人标识的短对话连续出现 → MUST。
+### 对白边界（按读者效果判断）
+- 高压对白必须让人物相对位置、身体受力或权力变化持续可感；只有对白退化为整齐
+  问答记录、使现场退出时才是 MUST。纯对白本身不是错误，禁止按固定句数机械插动作。
+- 只有读者无法判断谁在对谁说、回应关系因此断裂时，归属问题才是 MUST；不按固定
+  轮数强加说话人标签。
 
 ## sensory_palette
 {palette}
@@ -1013,7 +1021,8 @@ def _agent_chapter_editor_md() -> str:
 
 1. 先只读正文，重建事件链、人物选择、代价、停止点和三个画面。
 2. 再读一页式 scene package、当前记忆包和上一章末段；不读旧专业审稿。
-3. 一次完成五项检查：因果与有限认知、人物和世界的独立目标、对白与信息流、
+3. 每轮都完整完成五项检查，不得只核对上一轮 finding：因果与有限认知、
+   人物和世界的独立目标、对白与信息流、
    句子肌理及跨章连续性。
 4. 机器报告出现句长塌缩、章内模式饱和、Voice 范文表层复制或低量跨章复读时，
    结合原文判断它是有意复沓还是模板化填充；极端逐字复用覆盖、长段复制和损坏对白
@@ -1021,6 +1030,9 @@ def _agent_chapter_editor_md() -> str:
 5. 第 2 章起核对上一章末明确决定；若本章行动反转，必须能在正文前段找到新的触发，
    不能让 scene package 用解释替正文补桥。
 6. 只有发现具体专业风险时，才请求一个 specialist review；不得默认扩成六审。
+7. 检查编辑控制面是否泄漏进正文：人物不得逐项背诵替代解释、反证或因果审计。
+8. 检查人物可替换性、对白是否退化为整齐记录，以及局部 patch 是否形成集中解释段。
+   不得按固定台词句数或固定动作间隔判错。
 
 写入 `reviews/chXX-chapter-editor.md`。每条 MUST/MAY 都要有原文证据和读者效果；
 MUST 最多 5 条。第 2 章起填写 `previous_chapter_quote`。verdict 只能是
@@ -1055,7 +1067,8 @@ def _agent_blind_reader_md() -> str:
 - 每条结论必须有原文证据；禁止抽象赞扬。
 - `human_likeness: convincing | uncertain | synthetic`。只有 `convincing`
   可以配合 verdict=pass；若节奏像清单、物件循环像模板配额、叙述知道未来章节、
-  或正文带工作流语言，必须给 uncertain/synthetic 与 needs_revision。
+  正文带工作流语言、人物逐项列完替代解释、高压对白退化为整齐问答记录，或局部
+  修订留下明显接缝，必须结合读者效果给 uncertain/synthetic 与 needs_revision。
 - `reader_desire: continue | conditional | stop`。只有 `continue` 可以配合
   verdict=pass；必须填写 `emotional_residue` 与 `next_chapter_pull`，回答一个真人
   是否会自愿继续读，而不是正文是否“符合模板”。
@@ -1431,7 +1444,8 @@ def _agent_orchestrator_md() -> str:
    capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；Harness
    在 capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
    Guardian sidecar。Writer 不接收完整 Skill、句长、段落长度、对白占比等数字目标，
-   也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。
+   也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。handoff 只含
+   过滤后的 Story Brief；完整 Scene Package 的决策审计只供 Chapter Editor 使用。
 5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
    隔离证明缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
    失效，必须 claim 新会话。一次集中 patch 使用预置当前正文的新 capsule；第三个
@@ -1444,9 +1458,12 @@ def _agent_orchestrator_md() -> str:
    质量、叙事或文学结构 gate 有 blocking 立即短路。
 8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
-   “要不要审核”一类开放式问题。
-9. 同源 findings 合并成一个局部 patch。第二份 generation 后仍有 MUST，
-   进入 `human_decision_required`，不得自动产生第三份不同正文 SHA-256。
+   “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
+   修补接缝；chapter-editor 每轮完整重审五项文学维度。
+9. 同源 findings 合并成一个局部 patch，义务必须绑定位置、原文证据、读者效果和
+   修订意图，不得直接增加解释段。第二份不同正文 SHA-256（第二份 generation）后
+   仍有 MUST，退役 Patch Writer 并进入 `human_decision_required`；用户明确选择
+   重新生成后才签发第三版授权。
 10. 上一章完整 `ready` 后结束该 writer session，运行
    `advance-chapter-sequence`。只有返回 `launch_next_session=true` 才能按顺序
    创建下一章的新 session；不得提前并发起草。
@@ -1462,6 +1479,7 @@ def _agent_orchestrator_md() -> str:
 - 规划和疑难因果核验可用 high；正文与默认审稿使用 standard/medium。
 - Max 只处理被明确命名的困难问题，不用于整章自由生成、模板、状态或证据。
 - 默认两角色；专业编辑只有 chapter-editor 指出具体风险时才调用一个。
+- MAY 和 advisory 不触发额外生成；第三版必须等待用户明确选择。
 
 ## 回退
 - 机器 blocking 或行文问题 → `drafted`。

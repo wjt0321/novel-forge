@@ -104,6 +104,21 @@ MAX_HANDOFF_PREVIOUS_TAIL_CHARS = 1_600
 MAX_HANDOFF_VOICE_EXEMPLAR_CHARS = 1_200
 MAX_HANDOFF_TOTAL_CHARS = 28_000
 
+# The full scene package is an editor-facing control plane. Writer capsules
+# receive only story obligations; falsification, cognition alternatives,
+# causal responsibility, and professional audit remain available to editors.
+WRITER_VISIBLE_SCENE_SECTIONS: tuple[str, ...] = (
+    "0. 边界",
+    "0b. 章际交接",
+    "1. 场景压力",
+    "2. 在场者状态",
+    "3. Beat 因果链",
+    "4. 信息账本",
+    "5. 信息预算",
+    "6. 人物性呼吸段",
+    "7. 场景余波",
+)
+
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})
 

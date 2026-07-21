@@ -1,0 +1,80 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "control-plane-spill-and-repair-seam-20260721",
+  "recorded_at": "2026-07-21",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "session_ids_stored": false,
+  "recoverable_book_history_stored": false,
+  "sample": {
+    "slug": "si-zhe-lai-dian",
+    "chapter_count": 1,
+    "chapter_metrics": {
+      "chapter": "ch01",
+      "cjk": 7072,
+      "content_sha256": "f099a071a6990752d18b8c3124fe1802c53cf1e248c5648061e5975f75032b2f",
+      "quality_blocking": 0,
+      "quality_advisory": 18
+    },
+    "review_truth": {
+      "blind_reader_verdict": "pass",
+      "human_likeness": "convincing",
+      "reader_desire": "continue",
+      "chapter_editor_verdict": "needs_revision",
+      "open_must": 1
+    },
+    "workflow_truth": {
+      "draft_mode": "exploration",
+      "chapter_state": "drafted",
+      "sequence_effective_status": "running",
+      "generation_count": 2,
+      "old_generation_stale": true,
+      "writer_session_reused_for_patch": true,
+      "runtime_audit_valid": false,
+      "external_guardian_exists": false,
+      "local_git_initialized": true,
+      "local_git_remote_count": 0,
+      "ready_checkpoint_exists": false
+    },
+    "literary_observations": {
+      "strengths": [
+        "开场异常、职业动作和章末钩子具备类型小说功能",
+        "局部场景存在可视物件与身体动作",
+        "谜面和眼前危险可以被读者重建"
+      ],
+      "risks": [
+        "人物思考逐项展示规划审计",
+        "替代解释和专业判断释放过度完整",
+        "对白呈整齐问答并被机械动作打断",
+        "主角私人关系与不可替代损失不足",
+        "Patch 以解释段直接修补 finding",
+        "Blind Reader 将可重建性误当成人味充分证明"
+      ]
+    }
+  },
+  "root_cause": {
+    "full_scene_package_exposed_to_writer": true,
+    "editor_only_reasoning_exposed_to_writer": true,
+    "review_role_tasks_undercompiled": true,
+    "fixed_dialogue_line_rules_incentivized_mechanical_actions": true,
+    "patch_directive_lacked_reader_effect_and_revision_intent": true,
+    "real_host_bypassed_patch_session_rotation": true
+  },
+  "workflow_design_lessons": [
+    "完整 Scene Package 是编辑控制面，Writer 只读取过滤后的 Story Brief。",
+    "Writer 正文允许误判、遗漏、自欺和延迟反应，不逐条证明规划。",
+    "对白按回应关系、身体位置和权力变化判断，不使用固定行数配额。",
+    "Blind Reader 必须识别控制面泄漏、整齐问答、职业证明和修补接缝。",
+    "Chapter Editor 每轮完整重审全部文学维度。",
+    "Patch 指令绑定位置、证据、读者效果和修订意图，且由新会话执行。",
+    "默认成本保持一次初稿、一次自动 Patch 和每轮双审。",
+    "第三版只在用户明确选择重新生成后授权。",
+    "协议保持厂商、工具和模型无关。"
+  ],
+  "disposition": {
+    "book_workspace_deleted": true,
+    "duplicate_template_deleted": true,
+    "local_book_git_deleted": true,
+    "external_guardian_deleted_or_absent": true
+  }
+}

@@ -10,6 +10,9 @@
   exemplar 只向 writer 传递叙事距离、信息释放与节奏功能，数值风格指标留给编辑器
   诊断，避免模型把句长、物件和动作学成新的模板。
 - **每个字都为人物此刻的选择服务。** 物件是筹码，对白是权力，数字是赌注。八种 AI 味反模式（均匀碎句、术语堆叠、数值监控、机械观察链、感官轰炸开篇、比喻过密、危机中背景卸货、对白真空）各有对应的门拦截——证据见 `docs/examples/`。
+- **规划是编辑控制面，不是正文提纲。** Writer 只接收过滤后的 Story Brief；替代
+  解释、可证伪假设、因果归属和专业审计留给 Chapter Editor，避免人物在正文中
+  逐项证明检查表。
 - **节奏管方差，不管长短。** 句长均匀（全短或全长）是机械指纹，lint 按变异系数检测。
 - **不认证文学价值。** 系统只记录可验证的编辑与校对过程；`ready` 只表示流程材料齐备，永远不等于用户批准或市场判断。
 
@@ -40,7 +43,8 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
    与一页式场景包，Orchestrator 只校验允许路径并落盘，不代写文学内容；
 2. 绑定 Writer 的真实 `run_id`，再由外部 Harness 创建仓库外
    writer capsule；Guardian 将固定边界编译为不超过 1200 字符的
-   `formal-writer/v1` `instructions.md`，writer 只读取它与有界 handoff，只能写正文；
+   `formal-writer/v1` `instructions.md`，writer 只读取它与过滤后的 Story Brief，
+   只能写正文；
 3. 任意 Harness 先读 `evaluation/harness-contract.json` 与
    `evaluation/guardian-contract.json`，输出
    `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
@@ -49,10 +53,13 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
    章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
 5. 在独立会话运行 prose-only blind-reader，记录 `human_likeness`、追读意愿与
-   情绪余波，再由 chapter-editor 综合审读；
-6. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
+   情绪余波，再由 chapter-editor 综合审读；两者同时检查控制面泄漏、整齐问答、
+   人物可替换性和解释性修补接缝；
+6. 有 MUST 时合并为一次证据绑定的集中 Patch，由新的 Writer session 执行后重新
+   全文双审；第二版仍有 MUST 时等待用户选择，只有用户明确重新生成才授权第三版；
+7. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
    `chapter: chNN ready`；每五章建立一个本地 checkpoint 标签；
-7. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
+8. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
 
 ## 两种工作流
 
@@ -135,6 +142,7 @@ research/            # 前期调研
 - 隔离 Writer Capsule：`docs/29-isolated-writer-capsule.md`
 - 编译 Writer Prompt：`docs/30-compiled-writer-prompt.md`
 - 自动三角色工作流：`docs/31-automatic-three-role-workflow.md`
+- 文学生产闭环与控制面隔离：`docs/32-literary-production-loop.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

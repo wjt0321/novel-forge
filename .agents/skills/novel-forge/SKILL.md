@@ -69,7 +69,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    的 session ID。上一章未完整 `ready` 时不得签发下一章。
 
 交接包写入 `memory/context-cache/chXX-handoff.md`，只含相关 Canon/认知与承诺、
-上一章末段及 SHA-256、Voice exemplar 和 scene package；禁止续传旧会话或整书。
+上一章末段及 SHA-256、Voice exemplar 和 Writer Story Brief；禁止续传旧会话或
+整书。完整 Scene Package 是 Chapter Editor 控制面，决策审计不进入 Writer。
 
 ### 每书本地 Git
 
@@ -109,6 +110,7 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    正文版本必须先经 `authorize-regeneration` 获得绑定前两版哈希的签名授权。
    writer 只接收叙事距离、信息释放和节奏功能，不接收句长、对白率、比喻密度等
    数值风格指标，也不得复制 Voice exemplar 的具体名词、标志动作、收尾物件或句法。
+   规划是后台故事义务；正文允许误判、遗漏和延迟反应。
    `正文.md` 除标题外只含叙事文本，不得出现 Markdown 粗体、提示词、Agent 身份、
    `ch05`、`正文.md`、generation evidence/id、SHA-256、surface_checked、ready
    等生产元数据。
@@ -126,8 +128,9 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    两者分别落盘并经 `record-review` 校验；逐项判断必须来自审稿会话，编排器不得
    代填。不得暂停询问“是否开始审核”。
    无法创建独立审稿会话时返回 `review_session_required`，不得改成开放式提问。
-8. 合并两份 finding，只允许一次有范围的集中 patch。第二份不同正文 SHA-256
-   后若仍有新 MUST，进入 `human_decision_required`；不得自动生成第三份。
+8. 两份 finding 合并为一次 Patch，义务含位置、原文证据、读者效果和修订意图，
+   禁止解释性修补。第二版仍有 MUST 时退役 Patch Writer 并等待选择；用户明确重新
+   生成后，才为新 session 签发第三版授权并全文双审。
    ch05/ch10/... 还需当前 checkpoint arc audit，`open_must=0`。进入 ready 前，
    八态证据表不得保留 `-`/空值，并给出当前 ready 决定的 evidence 指针；formal
    Agent generation 还必须有匹配正文与 `run_id` 的干净 Guardian 回执。本章
@@ -151,7 +154,8 @@ advisory。机器不认证文学价值。
 `human_likeness: convincing | uncertain | synthetic`
 
 只有 `convincing` 可配合 `verdict: pass`。清单化节奏、模板物件循环、解释性结论、
-未来章节知识或工作流语言都应判为 `uncertain/synthetic + needs_revision`。
+未来章节知识或工作流语言都应判为 `uncertain/synthetic + needs_revision`。还查
+替代解释枚举、职业证明、整齐问答和 Patch 接缝；谜题成立不等于真人愿意追读。
 还必须填写 `reader_desire: continue | conditional | stop`、
 `emotional_residue` 与 `next_chapter_pull`。只有 `continue` 可配合 pass；
 还须填写五项重建与三个可记忆画面；`record-review` 拒绝空壳盲评。
@@ -163,7 +167,8 @@ advisory。机器不认证文学价值。
 `causal-editor | line-editor | texture-editor | consistency-guard`；专业角色是兼容工具，
 不是默认六审。
 通过报告必须逐项填写因果、人物能动性、对白信息流、句子肌理和连续性；
-`record-review` 会拒绝只有 verdict 的空壳综合审稿。
+`record-review` 会拒绝空壳审稿。每轮重审五项，并查控制面泄漏、人物可替换性、
+会议式对白和解释性 Patch。
 
 审稿必须绑定当前 chapter/planning/generation SHA、真实 reviewer/provider/model/context
 与 `review_session_id`。blind-reader pass 使用 `context_scope=prose_only` 且
@@ -179,6 +184,7 @@ advisory。机器不认证文学价值。
 - 正文默认 standard/medium，即标准或中等推理。Max/长思考只处理具名难题，
   结论压入 scene package；不用于整章、模板、状态、证据或默认审稿。
 - 正文一次 Write、最多一次集中 Edit；默认两角色，专业加审后建议总调用不超过 3。
+- 第三版必须等待用户明确选择；MAY/advisory 不生成。
 - generation 如实记录 `run_id`、provider/model/Harness、reasoning effort、
   token/request、draft/review 计数、`tool_capabilities` 与 `tool_failures`。
   指标只填本次增量；未知保持 null/unknown。
@@ -187,17 +193,15 @@ advisory。机器不认证文学价值。
 
 ## 事实与记忆
 
-`memory/canon/**/*.md` 是长期权威源；`.novel-forge/index.sqlite3` 可重建且不得直改。
-新事实、事件、知识变化和承诺只能先进入 candidate，经显式晋升后才成为 Canon。
-事实、人物认知、人物假设与替代解释必须分开。审美偏好不能覆盖事实和因果责任。
+`memory/canon/**/*.md` 是权威源；索引可重建且不得直改。新信息先进入 candidate，
+显式晋升后才成为 Canon；事实、认知、假设和替代解释分开。
 
 ## 稳定策略
 
-稳定策略：`no-deliberate-defects`、`single-winner-branch`、
+策略 ID：`no-deliberate-defects`、`single-winner-branch`、
 `model-score-not-approval`、`aesthetic-does-not-override-facts`、
 `exploration-not-ready`、`role-name-not-independence`、
-`world-not-protagonist-proof`、`expertise-must-be-executable`。含义以机器合同和
-项目模板为准；核心是不伪造缺陷、不拼接胜者、不把模型结论当批准、不让审美覆盖事实。
+`world-not-protagonist-proof`、`expertise-must-be-executable`；含义以机器合同为准。
 
 ## 证据与 Git
 
@@ -211,10 +215,8 @@ advisory。机器不认证文学价值。
 `advance-chapter-sequence`、`sync-tools`、
 `init-book-git`、`book-git-checkpoint`、`restore-book-git`、memory candidate/promotion。
 
-`sync-tools` 会受控迁移带 v3.7/v3.8/v3.9/v4.0/v4.1/v4.2/v4.3/v4.4 生成标记的
-`CLAUDE.md`/`README.md`，补齐 v4.5 编译提示词、隔离 capsule、运行真相、本地 Git 与章节序列，
-并把旧状态映射到八态链；没有版本标记的手写项目宪法保持
-不动。旧专业 Agent 文件可保留为历史兼容资产，但不再属于默认闭环。
+`sync-tools` 只迁移带版本标记的生成文件到 v4.5；手写项目宪法不动，旧专业 Agent
+仅作兼容资产。
 
 同章同正文 SHA-256 只能算一个 generation。`harness_exposed` 必须有真实 `run_id`、
 `agent_harness`、`metrics_source=harness_reported`、工具能力与失败。Agent 不得自称

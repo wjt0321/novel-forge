@@ -121,6 +121,10 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "上一章完整 ready" in claude_md
     assert "record-session-audit" in claude_md
     assert "reader_desire" in claude_md
+    assert "Writer Story Brief" in claude_md
+    assert "只供 Chapter Editor 使用" in claude_md
+    assert "人物允许误判、遗漏、自欺和延迟反应" in claude_md
+    assert "修补接缝" in claude_md
     assert "不得暂停询问" in claude_md
     assert "Markdown 粗体" in claude_md
     assert "surface_checked" in claude_md
@@ -514,6 +518,12 @@ def test_skill_documents_v45_compiled_prompt_and_runtime_truth_workflow():
     assert "最多 4 章" in text
     assert "上一章完整 `ready`" in text
     assert "session-audit" in text
+    assert "Writer Story Brief" in text
+    assert "完整 Scene Package 是 Chapter Editor 控制面" in text
+    assert "规划是后台故事义务" in text
+    assert "位置、" in text and "读者效果和修订意图" in text
+    assert "谜题成立不等于真人愿意追读" in text
+    assert "第三版必须等待用户明确选择" in text
     assert "review_session_id" in text
     assert "degraded_exploration" in text
     assert "同章同正文 SHA-256" in text

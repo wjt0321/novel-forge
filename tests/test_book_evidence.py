@@ -565,6 +565,9 @@ def test_third_generation_requires_explicit_human_authorization(
     )
     result = record_evidence(tmp_path, "demo", authorized)
     assert result["record_id"] == "generation.ch01.r3-authorized"
+    status = evidence_status(tmp_path, "demo", chapter=1)
+    assert status["review_cycle_status"] == "human_regeneration"
+    assert status["another_generation_requires_human"] is True
 
 
 def test_evidence_status_collapses_legacy_duplicate_generations(

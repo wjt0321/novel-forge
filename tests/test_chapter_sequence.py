@@ -126,6 +126,75 @@ def test_handoff_hides_numeric_style_targets_and_warns_against_copying(
     assert "Max/长思考" in handoff
 
 
+def test_writer_handoff_hides_editor_only_scene_reasoning(tmp_path: Path):
+    book_dir = _sequence_book(tmp_path)
+    (book_dir / "planning/scene-package-ch01.md").write_text(
+        "# Scene Package\n\n"
+        "## 0. 边界\n"
+        "- 开始动作：主角核对门锁。\n"
+        "- 停止动作：门外的人叫出旧名。\n\n"
+        "## 1. 场景压力\n"
+        "- 目标：守住房间。\n"
+        "- 阻力：持钥匙的人正在开门。\n\n"
+        "## 1c. 决策问题\n"
+        "- 角色拒绝承认什么：他害怕旧案重演。\n\n"
+        "## 1d. 认知与可证伪假设\n"
+        "| 观察 | 当前假设 | 替代解释 | 置信度 | 可推翻证据 | 状态 |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 钥匙能转 | 对方是家属 | 钥匙被复制 | 中 | 核验身份 | 未决 |\n\n"
+        "## 1e. 规划反证与常识检查\n"
+        "- 人物知识来源：逐项核验全部可能来源。\n\n"
+        "## 2. 在场者状态\n"
+        "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
+        "|---|---|---|---|\n"
+        "| 主角 | 守门 | 不肯承认害怕 | 主动停工 |\n\n"
+        "## 3. Beat 因果链\n"
+        "| # | 触发 | 行动/决定 | 阻力/反应 | 结果与下一步 | 语域 |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 1 | 锁芯转动 | 主角抵门 | 门链松动 | 主角承担停工损失 | 贴身 |\n\n"
+        "## 3c. 因果归属账本\n"
+        "| 动作/条件 | 提出/执行者 | 知情者 | 后果承担者 |\n"
+        "|---|---|---|---|\n"
+        "| 停工 | 主角 | 委托人 | 主角 |\n\n"
+        "## 4. 信息账本\n"
+        "- 唯一新信息：门外人知道主角旧名。\n\n"
+        "## 5. 信息预算\n"
+        "- 关键对白意图：用旧名夺走主角的程序优势。\n\n"
+        "## 5b. 专业判断审计\n"
+        "- 门锁判断的执行条件与风险全部登记。\n\n"
+        "## 6. 人物性呼吸段\n"
+        "- 主角重新贴歪掉的标签，用拖延回避决定。\n\n"
+        "## 7. 场景余波\n"
+        "- 身体：掌心留下门链黑灰。\n",
+        encoding="utf-8",
+    )
+
+    result = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        sequence_id="writer-story-brief",
+    )
+    handoff = (
+        book_dir / result["launch"]["handoff_path"]
+    ).read_text(encoding="utf-8")
+
+    assert "## 当前章 Writer Story Brief" in handoff
+    assert "主角核对门锁" in handoff
+    assert "持钥匙的人正在开门" in handoff
+    assert "主角承担停工损失" in handoff
+    assert "门外人知道主角旧名" in handoff
+    assert "重新贴歪掉的标签" in handoff
+    assert "认知与可证伪假设" not in handoff
+    assert "规划反证与常识检查" not in handoff
+    assert "因果归属账本" not in handoff
+    assert "专业判断审计" not in handoff
+    assert "钥匙被复制" not in handoff
+    assert "逐项核验全部可能来源" not in handoff
+    assert "后台故事义务" in handoff
+    assert "不得在正文中逐条证明" in handoff
+
+
 def test_claim_requires_new_native_session_and_advance_requires_ready(
     tmp_path: Path,
 ):
