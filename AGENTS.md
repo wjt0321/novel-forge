@@ -94,7 +94,7 @@ python -c "from app.novel_forge.api import create_app; import uvicorn; uvicorn.r
 | `book_evidence.py` | books/ Markdown 权威创作证据：generation、盲评、单胜者分支、作者偏好、跨章审计、规则生命周期；不可变原子落盘 |
 | `session_audit.py` | 厂商无关 Harness Contract：定义 `novel-forge-runtime/v1` 累计快照、分层推理策略、硬停预算、自动审稿编排与每书本地 Git 策略；具体产品日志解析仅为兼容导入 |
 | `writer_prompt.py` | v4.5 厂商无关 formal writer 短提示词：按单章编译完整边界，不回灌完整 Skill，并限制字符预算 |
-| `workflow.py` | 自动三角色轻量编排器：通过外部 Harness 创建独立 Writer / Blind Reader / Chapter Editor 会话，自动完成 Guardian、generation、runtime、双审、集中 Patch、状态与每书 Git 闭环；用户输出不暴露内部技术细节 |
+| `workflow.py` | 厂商无关的自动三角色轻量编排器：宿主通过 `SessionBackend` 提供真实独立会话；Writer 自己产出允许列表内的规划并写正文，两个审稿角色返回各自实质判断；编排器只完成 Guardian、generation、runtime、双审、集中 Patch、状态与每书 Git 闭环，不代写、代审或选择模型 |
 | `guardian_contract.py` | v4.4 隔离 writer capsule 的纯机器合同；无章节业务依赖，可被模板、adapter 与 Guardian 共用 |
 | `guardian.py` | v4.4 仓库外 writer capsule：有界输入、输出清单、外部 Harness 隔离证明、外置签名运行/回执账本、CAS 正文导入与 compromised session 失效 |
 | `chapter_sequence.py` | v4.1 章节独立会话编排：持久化 1–4 章顺序序列、签发不含数值风格目标的有界 handoff、绑定真实 native session，并审计 complete 序列是否真能证明各章 ready |

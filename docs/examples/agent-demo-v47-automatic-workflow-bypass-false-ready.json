@@ -1,0 +1,78 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "automatic-workflow-bypass-false-ready-20260721",
+  "recorded_at": "2026-07-21",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "recoverable_book_history_stored": false,
+  "sample": {
+    "slug": "tian-qing",
+    "chapter_count": 2,
+    "chapter_metrics": [
+      {
+        "chapter": "ch01",
+        "cjk": 5097
+      },
+      {
+        "chapter": "ch02",
+        "cjk": 8314
+      }
+    ],
+    "surface_git_messages": [
+      "chapter: ch01 ready",
+      "chapter: ch02 ready"
+    ],
+    "workflow_truth": {
+      "effective_status": "blocked",
+      "chapter_state_valid": false,
+      "generation_valid": false,
+      "runtime_audit_valid": false,
+      "guardian_receipt_valid": false,
+      "external_guardian_exists": false,
+      "review_count": 4,
+      "valid_review_count": 0,
+      "reviews_stale": true,
+      "workflow_control_record_exists": false,
+      "formal_orchestrator_completed": false,
+      "false_ready_git_checkpoint": true
+    },
+    "literary_observations": {
+      "strengths": [
+        "传统瓦作与城市记忆的职业异能有辨识度",
+        "屋脊、瓦刀、脊筋和铁锈植物形成可复用意象",
+        "屋顶睁开与握刀变色具有视觉记忆点"
+      ],
+      "risks": [
+        "正文越过场景停止点",
+        "异象和新规则堆叠过密",
+        "人物现实关系与具体损失不足",
+        "第二章探索结构重复",
+        "机械 lint patch 损坏正常句法",
+        "审稿把空间可重建误判为真实追读意愿"
+      ]
+    }
+  },
+  "root_cause": {
+    "current_orchestrator_has_only_abstract_command_backend": true,
+    "real_native_three_session_backend_connected": false,
+    "execution_bypassed_orchestrator": true,
+    "lead_wrote_control_artifacts_directly": true,
+    "simulated_backend_tests_were_not_real_session_e2e_tests": true,
+    "orchestrator_invented_generic_story_planning": true,
+    "orchestrator_flattened_reviewer_analysis": true
+  },
+  "workflow_design_lessons": [
+    "保留三个真实独立会话，Lead 只负责调度。",
+    "Writer 完成 surface_checked 后必须自动启动两份独立审稿。",
+    "MUST 必须交给新的 Patch Writer，会后重新双审。",
+    "Git checkpoint 必须服从底层 effective 状态。",
+    "SessionBackend 必须保持厂商无关，并由宿主接入真实原生会话能力。",
+    "规划必须来自 Writer，会话审稿的逐项判断不得由 Orchestrator 代填。",
+    "用户不读取或修复内部技术证据。"
+  ],
+  "disposition": {
+    "book_workspace_deleted": true,
+    "local_book_git_deleted": true,
+    "external_guardian_deleted_or_absent": true
+  }
+}

@@ -50,6 +50,25 @@ USER_OPTIONS = (
     "B. 重新生成本章",
     "C. 停止任务",
 )
+REVIEW_ANALYSIS_FIELDS = {
+    "blind-reader": (
+        "reconstruction_space",
+        "reconstruction_body",
+        "reconstruction_constraints",
+        "reconstruction_emotion",
+        "reconstruction_dialogue",
+        "memorable_image_1",
+        "memorable_image_2",
+        "memorable_image_3",
+    ),
+    "chapter-editor": (
+        "editorial_causality",
+        "editorial_agency",
+        "editorial_dialogue",
+        "editorial_texture",
+        "editorial_continuity",
+    ),
+}
 
 
 class WorkflowError(NovelForgeError):
@@ -106,6 +125,16 @@ class ReviewOutcome:
     reader_desire: str = "not_applicable"
     emotional_residue: str = "not_applicable"
     next_chapter_pull: str = "not_applicable"
+    analysis: dict[str, str] = field(default_factory=dict)
+    evidence_quote: str = ""
+    previous_chapter_quote: str = "not_applicable"
+
+
+@dataclass(frozen=True)
+class PlanningOutcome:
+    """Writer-authored mutable planning files for the current chapter."""
+
+    files: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -124,6 +153,15 @@ class SessionBackend(Protocol):
     """Vendor-neutral native session backend."""
 
     def create_session(self, role: str) -> SessionIdentity: ...
+
+    def run_planning(
+        self,
+        session: SessionIdentity,
+        *,
+        request: WorkflowRequest,
+        chapter: int,
+        context: dict[str, str],
+    ) -> PlanningOutcome: ...
 
     def run_writer(
         self,
@@ -229,6 +267,33 @@ class CommandSessionBackend:
             }
         )
 
+    def run_planning(
+        self,
+        session: SessionIdentity,
+        *,
+        request: WorkflowRequest,
+        chapter: int,
+        context: dict[str, str],
+    ) -> PlanningOutcome:
+        payload = self._invoke(
+            {
+                "action": "run_session",
+                "role": "writer",
+                "phase": "planning",
+                "session_id": session.session_id,
+                "chapter": chapter,
+                "request": asdict(request),
+                "context": context,
+            }
+        )
+        files = payload.get("files")
+        if not isinstance(files, dict) or not all(
+            isinstance(path, str) and isinstance(text, str)
+            for path, text in files.items()
+        ):
+            raise WorkflowError("Writer 会话没有返回有效的章节规划。")
+        return PlanningOutcome(files=dict(files))
+
     def run_review(
         self,
         session: SessionIdentity,
@@ -271,6 +336,17 @@ class CommandSessionBackend:
             next_chapter_pull=str(
                 payload.get("next_chapter_pull") or "not_applicable"
             ),
+            analysis={
+                str(name): str(value)
+                for name, value in (payload.get("analysis") or {}).items()
+                if isinstance(name, str) and isinstance(value, str)
+            }
+            if isinstance(payload.get("analysis"), dict)
+            else {},
+            evidence_quote=str(payload.get("evidence_quote") or ""),
+            previous_chapter_quote=str(
+                payload.get("previous_chapter_quote") or "not_applicable"
+            ),
         )
 
 
@@ -278,6 +354,9 @@ class _UnavailableBackend:
     """Placeholder used by read-only workflow commands."""
 
     def create_session(self, role: str) -> SessionIdentity:
+        raise WorkflowError("未配置自动写作引擎。")
+
+    def run_planning(self, *args: Any, **kwargs: Any) -> PlanningOutcome:
         raise WorkflowError("未配置自动写作引擎。")
 
     def run_writer(self, *args: Any, **kwargs: Any) -> None:
@@ -446,7 +525,6 @@ class NovelWorkflowOrchestrator:
             self._seed_voice_exemplar(book_dir, chapter - 1)
         target = book_dir / f"chapters/e01/ch-{chapter:02d}/正文.md"
         target.parent.mkdir(parents=True, exist_ok=True)
-        self._write_architecture(book_dir, request, chapter)
         return book_dir
 
     @staticmethod
@@ -479,147 +557,76 @@ class NovelWorkflowOrchestrator:
         voice.write_text(head + marker + tail, encoding="utf-8")
 
     @staticmethod
-    def _write_architecture(
-        book_dir: Path,
-        request: WorkflowRequest,
-        chapter: int,
-    ) -> None:
-        world = book_dir / "memory/worldbuilding.md"
-        if "__________" in world.read_text(encoding="utf-8-sig"):
-            world.write_text(
-                "# 世界设定\n\n"
-                f"## 物理规则\n- {request.world}\n\n"
-                "## 社会规则\n"
-                f"- 题材与环境：{request.genre}；世界不会自动为主角让路。\n\n"
-                "## 禁忌\n"
-                f"- 主角的选择必须受本章冲突约束：{request.conflict}\n",
-                encoding="utf-8",
-            )
-        research = book_dir / "planning/research-boundaries.md"
-        if "__________" in research.read_text(encoding="utf-8-sig"):
-            research.write_text(
-                "# 研究边界\n\n"
-                "- 无需：本次自动章节只使用用户提供的虚构架构，"
-                "不把未核验外部事实作为关键情节支点。\n",
-                encoding="utf-8",
-            )
-        engine = book_dir / "planning/story-engine.md"
-        if "__________" in engine.read_text(encoding="utf-8-sig"):
-            engine.write_text(
-                "# 故事发动机\n\n"
-                f"## 核心秘密\n- {request.ending_hook}\n\n"
-                f"## 欲望\n- {request.protagonist}想解决：{request.conflict}\n\n"
-                "## 对抗中的独立意志\n"
-                "- 对手按自身利益行动，不因主角判断正确而停止施压。\n"
-                "- 即使主角判断正确，对手仍会逼迫主角立即付出代价。\n\n"
-                "## 主角的错误模型\n"
-                "- 主角误以为拖延可以同时保住秘密和安全。\n"
-                "- 对手提前抵达即可推翻这个判断。\n\n"
-                "## 替代行动与不兼容欲望\n"
-                "- 主角可以求助，但这会暴露他最想隐藏的部分。\n"
-                "- 主角不能同时保住秘密与行动主动权。\n\n"
-                f"## 不可逆选择\n- {request.conflict}\n\n"
-                "## 即时代价\n- 选择一旦落地，关系与安全边界立即改变。\n\n"
-                f"## 未解承诺\n- {request.ending_hook}\n\n"
-                "## 主题压力\n- 人能否在不求助的前提下承担选择的后果。\n",
-                encoding="utf-8",
-            )
-        scene = book_dir / "planning" / f"scene-package-ch{chapter:02d}.md"
-        if not scene.exists() or "第XX章" in scene.read_text(
-            encoding="utf-8-sig"
+    def _planning_context(book_dir: Path, chapter: int) -> dict[str, str]:
+        """Build bounded context for the Writer's planning phase."""
+        context: dict[str, str] = {}
+        for name, relative in (
+            ("story_engine", "planning/story-engine.md"),
+            ("voice_bible", "memory/voice-bible.md"),
         ):
-            handoff = ""
-            if chapter > 1:
-                previous_path = book_project.find_chapter_file(
-                    book_dir, chapter - 1
-                )
-                previous_text = previous_path.read_text(
-                    encoding="utf-8-sig"
-                )
-                previous_quote = NovelWorkflowOrchestrator._quote(
-                    previous_text
-                )
-                previous_sha256 = hashlib.sha256(
-                    previous_path.read_bytes()
-                ).hexdigest()
-                handoff = (
-                    "## 0b. 章际交接\n"
-                    f"- 上一章正文路径："
-                    f"{previous_path.relative_to(book_dir).as_posix()}\n"
-                    f"- 上一章正文 SHA-256：{previous_sha256}\n"
-                    f"- 上一章结尾原文：{previous_quote}\n"
-                    "- 本章开头原文：deferred_until_drafted\n"
-                    "- 上一章结束时间：上一章连续场景末\n"
-                    "- 本章开始时间：紧接上一章之后\n"
-                    "- 上一章结束地点：上一章停止点\n"
-                    "- 本章开始地点：承接上一章行动后果的现场\n"
-                    "- 上一章结束动作：章末钩子触发\n"
-                    "- 本章开始动作：主角回应章末钩子的后果\n"
-                    "- 转场类型：same_day_continuous\n"
-                    "- 上一章末明确决定：主角承担已经作出的选择\n"
-                    "- 本章是否推翻该决定：否\n"
-                    "- 若推翻，触发事件原文：无需：未推翻上一章决定\n\n"
-                )
-            scene.write_text(
-                f"# Scene Package - 第{chapter:02d}章\n\n"
-                "## 0. 边界\n"
-                "- 开始动作 / 停止动作：主角开始处理眼前危机；"
-                "章末钩子落地后立即停止。\n"
-                f"- 承接压力 / 本章不解决：{request.conflict}\n\n"
-                f"{handoff}"
-                "## 1. 场景压力\n"
-                f"- 视角角色要什么：{request.protagonist}要掌握主动。\n"
-                "- 对手/世界独立要什么：阻力要迫使主角立刻表态。\n"
-                f"- 选择与即时成本：{request.conflict}\n"
-                f"- 章末未解除压力：{request.ending_hook}\n\n"
-                "## 1c. 决策问题\n"
-                "- 不能同时得到的两样东西：保住秘密 / 保住主动权\n"
-                "- 角色拒绝承认什么：独自处理已经不再可行\n"
-                "- 角色误读了谁或什么：把短暂沉默误读为安全\n"
-                "- 哪句话不能说出口：请你帮我\n"
-                "- 最终接受的具体代价：让另一人看见自己的软肋\n\n"
-                "## 1d. 认知与可证伪假设\n"
-                "| 观察 | 当前假设 | 替代解释 | 置信度 | 可推翻证据 | 状态 |\n"
-                "|---|---|---|---|---|---|\n"
-                "| 阻力正在逼近 | 仍有时间拖延 | 对方已提前布局 | 中 | "
-                "对方直接出现 | 未决 |\n\n"
-                "## 1e. 规划反证与常识检查\n"
-                "- 时间/日历算术：本章只使用连续短时段，按动作先后核对。\n"
-                "- 物理动作机制：所有关键变化必须由可执行动作触发。\n"
-                "- 人物知识来源：人物只依据亲见、亲闻和既有经验判断。\n"
-                "- 不可逆性反证：一旦秘密暴露，不能靠解释恢复原状。\n"
-                "- 场景停止点：章末钩子出现后立即结束。\n\n"
-                "## 2. 在场者状态\n"
-                "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
-                "|---|---|---|---|\n"
-                f"| 主角 | 解决冲突 | 隐瞒真实软肋 | 被迫选择 |\n"
-                "| 阻力方 | 取得优势 | 真实计划未知 | 逼近一步 |\n\n"
-                "## 3. Beat 因果链\n"
-                "| # | 触发 | 行动/决定 | 阻力/反应 | 结果与下一步 | 语域 |\n"
-                "|---|---|---|---|---|---|\n"
-                "| 1 | 危机逼近 | 主角尝试独自处理 | 阻力压缩时间 | "
-                "旧办法失效 | 贴身 |\n"
-                "| 2 | 旧办法失效 | 主角作出不可逆选择 | 对方立即回应 | "
-                "章末钩子落地 | 贴身 |\n\n"
-                "## 3c. 因果归属账本\n"
-                "| 动作/条件 | 提出/执行者 | 知情者 | 后果承担者 |\n"
-                "|---|---|---|---|\n"
-                "| 不可逆选择 | 主角 | 当场人物 | 主角与被牵连者 |\n\n"
-                "## 4. 信息账本\n"
-                f"- 本章唯一新信息 / 来源 / 导致的选择：{request.ending_hook}\n\n"
-                "## 5. 信息预算\n"
-                "- 锚定物象（3-5）：门把、雨水、脚步、失灵的灯\n"
-                "- 关键对白意图：章末一句话只负责转移责任与信息，"
-                "不承担设定讲解。\n"
-                "- 新规则/伏笔/术语（各 0-1）：只保留章末钩子一项。\n"
-                "- 延后信息：对手完整目的延后揭示。\n\n"
-                "## 5b. 专业判断审计\n"
-                "- 无需：本章不依赖未经验证的专业操作推动关键选择。\n\n"
-                "## 7. 场景余波\n"
-                f"- 身体 / 物件 / 关系 / 认知误信 / 未偿承诺："
-                f"{request.ending_hook}\n",
-                encoding="utf-8",
+            path = book_dir / relative
+            if path.is_file():
+                context[name] = path.read_text(encoding="utf-8-sig")
+        canon_dir = book_dir / "memory/canon"
+        if canon_dir.is_dir():
+            canon = "\n\n".join(
+                path.read_text(encoding="utf-8-sig")
+                for path in sorted(canon_dir.rglob("*.md"))
             )
+            context["canon"] = canon[:12000]
+        if chapter > 1:
+            previous = book_project.find_chapter_file(book_dir, chapter - 1)
+            previous_text = previous.read_text(encoding="utf-8-sig")
+            context["previous_chapter_path"] = (
+                previous.relative_to(book_dir).as_posix()
+            )
+            context["previous_chapter_sha256"] = hashlib.sha256(
+                previous.read_bytes()
+            ).hexdigest()
+            context["previous_chapter_ending"] = previous_text[
+                max(0, int(len(previous_text) * 0.8)) :
+            ]
+        return context
+
+    @staticmethod
+    def _write_writer_planning(
+        book_dir: Path,
+        chapter: int,
+        outcome: PlanningOutcome,
+    ) -> None:
+        """Validate and persist planning authored by the current Writer."""
+        required = {
+            "memory/worldbuilding.md",
+            "planning/research-boundaries.md",
+            "planning/story-engine.md",
+            f"planning/scene-package-ch{chapter:02d}.md",
+        }
+        allowed = {
+            *required,
+            "memory/voice-bible.md",
+        }
+        supplied = set(outcome.files)
+        missing = sorted(required - supplied)
+        unexpected = sorted(supplied - allowed)
+        if missing:
+            raise WorkflowError(
+                "Writer 会话缺少章节规划文件：" + "、".join(missing)
+            )
+        if unexpected:
+            raise WorkflowError(
+                "Writer 会话返回了未授权的规划文件：" + "、".join(unexpected)
+            )
+        for relative, text in outcome.files.items():
+            if not text.strip():
+                raise WorkflowError(f"Writer 规划文件为空：{relative}")
+            pure = Path(relative)
+            if pure.is_absolute() or ".." in pure.parts:
+                raise WorkflowError("Writer 规划文件路径越界。")
+            target = (book_dir / pure).resolve()
+            if not target.is_relative_to(book_dir.resolve()):
+                raise WorkflowError("Writer 规划文件路径越界。")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text.rstrip() + "\n", encoding="utf-8")
 
     def _finalize_scene_handoff(self, slug: str, chapter: int) -> None:
         if chapter <= 1:
@@ -650,7 +657,16 @@ class NovelWorkflowOrchestrator:
         *,
         chapter: int = 1,
     ) -> WorkflowResult:
-        self._prepare_project(slug, request, chapter)
+        self.on_status("正在写作。")
+        book_dir = self._prepare_project(slug, request, chapter)
+        writer_session = self._new_session("writer")
+        planning = self.backend.run_planning(
+            writer_session,
+            request=request,
+            chapter=chapter,
+            context=self._planning_context(book_dir, chapter),
+        )
+        self._write_writer_planning(book_dir, chapter, planning)
         sequence_id = f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
         begin_chapter_sequence(
             self.root,
@@ -666,7 +682,7 @@ class NovelWorkflowOrchestrator:
             slug,
             chapter,
             "context_collected",
-            evidence=f"memory/context-cache/ch{chapter:02d}-handoff.md",
+            evidence="planning/story-engine.md",
         )
         book_project.advance_state(
             self.root,
@@ -683,7 +699,13 @@ class NovelWorkflowOrchestrator:
             phase="writing",
             retries=0,
         )
-        return self._run_sequence(slug, request, chapter, sequence_id)
+        return self._run_sequence(
+            slug,
+            request,
+            chapter,
+            sequence_id,
+            initial_writer_session=writer_session,
+        )
 
     def _execute_generation(
         self,
@@ -693,10 +715,15 @@ class NovelWorkflowOrchestrator:
         *,
         must_findings: tuple[str, ...],
         parent_generation_id: str | None,
+        initial_session: SessionIdentity | None = None,
     ) -> tuple[SessionIdentity, str, int] | None:
         target_path = f"chapters/e01/ch-{chapter:02d}/正文.md"
         for attempt in range(self.max_technical_retries + 1):
-            session = self._new_session("writer")
+            session = (
+                initial_session
+                if attempt == 0 and initial_session is not None
+                else self._new_session("writer")
+            )
             claim_chapter_session(
                 self.root,
                 slug,
@@ -871,7 +898,20 @@ class NovelWorkflowOrchestrator:
         prose = book_project.find_chapter_file(
             book_dir, chapter
         ).read_text(encoding="utf-8-sig")
-        quote = self._quote(prose)
+        quote = outcome.evidence_quote.strip()
+        if not quote or quote not in prose:
+            raise WorkflowError(f"{role} 没有返回当前正文中的有效审稿引文。")
+        required_analysis = REVIEW_ANALYSIS_FIELDS[role]
+        missing_analysis = [
+            name
+            for name in required_analysis
+            if not outcome.analysis.get(name, "").strip()
+        ]
+        if missing_analysis:
+            raise WorkflowError(
+                f"{role} 缺少实质审稿字段："
+                + "、".join(missing_analysis)
+            )
         binding = book_project.review_binding(
             self.root,
             slug,
@@ -880,11 +920,16 @@ class NovelWorkflowOrchestrator:
         )
         previous_quote = "not_applicable"
         if chapter > 1:
-            previous_quote = self._quote(
-                book_project.find_chapter_file(
-                    book_dir, chapter - 1
-                ).read_text(encoding="utf-8-sig")
-            )
+            previous_text = book_project.find_chapter_file(
+                book_dir, chapter - 1
+            ).read_text(encoding="utf-8-sig")
+            previous_quote = outcome.previous_chapter_quote.strip()
+            if role == "chapter-editor" and (
+                not previous_quote or previous_quote not in previous_text
+            ):
+                raise WorkflowError(
+                    "chapter-editor 没有返回上一章正文中的有效连续性引文。"
+                )
         findings = [
             "| # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |",
             "|---|---|---|---|---|---|---|",
@@ -897,17 +942,8 @@ class NovelWorkflowOrchestrator:
             )
         if role == "blind-reader":
             details = "\n".join(
-                f"- {name}: {quote}"
-                for name in (
-                    "reconstruction_space",
-                    "reconstruction_body",
-                    "reconstruction_constraints",
-                    "reconstruction_emotion",
-                    "reconstruction_dialogue",
-                    "memorable_image_1",
-                    "memorable_image_2",
-                    "memorable_image_3",
-                )
+                f"- {name}: {outcome.analysis[name].strip()}"
+                for name in required_analysis
             )
             human_likeness = outcome.human_likeness
             reader_desire = outcome.reader_desire
@@ -917,14 +953,8 @@ class NovelWorkflowOrchestrator:
             context_scope = "prose_only"
         else:
             details = "\n".join(
-                f"- {name}: {quote}"
-                for name in (
-                    "editorial_causality",
-                    "editorial_agency",
-                    "editorial_dialogue",
-                    "editorial_texture",
-                    "editorial_continuity",
-                )
+                f"- {name}: {outcome.analysis[name].strip()}"
+                for name in required_analysis
             )
             human_likeness = "not_applicable"
             reader_desire = "not_applicable"
@@ -947,7 +977,7 @@ class NovelWorkflowOrchestrator:
             f"- evidence_quote: {quote}\n"
             f"- previous_chapter_quote: {previous_quote}\n\n"
             "- reviewer_type: model\n"
-            f"- reviewer_id: automatic-{role}\n"
+            f"- reviewer_id: {session.session_id}\n"
             f"- review_session_id: {session.session_id}\n"
             f"- provider: {session.provider}\n"
             f"- model: {session.model}\n"
@@ -998,15 +1028,23 @@ class NovelWorkflowOrchestrator:
             for path in sorted((book_dir / "memory/canon").rglob("*.md"))
         ]
         editor_session = self._new_session("chapter-editor")
+        editor_context = {
+            "prose": prose,
+            "scene_package": scene,
+            "canon": "\n".join(canon_parts)[:12000],
+            "blind_review": blind_text,
+        }
+        if chapter > 1:
+            previous_text = book_project.find_chapter_file(
+                book_dir, chapter - 1
+            ).read_text(encoding="utf-8-sig")
+            editor_context["previous_chapter_ending"] = previous_text[
+                max(0, int(len(previous_text) * 0.8)) :
+            ]
         editor = self.backend.run_review(
             editor_session,
             role="chapter-editor",
-            context={
-                "prose": prose,
-                "scene_package": scene,
-                "canon": "\n".join(canon_parts)[:12000],
-                "blind_review": blind_text,
-            },
+            context=editor_context,
         )
         editor_text = self._render_review(
             slug,
@@ -1061,14 +1099,16 @@ class NovelWorkflowOrchestrator:
         request: WorkflowRequest,
         chapter: int,
         sequence_id: str,
+        *,
+        initial_writer_session: SessionIdentity | None = None,
     ) -> WorkflowResult:
-        self.on_status("正在写作。")
         initial = self._execute_generation(
             slug,
             chapter,
             sequence_id,
             must_findings=(),
             parent_generation_id=None,
+            initial_session=initial_writer_session,
         )
         if initial is None:
             retries = self.max_technical_retries

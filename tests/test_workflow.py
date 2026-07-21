@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,7 @@ from app.novel_forge.book_project import list_reviews, project_status
 from app.novel_forge.chapter_sequence import chapter_sequence_status
 from app.novel_forge.workflow import (
     NovelWorkflowOrchestrator,
+    PlanningOutcome,
     ReviewFinding,
     ReviewOutcome,
     SessionIdentity,
@@ -93,6 +94,7 @@ class ScriptedBackend:
         self.review_rounds = list(review_rounds)
         self.sessions: list[SessionIdentity] = []
         self.review_contexts: list[tuple[str, set[str]]] = []
+        self.planning_calls: list[tuple[str, int]] = []
         self._role_counts: dict[str, int] = {}
         self._review_index = 0
 
@@ -138,6 +140,130 @@ class ScriptedBackend:
                 encoding="utf-8",
             )
 
+    def run_planning(
+        self,
+        session: SessionIdentity,
+        *,
+        request: WorkflowRequest,
+        chapter: int,
+        context: dict[str, str],
+    ) -> PlanningOutcome:
+        self.planning_calls.append((session.session_id, chapter))
+        handoff = ""
+        if chapter > 1:
+            previous_quote = next(
+                line.strip()[:48]
+                for line in context["previous_chapter_ending"].splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+            handoff = (
+                "## 0b. 章际交接\n"
+                f"- 上一章正文路径：{context['previous_chapter_path']}\n"
+                f"- 上一章正文 SHA-256：{context['previous_chapter_sha256']}\n"
+                f"- 上一章结尾原文：{previous_quote}\n"
+                "- 本章开头原文：deferred_until_drafted\n"
+                "- 上一章结束时间：暴雨夜\n"
+                "- 本章开始时间：同夜稍后\n"
+                "- 上一章结束地点：旧楼走廊\n"
+                "- 本章开始地点：地下室入口\n"
+                "- 上一章结束动作：林舟打开门锁\n"
+                "- 本章开始动作：林舟沿积水台阶下行\n"
+                "- 转场类型：same_day_continuous\n"
+                "- 上一章末明确决定：林舟选择开门并承担暴露风险\n"
+                "- 本章是否推翻该决定：否\n"
+                "- 若推翻，触发事件原文：无需：未推翻上一章决定\n\n"
+            )
+        scene = (
+            f"# Scene Package - 第{chapter:02d}章\n\n"
+            "## 0. 边界\n"
+            "- 开始动作 / 停止动作：林舟开始处理门外逼近；"
+            "门内的人叫出追兵姓名后停止。\n"
+            f"- 承接压力 / 本章不解决：{request.conflict}\n\n"
+            f"{handoff}"
+            "## 1. 场景压力\n"
+            f"- 视角角色要什么：{request.protagonist}要在追兵到达前作出选择。\n"
+            "- 对手/世界独立要什么：追兵要找到门后藏匿者。\n"
+            f"- 选择与即时成本：{request.conflict}\n"
+            f"- 章末未解除压力：{request.ending_hook}\n\n"
+            "## 1c. 决策问题\n"
+            "- 不能同时得到的两样东西：赶在追兵前开门 / 不暴露藏匿者\n"
+            "- 角色拒绝承认什么：不开门同样会把门内的人留给追兵\n"
+            "- 角色误读了谁或什么：他以为门内的人不知道追兵身份\n"
+            "- 哪句话不能说出口：门里到底是谁\n"
+            "- 最终接受的具体代价：亲手让藏匿关系暴露\n\n"
+            "## 1d. 认知与可证伪假设\n"
+            "| 观察 | 当前假设 | 替代解释 | 置信度 | 可推翻证据 | 状态 |\n"
+            "|---|---|---|---|---|---|\n"
+            "| 脚步逼近 | 追兵尚未到门口 | 对方有人已在门内 | 中 | "
+            "门内先叫出追兵姓名 | 未决 |\n\n"
+            "## 1e. 规划反证与常识检查\n"
+            "- 时间/日历算术：脚步距离与开锁动作按连续分钟核对。\n"
+            "- 物理动作机制：门锁必须由林舟实际转动才会打开。\n"
+            "- 人物知识来源：林舟只根据脚步、门锁和门内声音判断。\n"
+            "- 不可逆性反证：开门后藏匿位置已经暴露。\n"
+            "- 场景停止点：门内叫出追兵姓名后立即结束。\n\n"
+            "## 2. 在场者状态\n"
+            "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
+            "|---|---|---|---|\n"
+            "| 林舟 | 决定是否开门 | 不知门内人与追兵的关系 | 失去信息主动 |\n"
+            "| 追兵 | 找到藏匿者 | 距离未知 | 持续逼近 |\n\n"
+            "## 3. Beat 因果链\n"
+            "| # | 触发 | 行动/决定 | 阻力/反应 | 结果与下一步 | 语域 |\n"
+            "|---|---|---|---|---|---|\n"
+            "| 1 | 脚步逼近 | 林舟检查并握住门锁 | 时间继续缩短 | "
+            "拖延不再可行 | 贴身 |\n"
+            "| 2 | 拖延失效 | 林舟转动门锁 | 门内的人先开口 | "
+            "追兵身份被点破 | 贴身 |\n\n"
+            "## 3c. 因果归属账本\n"
+            "| 动作/条件 | 提出/执行者 | 知情者 | 后果承担者 |\n"
+            "|---|---|---|---|\n"
+            "| 转动门锁 | 林舟 | 林舟与门内人 | 林舟与藏匿者 |\n\n"
+            "## 4. 信息账本\n"
+            f"- 本章唯一新信息 / 来源 / 导致的选择：{request.ending_hook}\n\n"
+            "## 5. 信息预算\n"
+            "- 锚定物象（3-5）：门锁、积水、应急灯、鞋底水声\n"
+            "- 关键对白意图：门内的点名夺走林舟的信息优势。\n"
+            "- 新规则/伏笔/术语（各 0-1）：门内人与追兵认识。\n"
+            "- 延后信息：双方具体关系延后揭示。\n\n"
+            "## 5b. 专业判断审计\n"
+            "- 无需：本章没有依赖专业判断推动的关键行动。\n\n"
+            "## 7. 场景余波\n"
+            f"- 身体 / 物件 / 关系 / 认知误信 / 未偿承诺："
+            f"{request.ending_hook}\n"
+        )
+        return PlanningOutcome(
+            files={
+                "memory/worldbuilding.md": (
+                    "# 世界设定\n\n"
+                    f"## 物理规则\n- {request.world}\n\n"
+                    "## 社会规则\n"
+                    f"- {request.genre}中的人物受现实时间、空间和后果约束。\n\n"
+                    "## 禁忌\n"
+                    f"- 不得绕过本章核心冲突：{request.conflict}\n"
+                ),
+                "planning/research-boundaries.md": (
+                    "# 研究边界\n\n"
+                    "- 无需：测试正文只使用虚构地点和虚构事件。\n"
+                ),
+                "planning/story-engine.md": (
+                    "# 故事发动机\n\n"
+                    f"## 核心秘密\n- {request.ending_hook}\n\n"
+                    f"## 欲望\n- {request.protagonist}必须处理：{request.conflict}\n\n"
+                    "## 对抗中的独立意志\n"
+                    "- 追兵按自己的目标逼近，不等待主角完成判断。\n\n"
+                    "## 主角的错误模型\n"
+                    "- 林舟以为门内的人不知道追兵身份。\n\n"
+                    "## 替代行动与不兼容欲望\n"
+                    "- 继续拖延会失去开门时机，立即开门会暴露藏匿者。\n\n"
+                    f"## 不可逆选择\n- {request.conflict}\n\n"
+                    "## 即时代价\n- 门一旦打开，藏匿关系立即暴露。\n\n"
+                    f"## 未解承诺\n- {request.ending_hook}\n\n"
+                    "## 主题压力\n- 选择是否仍成立，取决于人物承担的具体后果。\n"
+                ),
+                f"planning/scene-package-ch{chapter:02d}.md": scene,
+            }
+        )
+
     def run_review(
         self,
         session: SessionIdentity,
@@ -150,7 +276,19 @@ class ScriptedBackend:
         role_index = 0 if role == "blind-reader" else 1
         outcome = self.review_rounds[round_index][role_index]
         self._review_index += 1
-        return outcome
+        prose_quote = next(
+            line.strip()[:48]
+            for line in context["prose"].splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        updates = {"evidence_quote": prose_quote}
+        if role == "chapter-editor" and "previous_chapter_ending" in context:
+            updates["previous_chapter_quote"] = next(
+                line.strip()[:48]
+                for line in context["previous_chapter_ending"].splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+        return replace(outcome, **updates)
 
 
 def _pass_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
@@ -161,8 +299,29 @@ def _pass_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
             reader_desire="continue",
             emotional_residue="主角已经作出选择，但门后的代价仍悬着。",
             next_chapter_pull="门后的人会要求主角付出什么？",
+            evidence_quote="林舟握住门把",
+            analysis={
+                "reconstruction_space": "门外走廊通向一扇关闭的门，脚步从走廊尽头逼近。",
+                "reconstruction_body": "林舟用掌心压住门把，身体动作始终贴着门。",
+                "reconstruction_constraints": "追兵逼近，开门会暴露门内的人，拖延又会失去时机。",
+                "reconstruction_emotion": "戒备随脚步逼近，最终被门内的点名推成失控。",
+                "reconstruction_dialogue": "门内的人用点名夺走林舟的信息主动。",
+                "memorable_image_1": "林舟把掌心压在门把上。",
+                "memorable_image_2": "走廊尽头的脚步不断逼近。",
+                "memorable_image_3": "门锁转动后，门内先叫出追兵的名字。",
+            },
         ),
-        ReviewOutcome(verdict="ready_for_editor_decision"),
+        ReviewOutcome(
+            verdict="ready_for_editor_decision",
+            evidence_quote="林舟握住门把",
+            analysis={
+                "editorial_causality": "脚步逼近迫使林舟开锁，开锁直接触发门内点名。",
+                "editorial_agency": "林舟主动转动门锁并承担暴露藏匿者的后果。",
+                "editorial_dialogue": "章末点名改变双方信息位置，没有承担设定讲解。",
+                "editorial_texture": "动作与感官持续承载压力，没有抽象总结替代现场。",
+                "editorial_continuity": "第一章无需上一章衔接，章内位置与动作连续。",
+            },
+        ),
     )
 
 
@@ -182,8 +341,30 @@ def _must_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
             reader_desire="conditional",
             emotional_residue="场面存在压力，但选择尚未咬紧。",
             next_chapter_pull="修订后才能判断是否愿意继续。",
+            evidence_quote="林舟握住门把",
+            analysis={
+                "reconstruction_space": "能确认门与走廊，但追兵距离缺少变化。",
+                "reconstruction_body": "林舟始终握住门把，身体反应较单一。",
+                "reconstruction_constraints": "开门与暴露有关，但时间限制出现过晚。",
+                "reconstruction_emotion": "紧张存在，尚未被具体选择推到转折。",
+                "reconstruction_dialogue": "章末点名有效，前文缺少对话行动。",
+                "memorable_image_1": "林舟握住门把。",
+                "memorable_image_2": "走廊尽头传来脚步。",
+                "memorable_image_3": "门内叫出追兵名字。",
+            },
         ),
-        ReviewOutcome(verdict="needs_revision", findings=(finding,)),
+        ReviewOutcome(
+            verdict="needs_revision",
+            findings=(finding,),
+            evidence_quote="林舟握住门把",
+            analysis={
+                "editorial_causality": "追兵压力进入过晚，开锁决定缺少充分触发。",
+                "editorial_agency": "林舟作出选择，但此前替代行动没有落到动作。",
+                "editorial_dialogue": "章末点名有效，前文信息交换不足。",
+                "editorial_texture": "动作重复让压力没有继续升级。",
+                "editorial_continuity": "第一章无需上一章衔接。",
+            },
+        ),
     )
 
 
@@ -239,6 +420,7 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         "native-blind-reader-01",
         "native-chapter-editor-01",
     ]
+    assert backend.planning_calls == [("native-writer-01", 1)]
     assert backend.review_contexts[0] == ("blind-reader", {"prose"})
     assert backend.review_contexts[1][0] == "chapter-editor"
     assert backend.review_contexts[1][1] == {
@@ -247,6 +429,87 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         "canon",
         "blind_review",
     }
+    blind_review = (
+        orchestrator.root / "books/demo/reviews/ch01-blind-reader.md"
+    ).read_text(encoding="utf-8")
+    assert (
+        "- reconstruction_space: 门外走廊通向一扇关闭的门，脚步从走廊尽头逼近。"
+        in blind_review
+    )
+    assert "- reviewer_id: native-blind-reader-01" in blind_review
+
+
+def test_orchestrator_does_not_invent_generic_story_decisions(tmp_path: Path):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    orchestrator.start("demo", _request(), chapter=1)
+
+    book_dir = orchestrator.root / "books/demo"
+    generated_planning = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            book_dir / "planning/story-engine.md",
+            book_dir / "planning/scene-package-ch01.md",
+        )
+    )
+    assert "保住秘密 / 保住主动权" not in generated_planning
+    assert "请你帮我" not in generated_planning
+    assert "门把、雨水、脚步、失灵的灯" not in generated_planning
+
+
+def test_review_outcome_accepts_role_authored_dimension_analysis():
+    analysis = {
+        "reconstruction_space": "门外走廊狭窄，人物隔门相对。",
+        "reconstruction_body": "林舟的掌心持续压住门把。",
+        "reconstruction_constraints": "追兵逼近，开门会暴露藏匿者。",
+        "reconstruction_emotion": "戒备被门内的点名推成失控。",
+        "reconstruction_dialogue": "门内的人用一句点名夺走信息主动。",
+        "memorable_image_1": "掌心压紧门把。",
+        "memorable_image_2": "走廊尽头的脚步逼近。",
+        "memorable_image_3": "门锁转动后先传出追兵的名字。",
+    }
+
+    outcome = ReviewOutcome(
+        verdict="pass",
+        human_likeness="convincing",
+        reader_desire="continue",
+        emotional_residue="开门之后，藏匿关系已经无法恢复。",
+        next_chapter_pull="门内的人为何认识追兵？",
+        analysis=analysis,
+        evidence_quote="林舟握住门把",
+    )
+
+    assert outcome.analysis == analysis
+    assert outcome.evidence_quote == "林舟握住门把"
+
+
+def test_writing_status_is_emitted_before_writer_planning(tmp_path: Path):
+    messages: list[str] = []
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    original = backend.run_planning
+
+    def guarded_planning(*args, **kwargs):
+        assert messages == ["正在写作。"]
+        return original(*args, **kwargs)
+
+    backend.run_planning = guarded_planning  # type: ignore[method-assign]
+    orchestrator = NovelWorkflowOrchestrator(
+        tmp_path / "repo",
+        backend,
+        capsule_root=tmp_path / "capsules",
+        on_status=messages.append,
+    )
+
+    orchestrator.start("demo", _request(), chapter=1)
+
+    assert messages[0] == "正在写作。"
 
 
 def test_completed_first_chapter_can_continue_second_chapter(tmp_path: Path):
@@ -295,6 +558,7 @@ def test_guardian_failure_preserves_receipt_and_uses_fresh_session(
         item.session_id for item in backend.sessions if item.role == "writer"
     ]
     assert writer_ids == ["native-writer-01", "native-writer-02"]
+    assert backend.planning_calls == [("native-writer-01", 1)]
     receipts = sorted(
         (
             orchestrator.root
@@ -337,6 +601,7 @@ def test_patch_uses_new_writer_session_and_replaces_reviews_without_mutation(
         item.session_id for item in backend.sessions if item.role == "writer"
     ]
     assert writer_ids == ["native-writer-01", "native-writer-02"]
+    assert backend.planning_calls == [("native-writer-01", 1)]
     history = sorted(
         (
             orchestrator.root / "books/demo/reviews/history"

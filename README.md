@@ -25,7 +25,7 @@ PYTHONPATH=. python -m pytest tests/ -q
 PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
   --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
 
-# 自动三角色工作流（外部 Harness 命令由 NOVEL_FORGE_HARNESS_COMMAND 配置）
+# 自动三角色工作流（核心协议厂商无关；命令桥只是可选 SessionBackend）
 PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> start my-novel \
   --title "我的小说" --genre "都市" --protagonist "主角设定" \
   --world "世界观" --conflict "本章核心冲突" --hook "本章结尾钩子"
@@ -36,8 +36,9 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
-1. 收集最小上下文，填写 Voice Bible、故事发动机与一页式场景包；
-2. 每章新开 writer session，绑定真实 `run_id`，再由外部 Harness 创建仓库外
+1. 每章新开 writer session；由该 Writer 根据用户架构产出 Voice Bible、故事发动机
+   与一页式场景包，Orchestrator 只校验允许路径并落盘，不代写文学内容；
+2. 绑定 Writer 的真实 `run_id`，再由外部 Harness 创建仓库外
    writer capsule；Guardian 将固定边界编译为不超过 1200 字符的
    `formal-writer/v1` `instructions.md`，writer 只读取它与有界 handoff，只能写正文；
 3. 任意 Harness 先读 `evaluation/harness-contract.json` 与

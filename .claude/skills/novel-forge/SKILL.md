@@ -26,14 +26,13 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 
 `ready` 只是材料齐备，不是作者批准或发布许可。
 
-自动入口：`tools/novel-workflow.py`。
+入口：`tools/novel-workflow.py`。`SessionBackend` 厂商无关；规划和逐项审稿由
+真实角色会话返回，Lead 禁止代填。
 
 ### 通用 Harness Contract
 
-开始 formal 写作前，任何 Agent/Harness 都先读取本书
-`evaluation/harness-contract.json`，或调用只读 op `harness-contract`。核心协议与
-模型厂商、Agent 产品、Shell 类型无关：Harness 把自己的原生遥测规范化为
-`novel-forge-runtime/v1` 累计快照；系统只认标准字段，不要求识别产品名称。
+Formal 写作前读取 `evaluation/harness-contract.json` 或调用 `harness-contract`。
+Harness 把原生遥测规范化为厂商无关的 `novel-forge-runtime/v1` 累计快照。
 
 每次模型响应后更新快照并在下一请求前运行 `session-audit`；
 `budget.continue_allowed=false` 就停机。无标准快照只能 exploration/degraded_exploration。
@@ -56,13 +55,12 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 正式生产一次只做一章，执行单位是**一章一个原生 writer session**。
 系统用 `planning/chapter-sequences/<sequence-id>.json` 返回 launch directive：
 
-1. 用户要求 1 章：运行 `begin-chapter-sequence --chapter-count 1`。
+1. 新 Writer 先交付本章规划；再运行 `begin-chapter-sequence --chapter-count 1`。
 2. 用户要求连续多章：同一编排器可自动顺序执行，但单次序列最多 4 章；五章及以上
    必须拆分，禁止用一个 writer session 连写。
-3. Harness 按 launch directive 创建新的原生 writer session，并用
-   `claim-chapter-session` 绑定真实 session ID。角色名、子 Agent 名和编排器 ID
-   都不能代替原生 writer session ID。随后运行 `prepare-writer-capsule`，让该
-   session 只进入仓库外 capsule。
+3. Harness 用 `claim-chapter-session` 绑定该 Writer 的真实 session ID；后续章按
+   launch directive 创建新会话。角色名、子 Agent 名和编排器 ID 不能代替原生
+   session ID。随后运行 `prepare-writer-capsule`，限制其只进入仓库外 capsule。
 4. writer 只处理当前一章；上一章完整 `ready` 后必须结束其 writer session。
    编排器再运行
    `advance-chapter-sequence`，只有返回 `launch_next_session=true` 时才顺序创建
@@ -82,8 +80,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 
 ### 每章闭环
 
-1. 用 `begin-chapter-sequence` 创建 1-4 章序列，读取当前章 launch directive，
-   创建新的原生 writer session 后立即 `claim-chapter-session`。再用
+1. 新 Writer 先交付规划；用 `begin-chapter-sequence` 创建 1-4 章序列并立即
+   `claim-chapter-session`。后续章按 launch directive 新建 Writer。再用
    `set-draft-mode` 固定 `formal | exploration | degraded_exploration`，并运行
    `prepare-writer-capsule` 创建仓库外隔离工作区。
 2. 编排操作会核对/重建派生记忆索引并生成有界 `chXX-handoff.md`；单章诊断仍可
@@ -125,7 +123,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    只能填写 `context_scope=simulated_blind` 与 `needs_revision`，不能 pass。
    pass 还必须给出 `reader_desire=continue`、`emotional_residue` 与
    `next_chapter_pull`，证明一个真人会自愿追读，而不是只证明画面可重建。
-   两者分别落盘并经 `record-review` 校验；不得暂停询问“是否开始审核”。
+   两者分别落盘并经 `record-review` 校验；逐项判断必须来自审稿会话，编排器不得
+   代填。不得暂停询问“是否开始审核”。
    无法创建独立审稿会话时返回 `review_session_required`，不得改成开放式提问。
 8. 合并两份 finding，只允许一次有范围的集中 patch。第二份不同正文 SHA-256
    后若仍有新 MUST，进入 `human_decision_required`；不得自动生成第三份。
