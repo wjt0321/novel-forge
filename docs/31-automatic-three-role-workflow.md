@@ -15,25 +15,32 @@ Blind Reader 或 Chapter Editor。
 
 ## 会话与上下文
 
-- 工作流核心是厂商无关的 `SessionBackend` 能力协议，不绑定 Claude Code、Codex、
-  Teams、DeepSeek 或任何其他产品/模型。宿主只需提供“创建真实独立会话、运行角色、
-  返回真实来源信息和标准 runtime”四项能力。
-- `CommandSessionBackend` 与 `NOVEL_FORGE_HARNESS_COMMAND` 是通用命令桥参考实现，
-  不是架构依赖；但运行自动入口时必须已有某个真实 `SessionBackend` 接入。支持
-  项目级 Skill 的宿主可以直接实现同一能力协议，不必使用环境变量命令桥。
+- 默认入口是 Skill 原生编排：Lead 使用当前宿主已有的 Roles、Teams、Task Agent 或
+  Session 能力创建真实独立角色，等待完成，再把产物交给确定性控制面。它不绑定
+  Claude Code、Codex、OMP、Kimi、DeepSeek 或任何产品/模型。
+- `SessionBackend` 是能力语义，不要求交互式宿主实现 Python 类。
+  `CommandSessionBackend` 与 `NOVEL_FORGE_HARNESS_COMMAND` 仅是服务器、批处理和
+  cron 可用的可选 headless 命令桥。
 - 命令桥只接受仓库外的入口程序和脚本，构造 Backend 时固定这些文件的 SHA-256，
   每次调用前后重新核验；外部进程在一次性临时目录中启动，不能继承项目根为默认
   工作目录。调用期间若 `app/`、`tools/`、Skill、仓库说明或其他控制面发生新增、
   删除或改写，立即返回 `control_plane_mutation`，不能继续创建会话或写正文。
-- 自动写作请求的首个写操作只能是 `tools/novel-workflow.py start`。Backend 不可用
-  时必须在创建书目录、正文、规划、审稿和 Git 恢复点前停止，并明确表示本章未开始。
-  Agent 不得转而调用 `init-novel-project`、直接写 `books/` 或自行选择降级探索。
+- 原生角色可用时不得因命令桥缺失而停止。所有书目录、规划、正文、证据、状态和 Git
+  写入仍由 adapter、Guardian 与既有状态机完成，角色不得直接写控制面。
+- 新书由确定性控制面先通过 `init-novel-project` 初始化，再创建 Writer 规划会话；
+  初始化不是 Writer 或 Lead 自由写文件的授权。
+- 宿主无法创建、隔离或等待真实角色时，必须在正文、审稿和 ready 前停止并说明
+  本章未开始；不得用角色名、单会话或 Lead 自演替代。
 - 创作任务中的 Lead 和任何角色不得创建、修改、修复、包装、安装或配置 Harness
   / SessionBackend，也不得自行设置命令桥环境变量。宿主接入是创作前单独完成的
   管理操作；Backend 缺失时不得给出“部署环境”选项或把继续写作选择解释为基础设施
   修改授权。
-- Writer、每次 Patch、Blind Reader 和 Chapter Editor 都由外部 Harness 创建新的
-  原生会话；三个当前角色会话必须互不相同。
+- Writer、每次 Patch、Blind Reader 和 Chapter Editor 都由宿主创建新的原生会话；
+  Lead 必须等待每个异步角色完成，三个当前角色会话必须互不相同。
+- 完成只认宿主官方 `wait` / `join` 返回的终态。角色创建、任务接单、进度消息、正文
+  文件暂时稳定都不代表完成；session 退役或超时后，晚到产物不得重新获得导入资格。
+- Blind Reader 完成并正式记录后才启动 Chapter Editor，因为后者的允许上下文包含
+  本轮盲审结果。Patch 后两者都使用新 session 重新全文审稿。
 - 初始 Writer 先执行 `phase=planning`，返回允许列表内的 `worldbuilding.md`、
   `research-boundaries.md`、`story-engine.md` 和当前章 scene package。Orchestrator
   只校验路径、必需文件和非空内容后落盘，不补写人物欲望、错误模型、物象或主题。
@@ -43,6 +50,7 @@ Blind Reader 或 Chapter Editor。
   因果归属或专业判断审计。
 - Writer 只进入仓库外 capsule。默认 capsule 位于系统临时目录，也可由调用方传入
   明确位于仓库外的目录。
+- 原生上下文隔离不等于文件系统隔离；宿主必须实际限制 Writer 只能访问 capsule。
 - Blind Reader 请求体只含当前正文。
 - Chapter Editor 请求体只含当前正文、当前场景包、必要 Canon、本轮盲审结果；
   机器诊断只作为编辑定位信息；第 2 章起另含上一章末段，用于提交门禁要求的真实
@@ -110,11 +118,11 @@ session，签发绑定当前章节、该 session 和前两版正文的 regenerat
 
 ## 宿主接入
 
-支持 Novel Forge Skill 的 Agent/Harness 应直接复用本书的 Skill、adapter、
-Harness Contract、Guardian Contract 和 `SessionBackend` 语义，使用宿主自己的
-原生新会话能力。模型和工具由宿主或用户选择，工作流不作枚举，也不保存默认组合。
+支持 Novel Forge Skill 的宿主默认直接复用 Skill、adapter、Harness Contract 和
+Guardian Contract，以原生独立角色完成调度。模型和工具由宿主或用户选择，工作流
+不枚举平台，也不保存默认组合。原生角色接口无需翻译成环境变量或项目内脚本。
 
-当宿主通过进程桥接入时设置：
+只有无交互服务器或批处理通过进程桥接入时才设置：
 
 ```powershell
 $env:NOVEL_FORGE_HARNESS_COMMAND = "your-harness-command"
@@ -123,11 +131,13 @@ $env:NOVEL_FORGE_HARNESS_COMMAND = "your-harness-command"
 该变量必须由启动 Novel Forge 的宿主环境预先提供，且命令中的入口文件必须位于项目
 仓库外。小说创作 Agent 不得在任务中创建脚本后再设置该变量指向它。
 
-如果宿主既没有直接实现 `SessionBackend`，也没有配置命令桥，Formal 自动生产不可
-执行。`degraded_exploration` 只保留给用户明确要求的实验稿，不是缺少 Backend 时的
-自动回退，也不能被称为章节完成。
+如果宿主既没有原生独立角色能力，也没有预先配置 headless 命令桥，Formal 自动生产
+不可执行。`degraded_exploration` 只保留给用户明确要求的实验稿，不是自动回退。
 
 ## 用户入口
+
+交互式宿主中，用户直接给出六项架构即可，由 Skill 调度原生角色。以下命令仅用于
+可选 headless 场景：
 
 ```powershell
 python tools\novel-workflow.py --root D:\mydev\s-black-novel start demo `

@@ -149,13 +149,17 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - `evidence/` 证明过程，不代表作者批准；`ready` 也不代表发布许可。
 
 ## 自动生产唯一入口
-- 用户要求写作、续写或提供六项小说架构时，首个写操作只能是仓库根目录的
-  `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
-- 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
+  调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
+  `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- `python tools/novel-workflow.py ... start` 是可选 headless 入口；
+  `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
+- 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
+- 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+- 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
-  / SessionBackend，不得自行设置 `NOVEL_FORGE_HARNESS_COMMAND`。这些属于创作
-  请求开始前由宿主完成的独立管理任务；缺失时不得提供部署或配置 Harness 的选项。
+  / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
 
@@ -186,7 +190,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
    `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。handoff 中只放过滤后的
    Writer Story Brief；完整 Scene Package 的决策问题、替代解释、可证伪假设、因果
-   归属和专业判断审计只供 Chapter Editor 使用。外部 Harness 在 capsule 外生成标准
+   归属和专业判断审计只供 Chapter Editor 使用。确定性控制面或可选 headless Harness 在 capsule 外生成标准
    累计 runtime，并用 `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
 4. 一次只做一章，writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
    standard/medium；默认审稿也用 standard/medium。Max/长思考只处理被明确命名的
@@ -1460,13 +1464,17 @@ def _agent_orchestrator_md() -> str:
 `{_STATE_CHAIN}`
 
 ## 自动生产唯一入口
-- 用户要求写作、续写或提供六项小说架构时，首个写操作只能是仓库根目录的
-  `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
-- 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
+  调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
+  `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- `python tools/novel-workflow.py ... start` 是可选 headless 入口；
+  `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
+- 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
+- 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+- 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
-  / SessionBackend，不得自行设置 `NOVEL_FORGE_HARNESS_COMMAND`。这些属于创作
-  请求开始前由宿主完成的独立管理任务；缺失时不得提供部署或配置 Harness 的选项。
+  / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
 
@@ -1477,11 +1485,11 @@ def _agent_orchestrator_md() -> str:
 2. 用户要 1 章时运行 `begin-chapter-sequence --chapter-count 1`；用户要连续多章
    时按请求建立序列，但最多 4 章，五章及以上必须拆分。起草前确认
    `memory-status=clean`，并运行 `build-memory-context`。
-3. 每次 launch directive 只允许当前一章。创建新的原生 writer session 后立即
-   `claim-chapter-session`，再由外部 Harness 运行 `prepare-writer-capsule`，
+3. 每次 launch directive 只允许当前一章。Lead 创建并等待新的原生 writer session，
+   控制面立即 `claim-chapter-session`，再运行 `prepare-writer-capsule`，
    把仓库外目录作为该 writer session 唯一可见、可写的文件系统范围。
 4. Guardian 按 `{FORMAL_WRITER_PROMPT_ID}` 编译短小的 `instructions.md`。Writer 只读
-   capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；Harness
+   capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；确定性控制面
    在 capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
    Guardian sidecar。Writer 不接收完整 Skill、句长、段落长度、对白占比等数字目标，
    也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。handoff 只含
@@ -1494,9 +1502,10 @@ def _agent_orchestrator_md() -> str:
 6. generation 绑定真实 writer `run_id`、`prompt_template_id` 与 `prompt_sha256`。
    每次模型响应后对累计快照运行 `session-audit`；返回
    `continue_allowed=false` 时在下一次请求前停机。
-7. 结束时运行 `record-session-audit`；外部统计优先于 Agent 自报。runtime、来源、
+7. 结束时运行 `record-session-audit`；宿主观测优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
-8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；不得暂停询问是否开始审核。
+8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；Blind Reader 正式记录后才能启动 Chapter Editor。
+   不得暂停询问是否开始审核。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
    “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
    修补接缝；chapter-editor 每轮完整重审五项文学维度。
@@ -1532,7 +1541,7 @@ def _agent_orchestrator_md() -> str:
 {policy_lines}
 
 - Formal writer 不得看到或修改 `books/` 控制面、验证器源码、evidence、状态文件或
-  其他章节；外部 Harness 无法落实 capsule-only 文件系统时，自动生产必须停止。
+  其他章节；宿主无法落实 capsule-only 文件系统时，自动生产必须停止。
 - compromised capsule 必须废弃当前 session；不得在同一 session 中删除违规文件后
   重新导入，也不得由 writer 自己填写隔离证明或 Guardian 回执。
 - 公开 `evidence/guardian-receipts/` 副本不能单独证明通过；必须匹配

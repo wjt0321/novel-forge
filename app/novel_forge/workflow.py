@@ -2168,7 +2168,10 @@ def _print_result(result: WorkflowResult) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Novel Forge 自动三角色小说工作流"
+        description=(
+            "Novel Forge 可选 headless 命令工作流；交互式 Agent 默认使用 "
+            "Skill 原生 Roles"
+        )
     )
     parser.add_argument(
         "--root",

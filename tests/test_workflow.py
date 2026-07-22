@@ -1161,6 +1161,18 @@ def test_missing_command_backend_reports_chapter_not_started(
     assert not (tmp_path / "books/demo").exists()
 
 
+def test_command_workflow_help_marks_entry_as_optional_headless(
+    capsys: pytest.CaptureFixture[str],
+):
+    with pytest.raises(SystemExit) as raised:
+        workflow_module.main(["--help"])
+
+    assert raised.value.code == 0
+    output = capsys.readouterr().out
+    assert "可选 headless" in output
+    assert "Skill 原生 Roles" in output
+
+
 def test_repository_local_command_harness_is_rejected(tmp_path: Path):
     root = tmp_path / "repo"
     harness = root / "tools/harness.py"

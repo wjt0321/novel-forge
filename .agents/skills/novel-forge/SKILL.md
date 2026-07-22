@@ -9,17 +9,23 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
 
 ## 选择入口
 
-- **自动生产唯一入口**：用户要求写作、续写或给出六项架构时，首个写操作只能是
-  `tools/novel-workflow.py start`；不得先建书，也不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- Backend、独立会话或隔离不可用时立即停止，只说明“本章未开始”。
-  `degraded_exploration` 只有用户明确要求探索稿时才允许，不能由 Agent 自行降级。
+- **自动生产唯一入口**：默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；
+  Lead 按本 Skill 调度、等待、回收产物，原生角色可用时不得因命令 Backend 缺失而停止。
+- 控制面写入只经 adapter；不得自行创建正文、规划、审稿或 ready Git 恢复点。
+  新书先由确定性控制面通过 `init-novel-project` 初始化，再创建 Writer 规划会话。
+  `tools/novel-workflow.py start` 是可选 headless 入口；
+  `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
+- 高权限只属于无模型推理的确定性控制面；Lead 只调度，三个创作角色只交付各自产物。
+  必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+  Blind Reader 正式记录后才能启动 Chapter Editor；退役 session 的晚到结果无效。
+  无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
+  `degraded_exploration` 只有用户明确要求探索稿时才允许。
 - 创作 Lead/角色不得创建、修改、修复、包装、安装或配置 Harness / SessionBackend；
-  不得自行设置命令桥，缺失时不得向用户提供部署或配置 Harness 的选项。
+  不得自行设置命令桥，不得向用户提供部署或配置 Harness 的选项。
 - 仅搭建空项目才用 `books/<slug>/`；SQLite 审批或导出用 `library/<slug>/`。
   不直改 SQLite、`library/**/revisions/` 或不可变 `evidence/`。
 
-Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
-`--confirm <operation>`。先用 `--help` 查看参数，不在 Skill 中复制全部 CLI。
+Adapter 从仓库根运行，`--root` 用绝对路径；变更操作须 `--confirm <operation>`。
 
 ## Books v4.8
 
@@ -27,61 +33,58 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 
 `planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
 
-`ready` 只是材料齐备，不是作者批准或发布许可。
+`ready` 不是作者批准或发布许可。
 
 `SessionBackend` 厂商无关；角色判断由真实会话返回，Lead 禁止代填。
 
-### 通用 Harness Contract
+### 通用执行合同
 
-Formal 前读取 `harness-contract`；Harness 输出厂商无关的
+Formal 前读取 `harness-contract`。默认由宿主原生角色执行；可选 headless Harness
+仅是另一种调度载体。两者都输出厂商无关的
 `novel-forge-runtime/v1` 累计快照。每次响应后运行 `session-audit`，
 `continue_allowed=false` 就停机；无标准快照不能 formal。
 命令桥仅接受仓库外入口并固定哈希；入口替换或 `control_plane_mutation` 立即停止。
+确定性控制面可建/等/退役会话、调 adapter 和 Guardian，但不能写正文、代审或改规则。
 
 ### 隔离 Writer Capsule
 
-Formal Agent writer 不直接进入 `books/<slug>/`。外部 Harness 先读取
-`evaluation/guardian-contract.json` 或调用 `guardian-contract`，在仓库外创建
-capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同、`handoff.md`
-、Guardian 以 `formal-writer/v1` 编译且不超过 1200 字符的受保护
-`instructions.md`，以及可写的 `draft/正文.md`；runtime 快照由 Harness 在 capsule 外生成，并经
+Formal writer 不进入 `books/<slug>/`。控制面读取 `guardian-contract`，在仓库外建
+capsule，并限制为 capsule-only。writer 只见合同、`handoff.md`、Guardian 以
+`formal-writer/v1` 编译的受保护 `instructions.md` 和可写的 `draft/正文.md`；runtime 在外部生成并经
 `record-capsule-runtime` 写入外置 Guardian sidecar。`ingest-writer-capsule`
 本地核对文件、哈希、session、预算与证明后原子导入正文。
 额外文件、路径逃逸、保护输入变化或证明不实均为 `compromised`。无变化 Patch 记为
 `no_content_change`，不创建 Generation 或刷新审稿。
 `run_writer` 返回只代表已接单；正文与外置 runtime 均稳定后才能导入。超时保留失败
 回执并换新 Session/Capsule，晚到旧稿不得覆盖重试稿。
-协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖。自动生产无法隔离时停止。
+协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖；无法隔离时停止。
 
 ### 章节序列与新会话
 
 正式生产一次只做一章，执行单位是**一章一个原生 writer session**。
-系统用 `planning/chapter-sequences/<sequence-id>.json` 返回 launch directive：
+sequence 返回 launch directive：
 
 1. 新 Writer 先交付本章规划；再运行 `begin-chapter-sequence --chapter-count 1`。
 2. 连续多章仍逐章换 Writer；单次序列最多 4 章，五章及以上拆分。
-3. Harness 用 `claim-chapter-session` 绑定该 Writer 的真实 session ID；后续章按
-   launch directive 创建新会话。角色名、子 Agent 名和编排器 ID 不能代替原生
-   session ID；Backend 还须返回跨角色唯一的 `session_instance_id`。随后创建 capsule。
+3. Lead 等待原生 Writer，控制面用 `claim-chapter-session` 绑定真实 session ID；
+   后续章按 directive 新建会话。角色名或编排器 ID 不能代替原生 session ID；
+   Backend 还须返回唯一 `session_instance_id`。随后创建 capsule。
 4. Writer 只写本章正文，输出后停止角色工作；证据、审稿、状态、ready 与 Git 由
-   编排器和独立角色处理，Lead 不得代做。上一章完整 `ready` 才能签发下一章。
-   编排器再运行
+   控制面和独立角色处理，Lead 不得代做。上一章完整 `ready` 后再运行
    `advance-chapter-sequence`，只有返回 `launch_next_session=true` 时才顺序创建
    下一章的新 session。
 5. session 不得跨章或跨书；generation `run_id` 必须等于 claim ID。三角色完成凭证
    绑定当前章、Generation、正文和角色产物，只由 Orchestrator 写；缺一不能 ready。
 
-交接包只含六项硬锚、相关 Canon/认知与承诺、上一章末段、Voice exemplar 和
-Writer Story Brief；不续传旧会话或整书。完整 Scene Package 是 Chapter Editor 控制面，
-决策审计不进入 Writer。
+交接包只含硬锚、相关 Canon/承诺、上一章末段、Voice exemplar 和 Writer Story Brief；
+不续传旧会话。完整 Scene Package 是 Chapter Editor 控制面，决策审计不进 Writer。
 
 ### 每书本地 Git
 
 每书 Git 元数据在 `.local-book-git/<slug>.git`，不得配置 remote；用
 `book-git-status` 查元数据。generation/ready 自动形成 `chapter: chNN draft` /
 `chapter: chNN ready`，每五章打本地 checkpoint。Git 只管恢复，不代表批准。
-彻底删除实验书时必须同时清除工作区、外置 gitdir、外置 Guardian 与该实验的仓库外
-临时 Capsule；只删一部分不算完成。
+彻底删除实验书时同时清除工作区、外置 gitdir、外置 Guardian 和临时 Capsule。
 
 ### 每章闭环
 
@@ -91,16 +94,15 @@ Writer Story Brief；不续传旧会话或整书。完整 Scene Package 是 Chap
    `prepare-writer-capsule` 创建仓库外隔离工作区。
 2. 编排操作会核对/重建派生记忆索引并生成有界 `chXX-handoff.md`；单章诊断仍可
    运行 `memory-status` / `rebuild-memory-index` / `build-memory-context`。
-   工具受限必须降级并记录真实失败。
+   工具受限时记录真实失败并停止 formal；仅用户预先要求探索稿时才降级。
 3. context collector 只交付一页最小写作包：目标/阻力/选择/代价、相关
    Canon 与人物认知、最多三条承诺、上一章末段、必要规则和一个短 exemplar。
-   不加载全书 Canon、旧审稿全文、模板说明或无关章节；直接引用既有 exemplar，
-   不另建声音分析报告。完成后推进 `context_collected`。
+   不加载全书 Canon、旧审稿全文、模板或无关章节；引用既有 exemplar。
 4. 填一页式 `scene-package-chXX.md`。它必须包含人物摩擦、替代解释、
    beat 因果、责任归属、常识反证和余波；写作包交付事实，scene package 设计选择，
    重复字段只引用不扩写。只有三方以上动作依赖、专业操作/不可逆物理过程，或对白
    承担关键事实转移时，才建动作稿/对白账本。
-   关键对白意图与专业判断不得保留空模板；没有时写具体“无需”理由。
+   关键对白意图与专业判断不得留空；没有时写具体“无需”理由。
    ch02+ 的 `0b. 章际交接` 绑定上一章路径、SHA-256、末段短引及时间/地点/动作；
    还要写明上一章末明确决定、本章是否推翻该决定；若推翻，必须引用本章前 40%
    出现的触发事件原文，不能用事后解释替代桥接。
@@ -110,7 +112,7 @@ Writer Story Brief；不续传旧会话或整书。完整 Scene Package 是 Chap
     `0a. 用户硬锚合同`；规划不得改写，Writer 与 Chapter Editor 都以该合同优先。
 5. 一名 writer 只读 instructions、handoff 与 patch 时预置正文，在 capsule 内处理一章。
    正式章不少于 5000 CJK；不要边查字数
-   边连续补写。writer 只写 `draft/正文.md`；Harness 先经
+   边连续补写。writer 只写 `draft/正文.md`；确定性控制面先经
    `record-capsule-runtime` 写入外置 runtime，再运行 `ingest-writer-capsule`，
    取得干净 Guardian 回执。集中 patch 使用预置当前正文的新 capsule；第三个潜在
    正文版本必须先经 `authorize-regeneration` 获得绑定前两版哈希的签名授权。
@@ -148,12 +150,10 @@ Writer Story Brief；不续传旧会话或整书。完整 Scene Package 是 Chap
 
 ## 文学门
 
-机器门只拦高置信破绽。极端跨章逐字复用覆盖、长段跨章复制和嵌套说话人标签属于
-blocking；句长塌缩和低量精确复读仍是 advisory。`pattern-saturation` 标记单章内
-句首、短分句或整句被当成固定手势反复调用；`voice-anchor-surface-copy` 标记后续章
-对 Voice exemplar 表层八字片段的重复挪用。这两项默认只提醒编辑器，不自动改稿，
-也不把声音指纹变成 writer 的数值目标。中文叙事行混入 ASCII 逗号或直引号同样只做
-advisory。机器不认证文学价值。
+机器门只拦高置信破绽。极端逐字复用、长段复制和嵌套说话人标签为 blocking；
+句长塌缩、低量复读、ASCII 标点为 advisory。`pattern-saturation` 查固定手势复用；
+`voice-anchor-surface-copy` 查 exemplar 表层复制。只提醒编辑器，不生成数值目标。
+机器不认证文学价值。
 
 `literary-micro-rules/v3` 是短规则唯一来源；日常不加载样本全文。三角色按“可以写、
 慎写、允许、绝对禁止”判断主动选择、私人代价、物理状态、知识来源、机械精确、
@@ -176,13 +176,11 @@ advisory。机器不认证文学价值。
 
 ### Chapter Editor
 
-先只读正文重建事件链、选择、代价和停止点，再读 scene package、记忆包和上一章
-末段，完成五项审查。仅有具体专业风险时按需调用一个
+先只读正文重建事件链、选择、代价和停止点，再读 scene package、记忆包和上一章末段。
+仅有具体专业风险时按需调用一个
 `causal-editor | line-editor | texture-editor | consistency-guard`；专业角色是兼容工具，
 不是默认六审。
-通过报告必须逐项填写因果、人物能动性、对白信息流、句子肌理和连续性；
-`record-review` 会拒绝空壳审稿。每轮重审五项，并查控制面泄漏、人物可替换性、
-会议式对白和解释性 Patch。
+每轮重审因果、能动性、对白、肌理和连续性，并查控制面泄漏与解释性 Patch。
 
 审稿必须绑定当前 chapter/planning/generation SHA、真实 reviewer/provider/model/context
 与 `review_session_id`。blind-reader pass 使用 `context_scope=prose_only` 且
@@ -191,15 +189,14 @@ advisory。机器不认证文学价值。
 
 ## Token 边界与外置 Guardian
 
-- 每章独立会话，只传短提示词与有界 handoff；Guardian 校验在本地执行，
-  不回灌 ACP、完整 transcript、旧工具结果或验证器源码。
+- 每章独立会话，只传短提示词与有界 handoff；不回灌 transcript、旧工具结果或验证器源码。
 - `session-audit` 只认 `novel-forge-runtime/v1`。每章上限：30 请求、2,000,000
   cached-input tokens、单请求 120,000 context tokens；超限即停止。
 - 正文默认 standard/medium，即标准或中等推理。Max/长思考只处理具名难题，
   结论压入 scene package；不用于整章、模板、状态、证据或默认审稿。
 - 正文一次 Write、最多一次集中 Edit；默认两角色，专业加审后建议总调用不超过 3。
 - 第三版必须等待用户明确选择；MAY/advisory 不生成。
-- generation 如实记录 `run_id`、provider/model/Harness、reasoning effort、
+- generation 如实记录 `run_id`、provider/model/host、reasoning effort、
   token/request、draft/review 计数、`tool_capabilities` 与 `tool_failures`。
   指标只填本次增量；未知保持 null/unknown。
 - formal ready 需要匹配 `run_id` 且未超限的外部审计；一章 runtime audit 只能绑定当前 generation，

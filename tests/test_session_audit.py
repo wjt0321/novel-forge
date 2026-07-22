@@ -220,6 +220,33 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
     contract = harness_contract()
 
     assert contract["schema"] == "novel-forge-harness-contract/v1"
+    assert contract["execution_modes"] == {
+        "default": "skill_native",
+        "skill_native": {
+            "session_authority": "host_native_roles",
+            "requires_command_environment": False,
+            "fresh_role_session_required": True,
+            "wait_for_role_completion_required": True,
+            "deterministic_control_plane_only": True,
+            "creative_roles_can_mutate_control_plane": False,
+            "lead_can_author_role_artifacts": False,
+        },
+        "headless_command": {
+            "optional": True,
+            "environment_variable": "NOVEL_FORGE_HARNESS_COMMAND",
+            "trusted_external_entry_required": True,
+        },
+    }
+    assert contract["native_role_handoff"] == {
+        "create_via_host_native_api": True,
+        "wait_for_host_terminal_state": True,
+        "accepted_or_progress_is_not_complete": True,
+        "file_stability_is_not_complete": True,
+        "host_session_identity_required": True,
+        "late_result_after_retirement_is_invalid": True,
+        "blind_reader_must_complete_before_chapter_editor": True,
+        "context_isolation_is_not_filesystem_isolation": True,
+    }
     assert contract["runtime_report_schema"]["const"] == (
         "novel-forge-runtime/v1"
     )
