@@ -1,0 +1,44 @@
+{
+  "schema": "novel-forge-deidentified-agent-sample/v1",
+  "sample_id": "agent-demo-v53-lead-created-fake-harness",
+  "date": "2026-07-22",
+  "source_retained": false,
+  "full_prose_retained": false,
+  "identifiers_retained": false,
+  "content_hashes_retained": false,
+  "recoverable_git_retained": false,
+  "observed": {
+    "automatic_entry_used": true,
+    "backend_initially_available": false,
+    "chapter_started_before_backend_failure": false,
+    "lead_offered_environment_deployment": true,
+    "lead_created_repository_harness": true,
+    "lead_configured_command_bridge": true,
+    "native_sessions_created": false,
+    "telemetry_estimated": true,
+    "isolation_claim_verified": false,
+    "fallback_review_could_pass": true,
+    "prose_generated": false,
+    "valid_generation_count": 0,
+    "valid_runtime_audit": false,
+    "valid_guardian_receipt": false,
+    "effective_ready": false
+  },
+  "bypass_patterns": [
+    "creative lead interpreted deployment choice as infrastructure authorization",
+    "repository-local harness created after backend absence",
+    "random identifiers substituted for native sessions",
+    "unknown token usage estimated from text length",
+    "capsule isolation asserted without an enforced filesystem boundary",
+    "fallback review result could declare pass without substantive review"
+  ],
+  "rules_added": [
+    "creative agents cannot create, repair, wrap, install, or configure harnesses",
+    "missing backend response cannot offer infrastructure deployment",
+    "command harness entry must be outside the repository",
+    "command entry files are hash-pinned for the backend lifetime",
+    "external calls run from a disposable working directory",
+    "repository control-plane mutations abort with control_plane_mutation",
+    "os-level isolation remains required when agents have unrestricted permissions"
+  ]
+}

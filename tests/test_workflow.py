@@ -17,6 +17,9 @@ from app.novel_forge.book_evidence import evidence_status
 from app.novel_forge.book_project import list_reviews, project_status
 from app.novel_forge.chapter_sequence import chapter_sequence_status
 from app.novel_forge.workflow import (
+    CommandSessionBackend,
+    ControlPlaneMutationError,
+    HarnessTrustError,
     NovelWorkflowOrchestrator,
     PlanningOutcome,
     ReviewFinding,
@@ -26,6 +29,47 @@ from app.novel_forge.workflow import (
     WorkflowRequest,
     runtime_generation_metrics,
 )
+
+
+def _command_harness_script(
+    path: Path,
+    *,
+    mutate_path: Path | None = None,
+) -> None:
+    mutation = (
+        f"Path({str(mutate_path)!r}).write_text('mutated\\n', encoding='utf-8')"
+        if mutate_path is not None
+        else "pass"
+    )
+    path.write_text(
+        "\n".join(
+            [
+                "import argparse",
+                "import json",
+                "from pathlib import Path",
+                "",
+                "parser = argparse.ArgumentParser()",
+                "parser.add_argument('--request', required=True)",
+                "parser.add_argument('--response', required=True)",
+                "args = parser.parse_args()",
+                f"{mutation}",
+                "request = json.loads(Path(args.request).read_text(encoding='utf-8'))",
+                "payload = {",
+                "    'session_id': 'native-session-01',",
+                "    'session_instance_id': 'native-instance-01',",
+                "    'provider': 'test-provider',",
+                "    'model': 'test-model',",
+                "    'agent_harness': 'external-test-harness/1',",
+                "}",
+                "Path(args.response).write_text(",
+                "    json.dumps(payload, ensure_ascii=False),",
+                "    encoding='utf-8',",
+                ")",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _prose(label: str) -> str:
@@ -1115,6 +1159,149 @@ def test_missing_command_backend_reports_chapter_not_started(
         "自动写作环境尚未就绪，本章没有开始。"
     )
     assert not (tmp_path / "books/demo").exists()
+
+
+def test_repository_local_command_harness_is_rejected(tmp_path: Path):
+    root = tmp_path / "repo"
+    harness = root / "tools/harness.py"
+    harness.parent.mkdir(parents=True)
+    _command_harness_script(harness)
+
+    with pytest.raises(HarnessTrustError, match="项目仓库外"):
+        CommandSessionBackend(
+            [sys.executable, str(harness)],
+            root=root,
+        )
+
+
+def test_repository_local_harness_environment_does_not_create_book(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    root = tmp_path / "repo"
+    harness = root / "tools/harness.py"
+    harness.parent.mkdir(parents=True)
+    _command_harness_script(harness)
+    monkeypatch.setenv(
+        "NOVEL_FORGE_HARNESS_COMMAND",
+        f'"{sys.executable}" "{harness}"',
+    )
+
+    code = workflow_module.main(
+        [
+            "--root",
+            str(root),
+            "start",
+            "demo",
+            "--title",
+            "测试书",
+            "--genre",
+            "悬疑",
+            "--protagonist",
+            "林舟",
+            "--world",
+            "雨城",
+            "--conflict",
+            "必须在封锁前找到证人",
+            "--hook",
+            "门后传来失踪者的声音",
+        ]
+    )
+
+    assert code == 2
+    output = capsys.readouterr().out.strip()
+    assert output == "自动写作环境尚未就绪，本章没有开始。"
+    assert "部署" not in output
+    assert "配置" not in output
+    assert not (root / "books/demo").exists()
+
+
+def test_command_harness_is_hash_pinned_for_backend_lifetime(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    harness = tmp_path / "external-harness.py"
+    _command_harness_script(harness)
+    backend = CommandSessionBackend(
+        [sys.executable, str(harness)],
+        root=root,
+    )
+    harness.write_text(
+        harness.read_text(encoding="utf-8") + "\n# replaced\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HarnessTrustError, match="已发生变化"):
+        backend.create_session("writer")
+
+
+def test_quoted_external_command_string_creates_session(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    harness_dir = tmp_path / "external harness"
+    harness_dir.mkdir()
+    harness = harness_dir / "bridge.py"
+    _command_harness_script(harness)
+    backend = CommandSessionBackend(
+        f'"{sys.executable}" "{harness}"',
+        root=root,
+    )
+
+    session = backend.create_session("writer")
+
+    assert session.session_id == "native-session-01"
+    assert session.session_instance_id == "native-instance-01"
+
+
+def test_inline_interpreter_command_cannot_impersonate_harness(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    with pytest.raises(HarnessTrustError, match="可固定的仓库外入口"):
+        CommandSessionBackend(
+            [sys.executable, "-c", "print('fake harness')"],
+            root=root,
+        )
+
+
+def test_external_executable_name_starting_with_sh_is_not_shell(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    harness = tmp_path / "shared-harness.exe"
+    harness.write_bytes(b"external harness placeholder")
+
+    backend = CommandSessionBackend([str(harness)], root=root)
+
+    assert backend.command == [str(harness)]
+
+
+def test_command_harness_control_plane_mutation_is_blocked(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    protected = root / "CLAUDE.md"
+    protected.write_text("original\n", encoding="utf-8")
+    harness = tmp_path / "external-harness.py"
+    _command_harness_script(harness, mutate_path=protected)
+    backend = CommandSessionBackend(
+        [sys.executable, str(harness)],
+        root=root,
+    )
+
+    with pytest.raises(
+        ControlPlaneMutationError,
+        match="control_plane_mutation",
+    ):
+        backend.create_session("writer")
 
 
 def test_automatic_start_rejects_unmanaged_existing_draft_before_session(

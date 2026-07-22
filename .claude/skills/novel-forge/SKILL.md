@@ -13,6 +13,8 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
   `tools/novel-workflow.py start`；不得先建书，也不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - Backend、独立会话或隔离不可用时立即停止，只说明“本章未开始”。
   `degraded_exploration` 只有用户明确要求探索稿时才允许，不能由 Agent 自行降级。
+- 创作 Lead/角色不得创建、修改、修复、包装、安装或配置 Harness / SessionBackend；
+  不得自行设置命令桥，缺失时不得向用户提供部署或配置 Harness 的选项。
 - 仅搭建空项目才用 `books/<slug>/`；SQLite 审批或导出用 `library/<slug>/`。
   不直改 SQLite、`library/**/revisions/` 或不可变 `evidence/`。
 
@@ -34,6 +36,7 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 Formal 前读取 `harness-contract`；Harness 输出厂商无关的
 `novel-forge-runtime/v1` 累计快照。每次响应后运行 `session-audit`，
 `continue_allowed=false` 就停机；无标准快照不能 formal。
+命令桥仅接受仓库外入口并固定哈希；入口替换或 `control_plane_mutation` 立即停止。
 
 ### 隔离 Writer Capsule
 
@@ -188,7 +191,7 @@ advisory。机器不认证文学价值。
 
 ## Token 边界与外置 Guardian
 
-- 每章独立会话，只传编译短提示词与有界 handoff，不重复注入完整 Skill；Guardian 的哈希、预算、回执都在本地执行，
+- 每章独立会话，只传短提示词与有界 handoff；Guardian 校验在本地执行，
   不回灌 ACP、完整 transcript、旧工具结果或验证器源码。
 - `session-audit` 只认 `novel-forge-runtime/v1`。每章上限：30 请求、2,000,000
   cached-input tokens、单请求 120,000 context tokens；超限即停止。

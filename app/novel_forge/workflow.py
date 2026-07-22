@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -92,6 +93,14 @@ class WorkflowError(NovelForgeError):
 
 class BackendUnavailableError(WorkflowError):
     """Raised when no native-session backend is connected."""
+
+
+class HarnessTrustError(BackendUnavailableError):
+    """Raised when the configured Harness is not a trusted external entry."""
+
+
+class ControlPlaneMutationError(WorkflowError):
+    """Raised when a Harness call changes repository control-plane files."""
 
 
 @dataclass(frozen=True)
@@ -209,22 +218,165 @@ class SessionBackend(Protocol):
 class CommandSessionBackend:
     """Run a configured external Harness through a small JSON file protocol."""
 
-    def __init__(self, command: str | list[str]):
+    _MUTABLE_ROOT_NAMES = frozenset(
+        {
+            ".git",
+            ".local-book-git",
+            ".local-guardian",
+            ".novel-forge",
+            ".pytest_cache",
+            ".tmp-capsule",
+            "__pycache__",
+            "books",
+            "data",
+            "experiments",
+            "library",
+            "work",
+        }
+    )
+    _IGNORED_DIRECTORY_NAMES = frozenset(
+        {
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            "__pycache__",
+        }
+    )
+    _SCRIPT_SUFFIXES = frozenset(
+        {".bat", ".cmd", ".exe", ".js", ".mjs", ".ps1", ".py", ".sh"}
+    )
+    _INTERPRETER_NAMES = frozenset(
+        {"bash", "cmd", "node", "perl", "powershell", "pwsh", "ruby", "sh"}
+    )
+    _INLINE_EXECUTION_FLAGS = frozenset(
+        {"--command", "--eval", "-c", "-e", "-m", "/c", "/k"}
+    )
+
+    def __init__(self, command: str | list[str], *, root: Path):
         if isinstance(command, str):
-            self.command = shlex.split(command, posix=os.name != "nt")
+            self.command = shlex.split(command, posix=True)
         else:
             self.command = list(command)
         if not self.command:
             raise WorkflowError("未配置自动写作引擎。")
+        self.root = root.resolve()
+        self._command_artifacts = self._resolve_command_artifacts()
+        self._command_hashes = {
+            path: self._file_sha256(path)
+            for path in self._command_artifacts
+        }
 
     @classmethod
-    def from_environment(cls) -> "CommandSessionBackend":
+    def from_environment(cls, root: Path) -> "CommandSessionBackend":
         command = os.environ.get("NOVEL_FORGE_HARNESS_COMMAND", "").strip()
         if not command:
             raise BackendUnavailableError("未配置自动写作引擎。")
-        return cls(command)
+        return cls(command, root=root)
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _resolve_command_artifacts(self) -> tuple[Path, ...]:
+        executable = self.command[0]
+        executable_path = Path(executable).expanduser()
+        if executable_path.is_absolute():
+            resolved_executable = executable_path.resolve()
+        elif any(separator in executable for separator in ("/", "\\")):
+            resolved_executable = (self.root / executable_path).resolve()
+        else:
+            located = shutil.which(executable)
+            if not located:
+                raise HarnessTrustError("自动写作引擎入口不存在。")
+            resolved_executable = Path(located).resolve()
+        artifacts = [resolved_executable]
+        for argument in self.command[1:]:
+            if argument.startswith("-"):
+                continue
+            candidate = Path(argument).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.root / candidate
+            if candidate.is_file():
+                artifacts.append(candidate.resolve())
+            elif (
+                candidate.suffix.lower() in self._SCRIPT_SUFFIXES
+                and ("/" in argument or "\\" in argument)
+            ):
+                raise HarnessTrustError("自动写作引擎入口不存在。")
+        unique_artifacts = tuple(dict.fromkeys(artifacts))
+        for path in unique_artifacts:
+            if not path.is_file():
+                raise HarnessTrustError("自动写作引擎入口不存在。")
+            if path == self.root or self.root in path.parents:
+                raise HarnessTrustError(
+                    "正式 Harness 必须位于项目仓库外。"
+                )
+        executable_name = resolved_executable.stem.lower()
+        is_interpreter = (
+            executable_name in self._INTERPRETER_NAMES
+            or re.fullmatch(
+                r"(?:pythonw?|pypyw?)(?:\d+(?:\.\d+)*)?",
+                executable_name,
+            )
+            is not None
+        )
+        flags = {argument.lower() for argument in self.command[1:]}
+        if is_interpreter and (
+            len(unique_artifacts) == 1
+            or flags & self._INLINE_EXECUTION_FLAGS
+        ):
+            raise HarnessTrustError(
+                "解释器命令必须引用可固定的仓库外入口脚本。"
+            )
+        return unique_artifacts
+
+    def _verify_command_artifacts(self) -> None:
+        for path, expected in self._command_hashes.items():
+            if not path.is_file() or self._file_sha256(path) != expected:
+                raise HarnessTrustError(
+                    "自动写作引擎入口已发生变化。"
+                )
+
+    def _control_plane_snapshot(self) -> dict[str, str]:
+        if not self.root.is_dir():
+            return {}
+        snapshot: dict[str, str] = {}
+        for path in self.root.rglob("*"):
+            relative = path.relative_to(self.root)
+            if not relative.parts:
+                continue
+            if relative.parts[0] in self._MUTABLE_ROOT_NAMES:
+                continue
+            if any(
+                part in self._IGNORED_DIRECTORY_NAMES
+                for part in relative.parts
+            ):
+                continue
+            key = relative.as_posix()
+            if path.is_symlink():
+                snapshot[key] = f"symlink:{os.readlink(path)}"
+            elif path.is_file():
+                snapshot[key] = self._file_sha256(path)
+        return snapshot
+
+    @staticmethod
+    def _changed_snapshot_paths(
+        before: dict[str, str],
+        after: dict[str, str],
+    ) -> list[str]:
+        return sorted(
+            path
+            for path in set(before) | set(after)
+            if before.get(path) != after.get(path)
+        )
 
     def _invoke(self, request: dict[str, Any]) -> dict[str, Any]:
+        self._verify_command_artifacts()
+        control_before = self._control_plane_snapshot()
         with tempfile.TemporaryDirectory(prefix="novel-forge-harness-") as temp:
             directory = Path(temp)
             request_path = directory / "request.json"
@@ -246,7 +398,19 @@ class CommandSessionBackend:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                cwd=directory,
             )
+            self._verify_command_artifacts()
+            changed_paths = self._changed_snapshot_paths(
+                control_before,
+                self._control_plane_snapshot(),
+            )
+            if changed_paths:
+                preview = ", ".join(changed_paths[:3])
+                raise ControlPlaneMutationError(
+                    "control_plane_mutation: "
+                    f"外部 Harness 改动了仓库控制面：{preview}"
+                )
             if proc.returncode != 0 or not response_path.is_file():
                 raise WorkflowError("自动写作引擎未能完成本次操作。")
             try:
@@ -2029,7 +2193,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         backend: SessionBackend
         if args.operation in {"start", "retry"}:
-            backend = CommandSessionBackend.from_environment()
+            backend = CommandSessionBackend.from_environment(args.root)
         else:
             backend = _UnavailableBackend()
         orchestrator = NovelWorkflowOrchestrator(

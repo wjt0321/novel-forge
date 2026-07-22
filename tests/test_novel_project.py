@@ -306,12 +306,14 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "本章未开始" in claude_md
     assert "只有用户明确要求探索稿" in claude_md
     assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in claude_md
+    assert "不得创建、修改、修复、包装、安装或配置 Harness" in claude_md
     assert "先只读正文" in chapter_editor
     assert "不得暂停询问是否开始审核" in orchestrator
     assert "自动生产唯一入口" in orchestrator
     assert "本章未开始" in orchestrator
     assert "只有用户明确要求探索稿" in orchestrator
     assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in orchestrator
+    assert "不得创建、修改、修复、包装、安装或配置 Harness" in orchestrator
     assert "begin-chapter-sequence" in orchestrator
     assert "claim-chapter-session" in orchestrator
     assert "advance-chapter-sequence" in orchestrator
@@ -523,6 +525,8 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
     assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
+    assert "不得创建、修改、修复、包装、安装或配置 Harness" in text
+    assert "不得向用户提供部署或配置 Harness 的选项" in text
 
 
 def test_skill_documents_v48_orchestrated_artifact_workflow():
@@ -535,6 +539,8 @@ def test_skill_documents_v48_orchestrated_artifact_workflow():
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
     assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
+    assert "不得创建、修改、修复、包装、安装或配置 Harness" in text
+    assert "不得向用户提供部署或配置 Harness 的选项" in text
     assert "guardian-contract" in text
     assert "prepare-writer-capsule" in text
     assert "ingest-writer-capsule" in text

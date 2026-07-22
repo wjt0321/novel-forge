@@ -153,6 +153,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
 - 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
+  / SessionBackend，不得自行设置 `NOVEL_FORGE_HARNESS_COMMAND`。这些属于创作
+  请求开始前由宿主完成的独立管理任务；缺失时不得提供部署或配置 Harness 的选项。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
 
@@ -1461,6 +1464,9 @@ def _agent_orchestrator_md() -> str:
   `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
 - 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
+  / SessionBackend，不得自行设置 `NOVEL_FORGE_HARNESS_COMMAND`。这些属于创作
+  请求开始前由宿主完成的独立管理任务；缺失时不得提供部署或配置 Harness 的选项。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
 
