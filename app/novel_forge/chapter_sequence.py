@@ -189,16 +189,70 @@ def _require_ready(
             "必须通过当前 generation、runtime、formal gates 与两角色审稿后"
             "才能创建下一章 session。"
         ) from exc
-    if (
-        state.get("status") != "ready"
-        or status.get("workflow_integrity", {}).get("status") == "blocked"
-    ):
+    blockers = status.get("workflow_integrity", {}).get("blockers", [])
+    substantive_blockers = [
+        item
+        for item in blockers
+        if item.get("code") != "ready_sequence_incomplete"
+    ]
+    if state.get("status") != "ready" or substantive_blockers:
         raise ChapterSequenceError(
             f"第 {chapter:02d} 章尚未完整 ready；"
             "必须通过当前 generation、runtime、formal gates 与两角色审稿后"
             "才能创建下一章 session。"
         )
     return status, state
+
+
+def chapter_sequence_effective_for_chapter(
+    root: Path,
+    slug: str,
+    chapter: int,
+    generation_run_id: str | None,
+) -> dict[str, Any]:
+    """Reconcile a declared ready chapter with raw sequence completion data."""
+    book_dir = book_project.book_dir_for(root, slug)
+    directory = book_dir / CHAPTER_SEQUENCE_DIRECTORY
+    candidates: list[dict[str, Any]] = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if (
+                not isinstance(record, dict)
+                or record.get("schema") != CHAPTER_SEQUENCE_SCHEMA
+                or record.get("slug") != slug
+                or chapter not in record.get("chapters", [])
+            ):
+                continue
+            completed_sessions = record.get("completed_sessions")
+            if not isinstance(completed_sessions, dict):
+                completed_sessions = {}
+            structurally_complete = (
+                record.get("status") == "complete"
+                and record.get("completed_chapters") == record.get("chapters")
+                and record.get("current_index") == len(record.get("chapters", []))
+                and record.get("active_session_id") is None
+                and chapter in record.get("completed_chapters", [])
+                and completed_sessions.get(str(chapter)) == generation_run_id
+            )
+            candidates.append(
+                {
+                    "sequence_id": record.get("sequence_id"),
+                    "declared_status": record.get("status"),
+                    "complete": structurally_complete,
+                }
+            )
+    return {
+        "effective_status": (
+            "complete"
+            if any(item["complete"] for item in candidates)
+            else "inconsistent"
+        ),
+        "sequences": candidates,
+    }
 
 
 def _scene_package(book_dir: Path, chapter: int) -> tuple[Path, str]:

@@ -19,6 +19,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import book_gates
+from .artifact_integrity import (
+    artifact_integrity_errors,
+    seal_artifact,
+    session_completion_errors,
+)
 from .book_evidence import evidence_status, find_evidence_record
 from .book_git import (
     BookGitError,
@@ -372,6 +377,17 @@ def _validate_current_generation(
     draft_mode: str,
 ) -> tuple[Any, Path]:
     record, evidence_path = find_evidence_record(root, book_dir.name, generation_id)
+    integrity_errors = artifact_integrity_errors(
+        root,
+        book_dir.name,
+        evidence_path,
+        expected_kind="generation",
+    )
+    if integrity_errors:
+        raise BookProjectError(
+            "generation evidence 外置封印校验失败："
+            + integrity_errors[0]
+        )
     if record.kind != "generation":
         raise BookProjectError(f"证据 {generation_id} 不是 generation。")
     if record.data["chapter"] != number:
@@ -750,6 +766,32 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
                     parsed["role"],
                 )
             )
+            validation_errors.extend(
+                artifact_integrity_errors(
+                    book_dir.parents[1],
+                    book_dir.name,
+                    path,
+                    expected_kind="review",
+                )
+            )
+            expected_scope = (
+                "prose_only"
+                if parsed["role"] == "blind-reader"
+                else "full_review_context"
+            )
+            validation_errors.extend(
+                session_completion_errors(
+                    book_dir.parents[1],
+                    book_dir.name,
+                    session_id=str(
+                        parsed.get("review_session_id") or ""
+                    ).strip(),
+                    expected_role=parsed["role"],
+                    expected_context_scope=expected_scope,
+                    expected_provider=str(parsed.get("provider") or ""),
+                    expected_model=str(parsed.get("model") or ""),
+                )
+            )
         except (BookProjectError, ValueError):
             parsed["stale"] = True
             validation_errors = ["无法解析或绑定审稿章节。"]
@@ -828,6 +870,12 @@ def list_review_history(
                 "review_session_id": parsed.get("review_session_id"),
                 "path": path.relative_to(book_dir).as_posix(),
                 "stale": stale,
+                "integrity_errors": artifact_integrity_errors(
+                    book_dir.parents[1],
+                    book_dir.name,
+                    path,
+                    expected_kind="review-history",
+                ),
             }
         )
     return out
@@ -881,6 +929,8 @@ def record_review(
     # directly into reviews/); only copy when source and target differ.
     if review_file.resolve() != target.resolve():
         shutil.copyfile(review_file, target)
+    seal_artifact(root, slug, history_target, kind="review-history")
+    seal_artifact(root, slug, target, kind="review")
 
     state = REVIEW_STATE_FOR_ROLE[role]
     when = _now()
@@ -919,6 +969,24 @@ def _runtime_audit_errors(
     except SessionAuditError as exc:
         return [str(exc)]
     errors: list[str] = []
+    errors.extend(
+        artifact_integrity_errors(
+            book_dir.parents[1],
+            book_dir.name,
+            book_dir / audit["path"],
+            expected_kind="runtime-audit",
+        )
+    )
+    if generation.get("writer_type") != "human":
+        errors.extend(
+            session_completion_errors(
+                book_dir.parents[1],
+                book_dir.name,
+                session_id=run_id,
+                expected_role="writer",
+                expected_context_scope="writer_capsule_only",
+            )
+        )
     generation_id = str(generation.get("id") or "").strip()
     audit_generation_ids = audit.get("generation_record_ids")
     if (
@@ -1028,6 +1096,7 @@ def advance_state(
     to_state: str,
     evidence: str | None = None,
     next_action: str | None = None,
+    create_git_checkpoint: bool = True,
 ) -> dict[str, Any]:
     book_dir = book_dir_for(root, slug)
     if to_state != STATE_BLOCKED and to_state not in CHAPTER_STATES:
@@ -1207,7 +1276,7 @@ def advance_state(
         "author_approval": False,
         "publication_eligibility": False,
     }
-    if to_state == "ready":
+    if to_state == "ready" and create_git_checkpoint:
         tag = None
         if number % 5 == 0:
             start = number - 4
@@ -1349,6 +1418,8 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
         parsed["state_file"] = state_path.relative_to(book_dir).as_posix()
         parsed["missing_chapter_state"] = missing_state
         parsed["generation_stale"] = False
+        parsed["effective_status"] = parsed["status"]
+        generation_run_id: str | None = None
         chapter_file: Path | None = None
         try:
             chapter_file = find_chapter_file(book_dir, chapter_number)
@@ -1382,20 +1453,34 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             )
         if parsed["generation_id"] != "unrecorded":
             try:
-                _validate_current_generation(
+                generation, _ = _validate_current_generation(
                     root,
                     book_dir,
                     chapter_number,
                     parsed["generation_id"],
                     parsed["draft_mode"],
                 )
-            except NovelForgeError:
+                generation_run_id = str(
+                    generation.data.get("run_id") or ""
+                ).strip()
+            except NovelForgeError as exc:
                 parsed["generation_stale"] = True
+                detail = str(exc)
+                code = (
+                    "generation_evidence_tampered"
+                    if "artifact_tampered" in detail
+                    or "artifact_seal_invalid" in detail
+                    else "generation_stale"
+                )
                 _issue(
                     integrity_blockers,
                     chapter_number,
-                    "generation_stale",
-                    "绑定的 generation 与当前正文、模式或路径不一致。",
+                    code,
+                    (
+                        "绑定的 generation 不可变证据已被原地修改。"
+                        if code == "generation_evidence_tampered"
+                        else "绑定的 generation 与当前正文、模式或路径不一致。"
+                    ),
                 )
         if any(
             row["state"] != "planned" and row["evidence"] in {"", "-"}
@@ -1413,6 +1498,24 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
                 "已推进状态仍使用空值或 '-' 作为证据指针。",
             )
         if chapter_file and parsed["status"] == "ready":
+            from .chapter_sequence import (
+                chapter_sequence_effective_for_chapter,
+            )
+
+            sequence = chapter_sequence_effective_for_chapter(
+                root,
+                slug,
+                chapter_number,
+                generation_run_id,
+            )
+            if sequence["effective_status"] != "complete":
+                parsed["effective_status"] = "inconsistent"
+                _issue(
+                    integrity_blockers,
+                    chapter_number,
+                    "ready_sequence_incomplete",
+                    "章节声明为 ready，但章节序列尚未完成或 writer 绑定不一致。",
+                )
             try:
                 current_gates = run_gates(root, slug, chapter_number)
             except BookProjectError as exc:
@@ -1464,6 +1567,19 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["review_history"] = list_review_history(
         book_dir, _chapter_id(number) if number is not None else None
     )
+    for review in data["review_history"]:
+        if not review.get("integrity_errors"):
+            continue
+        try:
+            review_number = int(review["chapter"].removeprefix("ch"))
+        except (AttributeError, ValueError):
+            review_number = number or 0
+        _issue(
+            integrity_blockers,
+            review_number,
+            "review_history_tampered",
+            f"{review['path']} 的不可变审稿历史已被原地修改。",
+        )
     duplicate_review_artifacts: list[str] = []
     reviews_dir = book_dir / "reviews"
     if reviews_dir.is_dir():
@@ -1578,6 +1694,21 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
     data["benchmark_eligible"] = not benchmark_missing
     data["benchmark_missing"] = benchmark_missing
     data["evidence"] = evidence_status(root, slug, number)
+    for record in data["evidence"]["records"]:
+        if record.get("integrity_valid", True):
+            continue
+        record_chapter = record.get("chapter")
+        _issue(
+            integrity_blockers,
+            (
+                record_chapter
+                if isinstance(record_chapter, int)
+                and not isinstance(record_chapter, bool)
+                else number or 0
+            ),
+            "immutable_evidence_tampered",
+            f"{record['path']} 的不可变证据已被原地修改。",
+        )
     runtime_budget = data["evidence"]["runtime_budget"]
     chapter_status_by_number = {
         int(chapter["chapter"].removeprefix("ch")): chapter["status"]
@@ -1697,6 +1828,15 @@ def project_status(root: Path, slug: str, number: int | None) -> dict[str, Any]:
             "runtime_audit_invalid",
             "；".join(runtime_errors),
         )
+    blocked_chapters = {
+        item["chapter"] for item in integrity_blockers
+    }
+    for chapter in chapters:
+        if (
+            chapter.get("status") == "ready"
+            and chapter.get("chapter") in blocked_chapters
+        ):
+            chapter["effective_status"] = "inconsistent"
     data["workflow_integrity"] = {
         "status": (
             "blocked"

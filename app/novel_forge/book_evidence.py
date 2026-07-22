@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from .artifact_integrity import artifact_integrity_errors, seal_artifact
 from .models import NovelForgeError
 from .planning_spec import (
     ARC_AUDIT_INTERVAL,
@@ -730,6 +731,7 @@ def record_evidence(root: Path, slug: str, source_file: Path) -> dict[str, Any]:
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+    seal_artifact(root, slug, target, kind=record.kind)
     result: dict[str, Any] = {
         "record_id": record.id,
         "kind": record.kind,
@@ -764,6 +766,15 @@ def evidence_status(
     stale_by_id = {
         record.id: _record_is_stale(book_dir, record)
         for record, _ in records
+    }
+    integrity_errors_by_id = {
+        record.id: artifact_integrity_errors(
+            root,
+            slug,
+            path,
+            expected_kind=record.kind,
+        )
+        for record, path in records
     }
     resolved_experiments = sorted(
         {
@@ -1044,11 +1055,19 @@ def evidence_status(
                 "kind": record.kind,
                 "path": path.relative_to(book_dir).as_posix(),
                 "stale": stale_by_id[record.id],
+                "integrity_valid": not integrity_errors_by_id[record.id],
+                "integrity_errors": integrity_errors_by_id[record.id],
+                "chapter": record.data.get("chapter"),
             }
             for record, path in records
         ],
         "stale_record_ids": sorted(
             record_id for record_id, stale in stale_by_id.items() if stale
+        ),
+        "tampered_record_ids": sorted(
+            record_id
+            for record_id, errors in integrity_errors_by_id.items()
+            if errors
         ),
         "resolved_branch_experiments": resolved_experiments,
         "unresolved_branch_experiments": [

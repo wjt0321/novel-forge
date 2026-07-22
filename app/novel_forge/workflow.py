@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from . import book_project
+from .artifact_integrity import record_session_completion
 from .book_evidence import (
     record_evidence,
     render_evidence_markdown,
@@ -107,6 +108,7 @@ class SessionIdentity:
     """A native session created by the configured external Harness."""
 
     session_id: str
+    session_instance_id: str
     provider: str
     model: str
     agent_harness: str
@@ -261,6 +263,9 @@ class CommandSessionBackend:
         try:
             return SessionIdentity(
                 session_id=str(payload["session_id"]).strip(),
+                session_instance_id=str(
+                    payload["session_instance_id"]
+                ).strip(),
                 provider=str(payload["provider"]).strip(),
                 model=str(payload["model"]).strip(),
                 agent_harness=str(payload["agent_harness"]).strip(),
@@ -522,6 +527,7 @@ class NovelWorkflowOrchestrator:
         self.writer_completion_stable_polls = writer_completion_stable_polls
         self.on_status = on_status or (lambda _: None)
         self._seen_sessions: set[str] = set()
+        self._seen_session_instances: set[str] = set()
 
     def _control_path(self, slug: str) -> Path:
         return self.root / "books" / slug / "planning/workflow/active.json"
@@ -564,11 +570,17 @@ class NovelWorkflowOrchestrator:
         session = self.backend.create_session(role)
         if not session.session_id.strip():
             raise WorkflowError("自动写作引擎没有创建有效会话。")
+        if not session.session_instance_id.strip():
+            raise WorkflowError("自动写作引擎没有返回底层会话实例。")
         if session.session_id in self._seen_sessions:
             raise WorkflowError("自动写作引擎重复使用了旧会话。")
+        if session.session_instance_id in self._seen_session_instances:
+            raise WorkflowError("自动写作引擎重复使用了同一底层会话实例。")
         self._seen_sessions.add(session.session_id)
+        self._seen_session_instances.add(session.session_instance_id)
         return SessionIdentity(
             session_id=session.session_id,
+            session_instance_id=session.session_instance_id,
             provider=session.provider,
             model=session.model,
             agent_harness=session.agent_harness,
@@ -944,6 +956,17 @@ class NovelWorkflowOrchestrator:
                 parent_generation_id=parent_generation_id,
                 is_patch=bool(must_findings),
             )
+            record_session_completion(
+                self.root,
+                slug,
+                session_id=session.session_id,
+                session_instance_id=session.session_instance_id,
+                role="writer",
+                provider=session.provider,
+                model=session.model,
+                agent_harness=session.agent_harness,
+                context_scope="writer_capsule_only",
+            )
             return session, generation_id, attempt
         return None
 
@@ -1225,6 +1248,17 @@ class NovelWorkflowOrchestrator:
             blind_session,
             blind,
         )
+        record_session_completion(
+            self.root,
+            slug,
+            session_id=blind_session.session_id,
+            session_instance_id=blind_session.session_instance_id,
+            role="blind-reader",
+            provider=blind_session.provider,
+            model=blind_session.model,
+            agent_harness=blind_session.agent_harness,
+            context_scope="prose_only",
+        )
         self._record_review_text(
             slug, chapter, "blind-reader", blind_text
         )
@@ -1271,6 +1305,17 @@ class NovelWorkflowOrchestrator:
             "chapter-editor",
             editor_session,
             editor,
+        )
+        record_session_completion(
+            self.root,
+            slug,
+            session_id=editor_session.session_id,
+            session_instance_id=editor_session.session_instance_id,
+            role="chapter-editor",
+            provider=editor_session.provider,
+            model=editor_session.model,
+            agent_harness=editor_session.agent_harness,
+            context_scope="full_review_context",
         )
         self._record_review_text(
             slug, chapter, "chapter-editor", editor_text
@@ -1396,14 +1441,22 @@ class NovelWorkflowOrchestrator:
         writer_session: SessionIdentity,
         retries: int,
     ) -> WorkflowResult:
-        ready = book_project.advance_state(
+        book_project.advance_state(
             self.root,
             slug,
             chapter,
             "ready",
             evidence="automatic-workflow/current",
+            create_git_checkpoint=False,
         )
-        if ready.get("local_git", {}).get("status") != "recorded":
+        try:
+            advance_chapter_sequence(
+                self.root,
+                slug,
+                sequence_id,
+                writer_session.session_id,
+            )
+        except Exception:
             book_project.advance_state(
                 self.root,
                 slug,
@@ -1418,18 +1471,19 @@ class NovelWorkflowOrchestrator:
                 sequence_id,
                 message="本章尚未形成可恢复版本，请选择下一步。",
                 retries=retries,
-                decision_kind="git_checkpoint_failed",
+                decision_kind="sequence_finalization_failed",
             )
-        advance_chapter_sequence(
-            self.root,
-            slug,
-            sequence_id,
-            writer_session.session_id,
-        )
         sequence = chapter_sequence_status(
             self.root, slug, sequence_id
         )
         if sequence["effective_status"] != "complete":
+            book_project.advance_state(
+                self.root,
+                slug,
+                chapter,
+                "editorial_reviewed",
+                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+            )
             return self._decision_result(
                 slug,
                 request,
@@ -1442,7 +1496,12 @@ class NovelWorkflowOrchestrator:
         checkpoint = checkpoint_book(
             self.root,
             slug,
-            f"workflow: ch{chapter:02d} complete",
+            f"chapter: ch{chapter:02d} ready",
+            tag=(
+                f"checkpoint/ch{chapter - 4:02d}-ch{chapter:02d}"
+                if chapter % 5 == 0
+                else None
+            ),
         )
         git_ok = (
             checkpoint.get("commit_hash") is not None
@@ -1640,7 +1699,25 @@ class NovelWorkflowOrchestrator:
             sequence = chapter_sequence_status(
                 self.root, slug, sequence_id
             )
-            if sequence.get("effective_status") == "complete":
+            project = book_project.project_status(
+                self.root,
+                slug,
+                chapter,
+            )
+            chapter_state = next(
+                (
+                    item
+                    for item in project.get("chapters", [])
+                    if item.get("chapter") == f"ch{chapter:02d}"
+                ),
+                {},
+            )
+            if (
+                sequence.get("effective_status") == "complete"
+                and chapter_state.get("effective_status") == "ready"
+                and project.get("workflow_integrity", {}).get("status")
+                != "blocked"
+            ):
                 return _user_result(
                     "chapter_complete",
                     f"第{_chapter_label(chapter)}章完成，"
@@ -1651,6 +1728,12 @@ class NovelWorkflowOrchestrator:
                     ),
                     git_ok=True,
                 )
+            return _user_result(
+                "running",
+                "本章状态尚未一致，系统正在重新核验。",
+                sequence_id,
+                retries=int(control.get("technical_retry_count") or 0),
+            )
         if phase == "decision_required":
             return _user_result(
                 "decision_required",

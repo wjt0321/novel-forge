@@ -10,6 +10,7 @@ import stat
 import pytest
 
 from app.novel_forge import book_project, guardian as guardian_module
+from app.novel_forge.artifact_integrity import record_session_completion
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.chapter_sequence import (
     ChapterSequenceError,
@@ -129,6 +130,7 @@ def _review_file(
     review_session_id: str | None = None,
     context_scope: str | None = None,
     substantive: bool = True,
+    record_completion: bool = True,
 ) -> Path:
     number = int(chapter.removeprefix("ch"))
     binding = book_project.review_binding(
@@ -210,6 +212,18 @@ def _review_file(
         + substantive_text,
         encoding="utf-8",
     )
+    if record_completion:
+        record_session_completion(
+            tmp_path,
+            "demo",
+            session_id=review_session_id,
+            session_instance_id=f"instance-{review_session_id}",
+            role=role,
+            provider=provider,
+            model=model,
+            agent_harness="test-harness",
+            context_scope=context_scope,
+        )
     return path
 
 
@@ -377,6 +391,17 @@ def _record_generation(
                 ),
             },
         )
+    record_session_completion(
+        tmp_path,
+        "demo",
+        session_id=run_id,
+        session_instance_id=f"instance-{run_id}",
+        role="writer",
+        provider=provider,
+        model=model,
+        agent_harness="test-harness",
+        context_scope="writer_capsule_only",
+    )
     return generation_id
 
 
@@ -1399,6 +1424,7 @@ def test_blind_reader_pass_rejects_same_writer_session(tmp_path: Path):
         "blind-reader",
         "pass",
         review_session_id="shared-session",
+        record_completion=False,
     )
 
     with pytest.raises(BookProjectError, match="独立会话"):
@@ -1417,6 +1443,7 @@ def test_simulated_blind_may_report_failure_but_cannot_pass(tmp_path: Path):
         review_session_id="writer-session",
         context_scope="simulated_blind",
         human_likeness="synthetic",
+        record_completion=False,
     )
 
     recorded = book_project.record_review(
@@ -1429,6 +1456,7 @@ def test_simulated_blind_may_report_failure_but_cannot_pass(tmp_path: Path):
         "blind-reader",
         "pass",
         review_session_id="writer-session",
+        record_completion=False,
         context_scope="simulated_blind",
     )
     with pytest.raises(BookProjectError, match="simulated_blind"):

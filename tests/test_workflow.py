@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from app.novel_forge import workflow as workflow_module
 from app.novel_forge.book_evidence import evidence_status
 from app.novel_forge.book_project import list_reviews, project_status
 from app.novel_forge.chapter_sequence import chapter_sequence_status
@@ -111,6 +112,7 @@ class ScriptedBackend:
         self._role_counts[role] = count
         session = SessionIdentity(
             session_id=f"native-{role}-{count:02d}",
+            session_instance_id=f"instance-{role}-{count:02d}",
             provider=f"{role}-provider",
             model=f"{role}-model",
             agent_harness="test-harness/1",
@@ -479,6 +481,51 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         in blind_review
     )
     assert "- reviewer_id: native-blind-reader-01" in blind_review
+    session_receipts = sorted(
+        (
+            orchestrator.root
+            / ".local-guardian/demo/session-completions"
+        ).glob("*.json")
+    )
+    assert len(session_receipts) == 3
+    assert {
+        json.loads(path.read_text(encoding="utf-8"))["role"]
+        for path in session_receipts
+    } == {"writer", "blind-reader", "chapter-editor"}
+    assert not (
+        orchestrator.root / "books/demo/.local-guardian"
+    ).exists()
+
+
+def test_same_backend_session_instance_cannot_impersonate_three_roles(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    original_create = backend.create_session
+
+    def reused_instance(role: str) -> SessionIdentity:
+        return replace(
+            original_create(role),
+            session_instance_id="one-native-context",
+        )
+
+    backend.create_session = reused_instance  # type: ignore[method-assign]
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    with pytest.raises(
+        workflow_module.WorkflowError,
+        match="底层会话实例",
+    ):
+        orchestrator.start("demo", _request(), chapter=1)
+
+    status = project_status(orchestrator.root, "demo", 1)
+    assert not status["chapters"] or (
+        status["chapters"][0].get("effective_status")
+        not in {None, "ready"}
+    )
 
 
 def test_orchestrator_waits_for_async_writer_completion(tmp_path: Path):
@@ -831,6 +878,171 @@ def test_patch_uses_new_writer_session_and_replaces_reviews_without_mutation(
         "ready_for_editor_decision",
     }
     assert not any(item["stale"] for item in current_reviews)
+
+
+def test_noop_patch_is_rejected_without_creating_a_generation(tmp_path: Path):
+    prose = _prose("正文没有变化")
+    backend = ScriptedBackend(
+        [
+            WriterStep(prose),
+            WriterStep(prose),
+        ],
+        [_must_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=0)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "decision_required"
+    evidence = evidence_status(orchestrator.root, "demo", 1)
+    assert evidence["generation_count"] == 1
+    receipts = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (
+            orchestrator.root
+            / "books/demo/evidence/guardian-receipts"
+        ).glob("*.json")
+    ]
+    assert any(
+        receipt["status"] == "compromised"
+        and "no_content_change" in receipt["reasons"]
+        for receipt in receipts
+    )
+
+
+def test_modified_generation_record_blocks_effective_ready(tmp_path: Path):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    orchestrator.start("demo", _request(), chapter=1)
+    generation_path = next(
+        (
+            orchestrator.root
+            / "books/demo/evidence/generations"
+        ).glob("*.md")
+    )
+    generation_path.write_text(
+        generation_path.read_text(encoding="utf-8")
+        + "\n<!-- rewritten in place -->\n",
+        encoding="utf-8",
+    )
+
+    status = project_status(orchestrator.root, "demo", 1)
+
+    assert status["workflow_integrity"]["status"] == "blocked"
+    assert status["chapters"][0]["effective_status"] == "inconsistent"
+    assert any(
+        item["code"] == "generation_evidence_tampered"
+        for item in status["workflow_integrity"]["blockers"]
+    )
+    user_status = orchestrator.status("demo")
+    assert user_status.user_state != "chapter_complete"
+    assert user_status.message != "第一章完成，是否继续第二章？"
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_code"),
+    (
+        (
+            "reviews/ch01-blind-reader.md",
+            "invalid_review_record",
+        ),
+        (
+            "evidence/runtime-audits/native-writer-01.json",
+            "runtime_audit_invalid",
+        ),
+    ),
+)
+def test_modified_review_or_runtime_blocks_effective_ready(
+    tmp_path: Path,
+    relative_path: str,
+    expected_code: str,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    orchestrator.start("demo", _request(), chapter=1)
+    target = orchestrator.root / "books/demo" / relative_path
+    target.write_text(
+        target.read_text(encoding="utf-8") + "\n ",
+        encoding="utf-8",
+    )
+
+    status = project_status(orchestrator.root, "demo", 1)
+
+    assert status["workflow_integrity"]["status"] == "blocked"
+    assert status["chapters"][0]["effective_status"] == "inconsistent"
+    assert any(
+        item["code"] == expected_code
+        for item in status["workflow_integrity"]["blockers"]
+    )
+
+
+def test_modified_review_history_is_reported_as_immutable_tampering(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    orchestrator.start("demo", _request(), chapter=1)
+    history = next(
+        (
+            orchestrator.root / "books/demo/reviews/history"
+        ).glob("*.md")
+    )
+    history.write_text(
+        history.read_text(encoding="utf-8")
+        + "\n<!-- changed after creation -->\n",
+        encoding="utf-8",
+    )
+
+    status = project_status(orchestrator.root, "demo", 1)
+
+    assert status["chapters"][0]["effective_status"] == "inconsistent"
+    assert any(
+        item["code"] == "review_history_tampered"
+        for item in status["workflow_integrity"]["blockers"]
+    )
+
+
+def test_sequence_finalization_failure_creates_no_ready_git_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    def fail_advance(*args, **kwargs):
+        raise RuntimeError("sequence finalization failed")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "advance_chapter_sequence",
+        fail_advance,
+    )
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "decision_required"
+    status = project_status(orchestrator.root, "demo", 1)
+    assert status["chapters"][0]["effective_status"] != "ready"
+    log = subprocess.run(
+        ["git", "-C", str(orchestrator.root / "books/demo"), "log", "--format=%s"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+    assert "chapter: ch01 ready" not in log
 
 
 def test_sequence_waiting_for_new_session_never_displays_ready(tmp_path: Path):

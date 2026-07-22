@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
 
+from .artifact_integrity import seal_artifact
 from .models import NovelForgeError
 from .planning_spec import (
     DEFAULT_CHAPTERS_PER_SEQUENCE,
@@ -94,6 +95,23 @@ def harness_contract() -> dict[str, Any]:
                 "by_name": "object_of_non_negative_integer_counts",
             },
         },
+        "native_session_identity": {
+            "create_session_response_required": [
+                "session_id",
+                "session_instance_id",
+                "provider",
+                "model",
+                "agent_harness",
+            ],
+            "session_instance_id_meaning": (
+                "backend-owned native context identity, not a role label"
+            ),
+            "session_id_must_be_unique": True,
+            "session_instance_id_must_be_unique_across_roles": True,
+            "completion_receipt_location": (
+                ".local-guardian/<slug>/session-completions/"
+            ),
+        },
         "lifecycle": {
             "load_contract_before_formal_writing": True,
             "one_writer_session_per_chapter": True,
@@ -106,6 +124,7 @@ def harness_contract() -> dict[str, Any]:
             "next_chapter_requires_new_session": True,
             "writer_session_ends_after_chapter_ready": True,
             "orchestrator_may_auto_launch_next_session": True,
+            "role_completion_must_be_recorded_externally": True,
         },
         "adapter_operations": {
             "get_contract": "harness-contract",
@@ -221,6 +240,7 @@ def harness_contract() -> dict[str, Any]:
             "blind_reader_requires_new_native_session": True,
             "when_session_unavailable": "review_session_required",
             "open_ended_review_question_forbidden": True,
+            "distinct_session_instance_required": True,
         },
         "decision_protocol": {
             "continue_field": "budget.continue_allowed",
@@ -234,6 +254,8 @@ def harness_contract() -> dict[str, Any]:
             "generation_metadata_must_match_observed_runtime": True,
             "tool_failures_must_be_reported": True,
             "role_name_does_not_prove_session_independence": True,
+            "session_string_does_not_prove_native_context_independence": True,
+            "immutable_artifacts_require_external_content_seals": True,
         },
         "privacy": {
             "allowed": [
@@ -905,6 +927,13 @@ def record_runtime_audit(
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+    root = Path(book_dir).parents[1]
+    seal_artifact(
+        root,
+        Path(book_dir).name,
+        target,
+        kind="runtime-audit",
+    )
     return {
         "runtime_audit_id": target.stem,
         "path": target.relative_to(book_dir).as_posix(),

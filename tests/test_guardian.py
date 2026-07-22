@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.novel_forge import book_project
+from app.novel_forge.artifact_integrity import record_session_completion
 from app.novel_forge.chapter_sequence import (
     begin_chapter_sequence,
     chapter_sequence_status,
@@ -988,6 +989,17 @@ def test_runtime_ready_integrity_accepts_matching_capsule_receipt(
     chapter = book_dir / "chapters/e01/ch-01/正文.md"
     generation = _generation(chapter, prepared)
     _record_runtime_for_generation(book_dir, runtime, generation["id"])
+    record_session_completion(
+        root,
+        "demo",
+        session_id="native-writer-001",
+        session_instance_id="instance-native-writer-001",
+        role="writer",
+        provider=generation["provider"],
+        model=generation["model"],
+        agent_harness=generation["agent_harness"],
+        context_scope="writer_capsule_only",
+    )
 
     assert book_project._runtime_audit_errors(book_dir, generation) == []
 

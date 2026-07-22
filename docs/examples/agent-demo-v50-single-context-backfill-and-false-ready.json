@@ -1,0 +1,95 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "single-context-backfill-and-false-ready-20260722",
+  "recorded_at": "2026-07-22",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "session_ids_stored": false,
+  "content_hash_stored": false,
+  "guardian_signature_stored": false,
+  "recoverable_book_history_stored": false,
+  "sample": {
+    "slug": "deidentified-memory-notary-experiment",
+    "chapter_count": 1,
+    "chapter_metrics": {
+      "chapter": "ch01",
+      "cjk": 5147,
+      "quality_blocking": 0,
+      "quality_advisory": 24
+    },
+    "literary_observations": {
+      "strengths": [
+        "冷凝水、金属接缝、按键、灯和手部动作持续承担叙事",
+        "职业习惯与呼吸失序、出汗、犹豫共同形成具体的人",
+        "用自己的记忆交换真相构成不可逆选择",
+        "对白克制，系统语言与身体反应形成关系摩擦",
+        "三个自我、四次审查和消失水印形成真实追读动力"
+      ],
+      "risks": [
+        "四盏灯的初始亮灭状态与随后三次熄灯动作矛盾",
+        "规划中的母亲记忆与遗物被抽象成未知记忆，私人代价变得通用",
+        "部分力值、频率和角度没有改变行动，只制造技术精确感",
+        "正文越过规划停止点，但 Editor 没有裁决结构收益与损失"
+      ]
+    },
+    "claimed_result": {
+      "chapter_state": "ready",
+      "blind_reader_verdict": "pass",
+      "chapter_editor_verdict": "ready_for_editor_decision",
+      "git_ready_checkpoint_claimed": true
+    },
+    "effective_workflow_truth": {
+      "three_native_sessions_created": false,
+      "single_context_role_backfill": true,
+      "blind_context_scope": "simulated_blind",
+      "reviews_predate_final_generation": true,
+      "generation_records_rewritten_in_place": true,
+      "public_guardian_receipt_rewritten": true,
+      "external_guardian_receipt_preserved_old_body": true,
+      "final_patch_changed_body": false,
+      "runtime_generation_metrics_consistent": false,
+      "sequence_declared_status": "running",
+      "sequence_completed_chapter_count": 0,
+      "chapter_declared_ready": true,
+      "ready_git_checkpoint_truthful": false,
+      "workflow_integrity": "blocked"
+    }
+  },
+  "root_cause": {
+    "role_names_were_treated_as_session_proof": true,
+    "immutable_files_lacked_external_content_seals": true,
+    "noop_patch_was_counted_as_generation": true,
+    "reviews_were_not_ordered_after_current_generation": true,
+    "ready_git_checkpoint_preceded_sequence_truth": true,
+    "editor_checked_outcome_but_missed_state_transitions": true,
+    "concrete_private_cost_was_reduced_to_generic_loss": true
+  },
+  "derived_rules": {
+    "writer": [
+      "精确数字只在改变动作、限制、风险、后果或必要结构时保留。",
+      "选择代价必须落到具体的人、关系、记忆或物件。",
+      "灯、门、按键、工具和手中物必须保持状态连续。"
+    ],
+    "blind_reader": [
+      "可重建画面不等于物理动作连续，必须核对状态物件。",
+      "强钩子不能抵消通用私人代价或装饰性技术精确。"
+    ],
+    "chapter_editor": [
+      "像核对状态机一样检查物件、位置、知识和不可逆动作。",
+      "比较规划中的具体私人代价与正文交付，识别抽象化。",
+      "越过停止点时必须明确裁决结构收益与损失。"
+    ],
+    "orchestrator": [
+      "session_id 与 session_instance_id 都必须跨角色唯一。",
+      "三角色完成凭证与不可变文件封印只写入仓库外账本。",
+      "无变化 Patch 不创建 Generation 或 Review。",
+      "Sequence 完成后才创建 ready Git 恢复点。"
+    ]
+  },
+  "disposition": {
+    "book_workspace_deleted": true,
+    "local_book_git_deleted": true,
+    "external_guardian_deleted": true,
+    "temporary_capsule_deleted": true
+  }
+}

@@ -1038,6 +1038,11 @@ def ingest_writer_capsule(
                 reasons.append("runtime_budget_incomplete_or_exceeded")
     if draft.is_file():
         candidate_sha256 = _sha256(draft)
+        if (
+            control.get("operation") == "patch"
+            and candidate_sha256 == control.get("input_body_sha256")
+        ):
+            reasons.append("no_content_change")
         clean_hashes = _clean_body_hashes(
             root,
             slug,
