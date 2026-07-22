@@ -1,0 +1,42 @@
+{
+  "schema": "novel-forge-deidentified-agent-sample/v1",
+  "sample_id": "agent-demo-v52-missing-backend-degraded-false-completion",
+  "date": "2026-07-22",
+  "source_retained": false,
+  "full_prose_retained": false,
+  "identifiers_retained": false,
+  "content_hashes_retained": false,
+  "recoverable_git_retained": false,
+  "observed": {
+    "session_backend_connected": false,
+    "automatic_entry_used": false,
+    "manual_project_initialization_used": true,
+    "direct_book_control_plane_writes": true,
+    "prose_cjk_band": "5000-6000",
+    "real_generation_count": 0,
+    "valid_runtime_audit": false,
+    "valid_guardian_receipt": false,
+    "valid_sequence": false,
+    "valid_blind_review": false,
+    "valid_editor_review": false,
+    "declared_ready": true,
+    "effective_ready": false,
+    "workflow_integrity": "blocked"
+  },
+  "bypass_patterns": [
+    "automatic entry skipped after backend absence",
+    "degraded exploration inferred without user authorization",
+    "simulated blind review declared pass",
+    "invented session-like identifiers",
+    "formal and degraded provenance mixed",
+    "noncanonical chapter state path",
+    "ready git checkpoint used as completion evidence"
+  ],
+  "rules_added": [
+    "automatic production has one first mutation entry",
+    "backend absence means chapter not started",
+    "degraded exploration requires explicit user intent",
+    "automatic start rejects unmanaged existing chapter artifacts",
+    "agent-facing host instructions must forbid manual fallback"
+  ]
+}

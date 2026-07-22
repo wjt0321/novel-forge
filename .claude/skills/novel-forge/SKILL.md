@@ -9,11 +9,12 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
 
 ## 选择入口
 
-- 新写作项目：`books/<slug>/`，正文唯一入口为
-  `chapters/eXX/ch-XX/正文.md`。
-- 需要 SQLite revision、审批或导出：`library/<slug>/`。
-- 两者并用时，以 `books/` 为正文源，定稿后单向提交到 `library/`。
-- 不直接编辑任何 SQLite、`library/**/revisions/` 或不可变 `evidence/`。
+- **自动生产唯一入口**：用户要求写作、续写或给出六项架构时，首个写操作只能是
+  `tools/novel-workflow.py start`；不得先建书，也不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- Backend、独立会话或隔离不可用时立即停止，只说明“本章未开始”。
+  `degraded_exploration` 只有用户明确要求探索稿时才允许，不能由 Agent 自行降级。
+- 仅搭建空项目才用 `books/<slug>/`；SQLite 审批或导出用 `library/<slug>/`。
+  不直改 SQLite、`library/**/revisions/` 或不可变 `evidence/`。
 
 Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 `--confirm <operation>`。先用 `--help` 查看参数，不在 Skill 中复制全部 CLI。
@@ -26,16 +27,13 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 
 `ready` 只是材料齐备，不是作者批准或发布许可。
 
-入口：`tools/novel-workflow.py`。`SessionBackend` 厂商无关；角色判断由真实会话返回，
-Lead 禁止代填。Backend 不可用时在建书前停止，不得手工降级 formal。
+`SessionBackend` 厂商无关；角色判断由真实会话返回，Lead 禁止代填。
 
 ### 通用 Harness Contract
 
-Formal 写作前读取 `evaluation/harness-contract.json` 或调用 `harness-contract`。
-Harness 把原生遥测规范化为厂商无关的 `novel-forge-runtime/v1` 累计快照。
-
-每次模型响应后更新快照并在下一请求前运行 `session-audit`；
-`budget.continue_allowed=false` 就停机。无标准快照只能 exploration/degraded_exploration。
+Formal 前读取 `harness-contract`；Harness 输出厂商无关的
+`novel-forge-runtime/v1` 累计快照。每次响应后运行 `session-audit`，
+`continue_allowed=false` 就停机；无标准快照不能 formal。
 
 ### 隔离 Writer Capsule
 
@@ -50,8 +48,7 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 `no_content_change`，不创建 Generation 或刷新审稿。
 `run_writer` 返回只代表已接单；正文与外置 runtime 均稳定后才能导入。超时保留失败
 回执并换新 Session/Capsule，晚到旧稿不得覆盖重试稿。
-协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖。无法隔离时只能
-`degraded_exploration`。
+协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖。自动生产无法隔离时停止。
 
 ### 章节序列与新会话
 
@@ -71,10 +68,9 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 5. session 不得跨章或跨书；generation `run_id` 必须等于 claim ID。三角色完成凭证
    绑定当前章、Generation、正文和角色产物，只由 Orchestrator 写；缺一不能 ready。
 
-交接包写入 `memory/context-cache/chXX-handoff.md`，只含用户六项输入形成的硬锚合同、
-相关 Canon/认知与承诺、
-上一章末段及 SHA-256、Voice exemplar 和 Writer Story Brief；禁止续传旧会话或
-整书。完整 Scene Package 是 Chapter Editor 控制面，决策审计不进入 Writer。
+交接包只含六项硬锚、相关 Canon/认知与承诺、上一章末段、Voice exemplar 和
+Writer Story Brief；不续传旧会话或整书。完整 Scene Package 是 Chapter Editor 控制面，
+决策审计不进入 Writer。
 
 ### 每书本地 Git
 

@@ -24,18 +24,22 @@ pip install -r requirements.txt
 # 运行测试（仓库根目录）
 PYTHONPATH=. python -m pytest tests/ -q
 
-# 创建一本新书（生成 v4.5 项目骨架，并初始化每书本地 Git）
-PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
-  --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
-
-# 自动三角色工作流（核心协议厂商无关；命令桥只是可选 SessionBackend）
+# 自动三角色工作流（必须先连接一个可创建真实独立会话的 SessionBackend）
 PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> start my-novel \
   --title "我的小说" --genre "都市" --protagonist "主角设定" \
   --world "世界观" --conflict "本章核心冲突" --hook "本章结尾钩子"
 
+# 只搭建空项目、不自动写作
+PYTHONPATH=. python -m app.novel_forge.skill_adapter --root <仓库根绝对路径> \
+  --confirm init-novel-project init-novel-project my-novel --title "我的小说" --genre "都市"
+
 # 对任意 Markdown 直接跑规则 lint
 PYTHONPATH=. python -m app.novel_forge.lint <file>
 ```
+
+自动生产未连接 SessionBackend 时会在建书前停止并明确报告“本章没有开始”。Agent
+不得自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。命令桥是
+`SessionBackend` 的参考接入方式；协议本身不绑定宿主、供应商或模型。
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 

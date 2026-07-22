@@ -302,8 +302,16 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     orchestrator = (
         book_dir / ".claude" / "agents" / "orchestrator.md"
     ).read_text(encoding="utf-8")
+    assert "自动生产唯一入口" in claude_md
+    assert "本章未开始" in claude_md
+    assert "只有用户明确要求探索稿" in claude_md
+    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in claude_md
     assert "先只读正文" in chapter_editor
     assert "不得暂停询问是否开始审核" in orchestrator
+    assert "自动生产唯一入口" in orchestrator
+    assert "本章未开始" in orchestrator
+    assert "只有用户明确要求探索稿" in orchestrator
+    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in orchestrator
     assert "begin-chapter-sequence" in orchestrator
     assert "claim-chapter-session" in orchestrator
     assert "advance-chapter-sequence" in orchestrator
@@ -505,12 +513,28 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
+def test_root_claude_routes_automatic_writing_to_the_generic_skill():
+    text = (_REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert ".agents/skills/novel-forge/SKILL.md" in text
+    assert "自动生产唯一入口" in text
+    assert "tools/novel-workflow.py" in text
+    assert "不得先运行 `init-novel-project`" in text
+    assert "本章未开始" in text
+    assert "只有用户明确要求探索稿" in text
+    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
+
+
 def test_skill_documents_v48_orchestrated_artifact_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
     assert "v4.8" in text
+    assert "自动生产唯一入口" in text
+    assert "本章未开始" in text
+    assert "只有用户明确要求探索稿" in text
+    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
     assert "guardian-contract" in text
     assert "prepare-writer-capsule" in text
     assert "ingest-writer-capsule" in text

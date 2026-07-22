@@ -148,6 +148,14 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 严禁复制其他书的正文、记忆、审稿或已填写模板。
 - `evidence/` 证明过程，不代表作者批准；`ready` 也不代表发布许可。
 
+## 自动生产唯一入口
+- 用户要求写作、续写或提供六项小说架构时，首个写操作只能是仓库根目录的
+  `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
+- 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
+  也不得把探索稿称为完成。
+
 ## 本地版本历史
 - 本书使用独立本地 Git；工作区内 `.git` 只指向主仓库忽略的
   `.local-book-git/{slug}.git`，不得配置 remote 或上传。
@@ -220,7 +228,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 ## 不可绕过
 {policy_lines}
 
-- 工具受限时使用 `degraded_exploration`，记录真实 `tool_failures`，不得伪装 formal。
+- 只有用户明确要求探索稿时才能使用 `degraded_exploration`，记录真实
+  `tool_failures`，不得伪装 formal 或称为完成。
 - `正文.md` 不得出现提示词、Agent 身份、章节工作流编号、SHA-256、generation evidence/id、surface_checked 或 ready 等生产元数据。
 - 不得暂停询问“是否开始审核”；formal 门禁通过后自动创建独立审稿会话并完成两角色审核。无法创建新会话时返回 `review_session_required`，不得改成开放式提问。只有事实冲突、覆盖风险、作者取舍或第二份 generation 后仍有 MUST 才暂停。
 """
@@ -1447,6 +1456,14 @@ def _agent_orchestrator_md() -> str:
 维护状态和证据，不写正文。状态链：
 `{_STATE_CHAIN}`
 
+## 自动生产唯一入口
+- 用户要求写作、续写或提供六项小说架构时，首个写操作只能是仓库根目录的
+  `python tools/novel-workflow.py ... start`；不得先运行 `init-novel-project`。
+- 自动入口未成功启动前，不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- 缺少 SessionBackend、独立会话或隔离能力时立即停止，只说明“本章未开始”。
+- `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
+  也不得把探索稿称为完成。
+
 ## 默认闭环
 1. 启动时读取 `evaluation/harness-contract.json` 与
    `evaluation/guardian-contract.json`；原生遥测必须规范化为
@@ -1502,13 +1519,14 @@ def _agent_orchestrator_md() -> str:
 - 机器 blocking 或行文问题 → `drafted`。
 - 因果/人物选择失效 → `scene_packaged`。
 - Canon 冲突、覆盖风险、作者取舍或预算耗尽 → `blocked`。
-- 工具受限 → `degraded_exploration`，如实记录失败，不得进入 ready。
+- 用户明确要求探索稿且工具受限 → `degraded_exploration`，如实记录失败；
+  自动生产请求不得走此回退。
 
 ## 不可绕过
 {policy_lines}
 
 - Formal writer 不得看到或修改 `books/` 控制面、验证器源码、evidence、状态文件或
-  其他章节；外部 Harness 无法落实 capsule-only 文件系统时只能降级探索。
+  其他章节；外部 Harness 无法落实 capsule-only 文件系统时，自动生产必须停止。
 - compromised capsule 必须废弃当前 session；不得在同一 session 中删除违规文件后
   重新导入，也不得由 writer 自己填写隔离证明或 Guardian 回执。
 - 公开 `evidence/guardian-receipts/` 副本不能单独证明通过；必须匹配

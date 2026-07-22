@@ -90,6 +90,10 @@ class WorkflowError(NovelForgeError):
     """Raised when automatic orchestration cannot continue."""
 
 
+class BackendUnavailableError(WorkflowError):
+    """Raised when no native-session backend is connected."""
+
+
 @dataclass(frozen=True)
 class WorkflowRequest:
     """The complete user-facing architecture input for one chapter."""
@@ -217,7 +221,7 @@ class CommandSessionBackend:
     def from_environment(cls) -> "CommandSessionBackend":
         command = os.environ.get("NOVEL_FORGE_HARNESS_COMMAND", "").strip()
         if not command:
-            raise WorkflowError("未配置自动写作引擎。")
+            raise BackendUnavailableError("未配置自动写作引擎。")
         return cls(command)
 
     def _invoke(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -613,6 +617,30 @@ class NovelWorkflowOrchestrator:
         target.parent.mkdir(parents=True, exist_ok=True)
         return book_dir
 
+    def _assert_project_is_managed(self, slug: str, chapter: int) -> None:
+        book_dir = self.root / "books" / slug
+        if not book_dir.is_dir() or self._control_path(slug).is_file():
+            return
+        unmanaged_paths = [
+            book_dir / f"chapters/e01/ch-{chapter:02d}/正文.md",
+            book_dir / f"planning/chapter-state/ch{chapter:02d}.md",
+            book_dir / f"planning/chapter-state-ch{chapter:02d}.md",
+        ]
+        unmanaged_paths.extend(
+            (book_dir / "reviews").glob(f"ch{chapter:02d}-*.md")
+            if (book_dir / "reviews").is_dir()
+            else ()
+        )
+        unmanaged_paths.extend(
+            (book_dir / "evidence/generations").glob("*.md")
+            if (book_dir / "evidence/generations").is_dir()
+            else ()
+        )
+        if any(path.is_file() for path in unmanaged_paths):
+            raise WorkflowError(
+                "检测到未受自动流程管理的章节内容，拒绝继续。"
+            )
+
     @staticmethod
     def _seed_voice_exemplar(book_dir: Path, previous_chapter: int) -> None:
         voice = book_dir / "memory/voice-bible.md"
@@ -782,9 +810,10 @@ class NovelWorkflowOrchestrator:
         *,
         chapter: int = 1,
     ) -> WorkflowResult:
-        self.on_status("正在写作。")
         request.validate()
+        self._assert_project_is_managed(slug, chapter)
         writer_session = self._new_session("writer")
+        self.on_status("正在写作。")
         book_dir = self._prepare_project(slug, request, chapter)
         planning = self.backend.run_planning(
             writer_session,
@@ -2029,6 +2058,9 @@ def main(argv: list[str] | None = None) -> int:
             result = orchestrator.retry(args.slug)
         _print_result(result)
         return 0 if result.user_state != "decision_required" else 2
+    except BackendUnavailableError:
+        print("自动写作环境尚未就绪，本章没有开始。")
+        return 2
     except (NovelForgeError, OSError, ValueError):
         print("自动流程暂时无法继续，请稍后重试。")
         return 2

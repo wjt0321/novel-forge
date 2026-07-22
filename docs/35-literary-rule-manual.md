@@ -105,7 +105,10 @@
 
 ## Orchestrator
 
-- 没有可用 `SessionBackend` 时，在创建书目录前停止；不得自动降级为手工 formal。
+- 自动生产唯一入口是 `tools/novel-workflow.py start`；不得先搭空书再手写流程产物。
+- 没有可用 `SessionBackend` 时，在创建书目录前停止并说明本章未开始；不得自动
+  降级。`degraded_exploration` 只有用户明确要求探索稿时才允许。
+- 自动入口成功前不得创建正文、规划、审稿或 ready Git 恢复点，也不得声称完成。
 - Writer、Blind Reader、Chapter Editor 必须使用不同的真实 session 和底层实例。
 - 会话完成凭证绑定角色、章节、当前 Generation、当前正文和具体产物，只由活动编排器写入。
 - 正文变化必须新建 Generation、新开两份 Review，并让旧证据按绑定自然 stale。

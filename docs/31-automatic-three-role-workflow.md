@@ -19,7 +19,11 @@ Blind Reader 或 Chapter Editor。
   Teams、DeepSeek 或任何其他产品/模型。宿主只需提供“创建真实独立会话、运行角色、
   返回真实来源信息和标准 runtime”四项能力。
 - `CommandSessionBackend` 与 `NOVEL_FORGE_HARNESS_COMMAND` 是通用命令桥参考实现，
-  不是架构依赖；支持项目级 Skill 的宿主也可以直接实现同一能力协议。
+  不是架构依赖；但运行自动入口时必须已有某个真实 `SessionBackend` 接入。支持
+  项目级 Skill 的宿主可以直接实现同一能力协议，不必使用环境变量命令桥。
+- 自动写作请求的首个写操作只能是 `tools/novel-workflow.py start`。Backend 不可用
+  时必须在创建书目录、正文、规划、审稿和 Git 恢复点前停止，并明确表示本章未开始。
+  Agent 不得转而调用 `init-novel-project`、直接写 `books/` 或自行选择降级探索。
 - Writer、每次 Patch、Blind Reader 和 Chapter Editor 都由外部 Harness 创建新的
   原生会话；三个当前角色会话必须互不相同。
 - 初始 Writer 先执行 `phase=planning`，返回允许列表内的 `worldbuilding.md`、
@@ -102,11 +106,15 @@ session，签发绑定当前章节、该 session 和前两版正文的 regenerat
 Harness Contract、Guardian Contract 和 `SessionBackend` 语义，使用宿主自己的
 原生新会话能力。模型和工具由宿主或用户选择，工作流不作枚举，也不保存默认组合。
 
-仅当宿主需要进程桥时才设置：
+当宿主通过进程桥接入时设置：
 
 ```powershell
 $env:NOVEL_FORGE_HARNESS_COMMAND = "your-harness-command"
 ```
+
+如果宿主既没有直接实现 `SessionBackend`，也没有配置命令桥，Formal 自动生产不可
+执行。`degraded_exploration` 只保留给用户明确要求的实验稿，不是缺少 Backend 时的
+自动回退，也不能被称为章节完成。
 
 ## 用户入口
 

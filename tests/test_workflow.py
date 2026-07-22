@@ -22,6 +22,7 @@ from app.novel_forge.workflow import (
     ReviewFinding,
     ReviewOutcome,
     SessionIdentity,
+    WorkflowError,
     WorkflowRequest,
     runtime_generation_metrics,
 )
@@ -1079,6 +1080,64 @@ def test_unavailable_backend_does_not_create_partial_book(tmp_path: Path):
         orchestrator.start("demo", _request(), chapter=1)
 
     assert not (root / "books/demo").exists()
+
+
+def test_missing_command_backend_reports_chapter_not_started(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    monkeypatch.delenv("NOVEL_FORGE_HARNESS_COMMAND", raising=False)
+
+    code = workflow_module.main(
+        [
+            "--root",
+            str(tmp_path),
+            "start",
+            "demo",
+            "--title",
+            "测试书",
+            "--genre",
+            "悬疑",
+            "--protagonist",
+            "林舟",
+            "--world",
+            "雨城",
+            "--conflict",
+            "必须在封锁前找到证人",
+            "--hook",
+            "门后传来失踪者的声音",
+        ]
+    )
+
+    assert code == 2
+    assert capsys.readouterr().out.strip() == (
+        "自动写作环境尚未就绪，本章没有开始。"
+    )
+    assert not (tmp_path / "books/demo").exists()
+
+
+def test_automatic_start_rejects_unmanaged_existing_draft_before_session(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    body = root / "books/demo/chapters/e01/ch-01/正文.md"
+    body.parent.mkdir(parents=True)
+    body.write_text("# 第一章\n\n手工绕行稿。\n", encoding="utf-8")
+    backend = ScriptedBackend(
+        [WriterStep(_prose("不应启动"))],
+        [_pass_reviews()],
+    )
+    orchestrator = NovelWorkflowOrchestrator(
+        root,
+        backend,
+        capsule_root=tmp_path / "capsules",
+    )
+
+    with pytest.raises(WorkflowError, match="未受自动流程管理"):
+        orchestrator.start("demo", _request(), chapter=1)
+
+    assert backend.sessions == []
 
 
 def test_sequence_finalization_failure_creates_no_ready_git_checkpoint(
