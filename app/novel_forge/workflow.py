@@ -11,9 +11,8 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -59,8 +58,6 @@ from .session_audit import (
 
 WORKFLOW_SCHEMA = "novel-forge-automatic-workflow/v1"
 DEFAULT_WRITER_COMPLETION_TIMEOUT_SECONDS = 1800.0
-DEFAULT_WRITER_COMPLETION_POLL_SECONDS = 0.25
-DEFAULT_WRITER_COMPLETION_STABLE_POLLS = 3
 USER_OPTIONS = (
     "A. 保留草稿",
     "B. 重新生成本章",
@@ -121,6 +118,20 @@ class WorkflowRequest:
 
 
 @dataclass(frozen=True)
+class RoleExecutionPreference:
+    """Optional host-neutral model selection intent for one role."""
+
+    preferred_model: str | None = None
+    inherit_parent_model: bool = False
+
+    def validate(self) -> None:
+        if self.preferred_model is not None and not self.preferred_model.strip():
+            raise WorkflowError("角色模型偏好不能为空字符串。")
+        if self.preferred_model is not None and self.inherit_parent_model:
+            raise WorkflowError("角色模型不能同时指定名称并继承父会话。")
+
+
+@dataclass(frozen=True)
 class SessionIdentity:
     """A native session created by the configured external Harness."""
 
@@ -130,6 +141,16 @@ class SessionIdentity:
     model: str
     agent_harness: str
     role: str = field(default="", compare=False)
+    requested_model: str | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class SessionRunState:
+    """Normalized native role launch or terminal state."""
+
+    operation_id: str
+    status: str
+    resolved_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +178,7 @@ class ReviewOutcome:
     analysis: dict[str, str] = field(default_factory=dict)
     evidence_quote: str = ""
     previous_chapter_quote: str = "not_applicable"
+    resolved_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +186,7 @@ class PlanningOutcome:
     """Writer-authored mutable planning files for the current chapter."""
 
     files: dict[str, str]
+    resolved_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,7 +204,12 @@ class WorkflowResult:
 class SessionBackend(Protocol):
     """Vendor-neutral native session backend."""
 
-    def create_session(self, role: str) -> SessionIdentity: ...
+    def create_session(
+        self,
+        role: str,
+        *,
+        preference: RoleExecutionPreference | None = None,
+    ) -> SessionIdentity: ...
 
     def run_planning(
         self,
@@ -202,7 +230,15 @@ class SessionBackend(Protocol):
         capsule_id: str,
         runtime_path: Path,
         must_findings: tuple[str, ...],
-    ) -> None: ...
+    ) -> SessionRunState: ...
+
+    def wait_for_completion(
+        self,
+        session: SessionIdentity,
+        *,
+        run: SessionRunState,
+        timeout_seconds: float,
+    ) -> SessionRunState: ...
 
     def run_review(
         self,
@@ -421,7 +457,56 @@ class CommandSessionBackend:
                 raise WorkflowError("自动写作引擎返回了无效结果。")
             return payload
 
-    def create_session(self, role: str) -> SessionIdentity:
+    @staticmethod
+    def _run_state(payload: dict[str, Any]) -> SessionRunState:
+        status = str(
+            payload.get("status")
+            or payload.get("completion_status")
+            or ""
+        ).strip()
+        operation_id = str(
+            payload.get("operation_id")
+            or payload.get("agent_id")
+            or payload.get("agentId")
+            or payload.get("task_id")
+            or ""
+        ).strip()
+        if status in {"async_launched", "remote_launched"}:
+            status = "launched"
+        if status not in {"launched", "completed", "failed", "timed_out"}:
+            raise WorkflowError(
+                "自动写作引擎没有返回可验证的任务终态。"
+            )
+        if not operation_id:
+            raise WorkflowError(
+                "自动写作引擎没有返回真实任务句柄。"
+            )
+        resolved_model = payload.get("resolved_model")
+        if resolved_model is None:
+            resolved_model = payload.get("resolvedModel")
+        return SessionRunState(
+            operation_id=operation_id,
+            status=status,
+            resolved_model=(
+                str(resolved_model).strip() if resolved_model else None
+            ),
+        )
+
+    @classmethod
+    def _require_completed(cls, payload: dict[str, Any]) -> SessionRunState:
+        state = cls._run_state(payload)
+        if state.status != "completed":
+            raise WorkflowError("角色会话尚未到达官方完成终态。")
+        return state
+
+    def create_session(
+        self,
+        role: str,
+        *,
+        preference: RoleExecutionPreference | None = None,
+    ) -> SessionIdentity:
+        if preference is not None:
+            preference.validate()
         payload = self._invoke(
             {
                 "action": "create_session",
@@ -430,6 +515,9 @@ class CommandSessionBackend:
                     "fresh_native_session": True,
                     "context_isolation": "required",
                 },
+                "model_preference": (
+                    asdict(preference) if preference is not None else None
+                ),
             }
         )
         try:
@@ -442,6 +530,11 @@ class CommandSessionBackend:
                 model=str(payload["model"]).strip(),
                 agent_harness=str(payload["agent_harness"]).strip(),
                 role=role,
+                requested_model=(
+                    preference.preferred_model
+                    if preference is not None
+                    else None
+                ),
             )
         except KeyError as exc:
             raise WorkflowError("自动写作引擎没有返回完整会话信息。") from exc
@@ -454,8 +547,8 @@ class CommandSessionBackend:
         capsule_id: str,
         runtime_path: Path,
         must_findings: tuple[str, ...],
-    ) -> None:
-        self._invoke(
+    ) -> SessionRunState:
+        payload = self._invoke(
             {
                 "action": "run_session",
                 "role": "writer",
@@ -470,6 +563,32 @@ class CommandSessionBackend:
                 },
             }
         )
+        return self._run_state(payload)
+
+    def wait_for_completion(
+        self,
+        session: SessionIdentity,
+        *,
+        run: SessionRunState,
+        timeout_seconds: float,
+    ) -> SessionRunState:
+        payload = self._invoke(
+            {
+                "action": "wait_session",
+                "role": session.role or "writer",
+                "session_id": session.session_id,
+                "operation_id": run.operation_id,
+                "timeout_seconds": timeout_seconds,
+                "requirements": {
+                    "official_terminal_state": True,
+                    "file_stability_is_not_completion": True,
+                },
+            }
+        )
+        result = self._run_state(payload)
+        if result.operation_id != run.operation_id:
+            raise WorkflowError("自动写作引擎返回了错误的任务句柄。")
+        return result
 
     def run_planning(
         self,
@@ -497,13 +616,17 @@ class CommandSessionBackend:
                 },
             }
         )
+        completion = self._require_completed(payload)
         files = payload.get("files")
         if not isinstance(files, dict) or not all(
             isinstance(path, str) and isinstance(text, str)
             for path, text in files.items()
         ):
             raise WorkflowError("Writer 会话没有返回有效的章节规划。")
-        return PlanningOutcome(files=dict(files))
+        return PlanningOutcome(
+            files=dict(files),
+            resolved_model=completion.resolved_model,
+        )
 
     def run_review(
         self,
@@ -527,6 +650,7 @@ class CommandSessionBackend:
                 },
             }
         )
+        completion = self._require_completed(payload)
         findings = tuple(
             ReviewFinding(
                 severity=str(item.get("severity") or ""),
@@ -565,19 +689,30 @@ class CommandSessionBackend:
             previous_chapter_quote=str(
                 payload.get("previous_chapter_quote") or "not_applicable"
             ),
+            resolved_model=completion.resolved_model,
         )
 
 
 class _UnavailableBackend:
     """Placeholder used by read-only workflow commands."""
 
-    def create_session(self, role: str) -> SessionIdentity:
+    def create_session(
+        self,
+        role: str,
+        *,
+        preference: RoleExecutionPreference | None = None,
+    ) -> SessionIdentity:
         raise WorkflowError("未配置自动写作引擎。")
 
     def run_planning(self, *args: Any, **kwargs: Any) -> PlanningOutcome:
         raise WorkflowError("未配置自动写作引擎。")
 
-    def run_writer(self, *args: Any, **kwargs: Any) -> None:
+    def run_writer(self, *args: Any, **kwargs: Any) -> SessionRunState:
+        raise WorkflowError("未配置自动写作引擎。")
+
+    def wait_for_completion(
+        self, *args: Any, **kwargs: Any
+    ) -> SessionRunState:
         raise WorkflowError("未配置自动写作引擎。")
 
     def run_review(self, *args: Any, **kwargs: Any) -> ReviewOutcome:
@@ -662,12 +797,7 @@ class NovelWorkflowOrchestrator:
         writer_completion_timeout_seconds: float = (
             DEFAULT_WRITER_COMPLETION_TIMEOUT_SECONDS
         ),
-        writer_completion_poll_seconds: float = (
-            DEFAULT_WRITER_COMPLETION_POLL_SECONDS
-        ),
-        writer_completion_stable_polls: int = (
-            DEFAULT_WRITER_COMPLETION_STABLE_POLLS
-        ),
+        role_preferences: dict[str, RoleExecutionPreference] | None = None,
         on_status: Callable[[str], None] | None = None,
     ):
         self.root = Path(root).resolve()
@@ -687,16 +817,15 @@ class NovelWorkflowOrchestrator:
             raise WorkflowError("自动重试次数不能为负数。")
         if writer_completion_timeout_seconds <= 0:
             raise WorkflowError("Writer 完成等待时间必须大于零。")
-        if writer_completion_poll_seconds <= 0:
-            raise WorkflowError("Writer 完成轮询间隔必须大于零。")
-        if writer_completion_stable_polls < 1:
-            raise WorkflowError("Writer 稳定输出采样次数必须至少为 1。")
+        self.role_preferences = dict(role_preferences or {})
+        for role, preference in self.role_preferences.items():
+            if role not in {"writer", "blind-reader", "chapter-editor"}:
+                raise WorkflowError(f"未知角色模型偏好：{role}")
+            preference.validate()
         self.max_technical_retries = max_technical_retries
         self.writer_completion_timeout_seconds = (
             writer_completion_timeout_seconds
         )
-        self.writer_completion_poll_seconds = writer_completion_poll_seconds
-        self.writer_completion_stable_polls = writer_completion_stable_polls
         self.on_status = on_status or (lambda _: None)
         self._workflow_authority = _issue_workflow_authority()
         self._seen_sessions: set[str] = set()
@@ -740,7 +869,11 @@ class NovelWorkflowOrchestrator:
         )
 
     def _new_session(self, role: str) -> SessionIdentity:
-        session = self.backend.create_session(role)
+        preference = self.role_preferences.get(role)
+        session = self.backend.create_session(
+            role,
+            preference=preference,
+        )
         if not session.session_id.strip():
             raise WorkflowError("自动写作引擎没有创建有效会话。")
         if not session.session_instance_id.strip():
@@ -758,6 +891,14 @@ class NovelWorkflowOrchestrator:
             model=session.model,
             agent_harness=session.agent_harness,
             role=role,
+            requested_model=(
+                session.requested_model
+                or (
+                    preference.preferred_model
+                    if preference is not None
+                    else None
+                )
+            ),
         )
 
     def _prepare_project(
@@ -987,6 +1128,11 @@ class NovelWorkflowOrchestrator:
             instructions=render_planning_instructions().text,
             reasoning_effort="high",
         )
+        if planning.resolved_model:
+            writer_session = replace(
+                writer_session,
+                model=planning.resolved_model,
+            )
         self._write_writer_planning(book_dir, chapter, request, planning)
         sequence_id = f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
         begin_chapter_sequence(
@@ -1085,30 +1231,20 @@ class NovelWorkflowOrchestrator:
                 regeneration_authorization_id=authorization_id,
                 patch_directive=directive or None,
             )
-            writer_launched = False
             try:
-                self.backend.run_writer(
+                run = self.backend.run_writer(
                     session,
                     capsule_dir=capsule,
                     capsule_id=prepared["capsule_id"],
                     runtime_path=runtime_path,
                     must_findings=must_findings,
                 )
-                writer_launched = True
             except Exception:
-                pass
-            writer_completed = False
-            if writer_launched:
-                writer_completed = self._wait_for_writer_completion(
-                    capsule,
-                    runtime_path,
-                )
-            if writer_launched and not writer_completed:
                 reject_writer_capsule(
                     self.root,
                     slug,
                     prepared["capsule_id"],
-                    reason="writer_completion_timeout",
+                    reason="writer_launch_failed",
                 )
                 if attempt < self.max_technical_retries:
                     self.on_status(
@@ -1116,6 +1252,49 @@ class NovelWorkflowOrchestrator:
                     )
                     continue
                 return None
+            completion = run
+            if run.status == "launched":
+                try:
+                    completion = self.backend.wait_for_completion(
+                        session,
+                        run=run,
+                        timeout_seconds=(
+                            self.writer_completion_timeout_seconds
+                        ),
+                    )
+                except Exception:
+                    completion = SessionRunState(
+                        operation_id=run.operation_id,
+                        status="failed",
+                    )
+            if completion.operation_id != run.operation_id:
+                completion = SessionRunState(
+                    operation_id=run.operation_id,
+                    status="failed",
+                )
+            if completion.status != "completed":
+                reason = (
+                    "writer_completion_timeout"
+                    if completion.status == "timed_out"
+                    else "writer_terminal_failure"
+                )
+                reject_writer_capsule(
+                    self.root,
+                    slug,
+                    prepared["capsule_id"],
+                    reason=reason,
+                )
+                if attempt < self.max_technical_retries:
+                    self.on_status(
+                        "写作会话异常，已自动换新会话重试。"
+                    )
+                    continue
+                return None
+            if completion.resolved_model:
+                session = replace(
+                    session,
+                    model=completion.resolved_model,
+                )
             if runtime_path.is_file():
                 try:
                     record_capsule_runtime(
@@ -1178,58 +1357,6 @@ class NovelWorkflowOrchestrator:
             )
             return session, generation_id, attempt
         return None
-
-    @staticmethod
-    def _writer_output_snapshot(
-        capsule: Path,
-        runtime_path: Path,
-    ) -> tuple[int, int, int, int] | None:
-        draft = capsule / "draft/正文.md"
-        if not draft.is_file() or not runtime_path.is_file():
-            return None
-        try:
-            draft_stat = draft.stat()
-            runtime_stat = runtime_path.stat()
-        except OSError:
-            return None
-        if draft_stat.st_size <= 0 or runtime_stat.st_size <= 0:
-            return None
-        return (
-            draft_stat.st_size,
-            draft_stat.st_mtime_ns,
-            runtime_stat.st_size,
-            runtime_stat.st_mtime_ns,
-        )
-
-    def _wait_for_writer_completion(
-        self,
-        capsule: Path,
-        runtime_path: Path,
-    ) -> bool:
-        """Wait until asynchronous Harness outputs exist and stop changing."""
-        deadline = (
-            time.monotonic() + self.writer_completion_timeout_seconds
-        )
-        previous: tuple[int, int, int, int] | None = None
-        stable_polls = 0
-        while True:
-            snapshot = self._writer_output_snapshot(capsule, runtime_path)
-            if snapshot is None:
-                previous = None
-                stable_polls = 0
-            elif snapshot == previous:
-                stable_polls += 1
-            else:
-                previous = snapshot
-                stable_polls = 1
-            if stable_polls >= self.writer_completion_stable_polls:
-                return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            time.sleep(
-                min(self.writer_completion_poll_seconds, remaining)
-            )
 
     def _record_generation(
         self,
@@ -1450,6 +1577,11 @@ class NovelWorkflowOrchestrator:
             instructions=render_review_instructions("blind-reader").text,
             reasoning_effort="medium",
         )
+        if blind.resolved_model:
+            blind_session = replace(
+                blind_session,
+                model=blind.resolved_model,
+            )
         blind_text = self._render_review(
             slug,
             chapter,
@@ -1519,6 +1651,11 @@ class NovelWorkflowOrchestrator:
             instructions=render_review_instructions("chapter-editor").text,
             reasoning_effort="medium",
         )
+        if editor.resolved_model:
+            editor_session = replace(
+                editor_session,
+                model=editor.resolved_model,
+            )
         editor_text = self._render_review(
             slug,
             chapter,

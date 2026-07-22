@@ -17,9 +17,12 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
 - 高权限只属于无模型推理的确定性控制面；Lead 只调度，三个创作角色只交付各自产物。
   必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+  保存宿主返回的真实 task/agent ID；禁止用角色名作 TaskOutput ID、固定 sleep 或
+  文件轮询。每角色默认等待 30 分钟，working/progress 时不得提前 stop。
   Blind Reader 正式记录后才能启动 Chapter Editor；退役 session 的晚到结果无效。
   无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
   `degraded_exploration` 只有用户明确要求探索稿时才允许。
+- 模型偏好可按角色配置或继承父会话，但不绑定厂商；证据只认终态 `resolvedModel`。
 - 创作 Lead/角色不得创建、修改、修复、包装、安装或配置 Harness / SessionBackend；
   不得自行设置命令桥，不得向用户提供部署或配置 Harness 的选项。
 - 仅搭建空项目才用 `books/<slug>/`；SQLite 审批或导出用 `library/<slug>/`。
@@ -39,24 +42,21 @@ Adapter 从仓库根运行，`--root` 用绝对路径；变更操作须 `--confi
 
 ### 通用执行合同
 
-Formal 前读取 `harness-contract`。默认由宿主原生角色执行；可选 headless Harness
-仅是另一种调度载体。两者都输出厂商无关的
-`novel-forge-runtime/v1` 累计快照。每次响应后运行 `session-audit`，
-`continue_allowed=false` 就停机；无标准快照不能 formal。
+Formal 前读取 `harness-contract`。原生角色或可选 headless Harness 都输出
+`novel-forge-runtime/v1` 累计快照；每次响应后运行 `session-audit`，
+`continue_allowed=false` 即停机，无标准快照不能 formal。
 命令桥仅接受仓库外入口并固定哈希；入口替换或 `control_plane_mutation` 立即停止。
-确定性控制面可建/等/退役会话、调 adapter 和 Guardian，但不能写正文、代审或改规则。
 
 ### 隔离 Writer Capsule
 
-Formal writer 不进入 `books/<slug>/`。控制面读取 `guardian-contract`，在仓库外建
-capsule，并限制为 capsule-only。writer 只见合同、`handoff.md`、Guardian 以
-`formal-writer/v1` 编译的受保护 `instructions.md` 和可写的 `draft/正文.md`；runtime 在外部生成并经
-`record-capsule-runtime` 写入外置 Guardian sidecar。`ingest-writer-capsule`
-本地核对文件、哈希、session、预算与证明后原子导入正文。
+Formal writer 不进入 `books/<slug>/`。控制面按 guardian-contract 在仓库外建 capsule-only 工作区；
+writer 只见合同、`handoff.md`、`formal-writer/v1` 的 `instructions.md` 和
+`draft/正文.md`。runtime 经 `record-capsule-runtime` 外置，导入由 Guardian 核验。
 额外文件、路径逃逸、保护输入变化或证明不实均为 `compromised`。无变化 Patch 记为
 `no_content_change`，不创建 Generation 或刷新审稿。
-`run_writer` 返回只代表已接单；正文与外置 runtime 均稳定后才能导入。超时保留失败
-回执并换新 Session/Capsule，晚到旧稿不得覆盖重试稿。
+`run_writer=launched` 后必须用真实 operation handle 等待官方 `completed`，再检查
+正文与 runtime；`accepted`、`progress` 或文件稳定无效。超时保留失败回执并换新
+Session/Capsule，晚到旧稿不得覆盖重试稿。
 协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖；无法隔离时停止。
 
 ### 章节序列与新会话

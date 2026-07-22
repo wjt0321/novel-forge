@@ -22,9 +22,11 @@ from app.novel_forge.workflow import (
     HarnessTrustError,
     NovelWorkflowOrchestrator,
     PlanningOutcome,
+    RoleExecutionPreference,
     ReviewFinding,
     ReviewOutcome,
     SessionIdentity,
+    SessionRunState,
     WorkflowError,
     WorkflowRequest,
     runtime_generation_metrics,
@@ -131,6 +133,8 @@ class WriterStep:
     prose: str
     failure: str | None = None
     completion_delay_seconds: float = 0.0
+    terminal_status: str = "completed"
+    resolved_model: str | None = None
 
 
 class ScriptedBackend:
@@ -149,10 +153,22 @@ class ScriptedBackend:
         self.writer_directives: list[tuple[str, tuple[str, ...]]] = []
         self.review_payloads: list[tuple[str, dict[str, str]]] = []
         self.background_threads: list[threading.Thread] = []
+        self.session_preferences: list[
+            tuple[str, RoleExecutionPreference | None]
+        ] = []
+        self._writer_operations: dict[
+            str, tuple[threading.Thread | None, WriterStep]
+        ] = {}
         self._role_counts: dict[str, int] = {}
         self._review_index = 0
 
-    def create_session(self, role: str) -> SessionIdentity:
+    def create_session(
+        self,
+        role: str,
+        *,
+        preference: RoleExecutionPreference | None = None,
+    ) -> SessionIdentity:
+        self.session_preferences.append((role, preference))
         count = self._role_counts.get(role, 0) + 1
         self._role_counts[role] = count
         session = SessionIdentity(
@@ -174,11 +190,12 @@ class ScriptedBackend:
         capsule_id: str,
         runtime_path: Path,
         must_findings: tuple[str, ...],
-    ) -> None:
+    ) -> SessionRunState:
         self.writer_directives.append((session.session_id, must_findings))
         step = self.writer_steps.pop(0)
         if step.failure == "raise":
             raise RuntimeError("test harness failed before launch")
+        operation_id = f"operation-{session.session_id}"
 
         def complete() -> None:
             if step.completion_delay_seconds:
@@ -205,9 +222,40 @@ class ScriptedBackend:
         if step.completion_delay_seconds:
             thread = threading.Thread(target=complete, daemon=True)
             self.background_threads.append(thread)
+            self._writer_operations[operation_id] = (thread, step)
             thread.start()
-            return
+            return SessionRunState(
+                operation_id=operation_id,
+                status="launched",
+            )
         complete()
+        self._writer_operations[operation_id] = (None, step)
+        return SessionRunState(
+            operation_id=operation_id,
+            status=step.terminal_status,
+            resolved_model=step.resolved_model,
+        )
+
+    def wait_for_completion(
+        self,
+        session: SessionIdentity,
+        *,
+        run: SessionRunState,
+        timeout_seconds: float,
+    ) -> SessionRunState:
+        thread, step = self._writer_operations[run.operation_id]
+        if thread is not None:
+            thread.join(timeout=timeout_seconds)
+            if thread.is_alive():
+                return SessionRunState(
+                    operation_id=run.operation_id,
+                    status="timed_out",
+                )
+        return SessionRunState(
+            operation_id=run.operation_id,
+            status=step.terminal_status,
+            resolved_model=step.resolved_model,
+        )
 
     def run_planning(
         self,
@@ -472,8 +520,6 @@ def _orchestrator(
         capsule_root=capsule_root,
         max_technical_retries=retries,
         writer_completion_timeout_seconds=completion_timeout_seconds,
-        writer_completion_poll_seconds=0.005,
-        writer_completion_stable_polls=2,
     )
 
 
@@ -551,9 +597,13 @@ def test_same_backend_session_instance_cannot_impersonate_three_roles(
     )
     original_create = backend.create_session
 
-    def reused_instance(role: str) -> SessionIdentity:
+    def reused_instance(
+        role: str,
+        *,
+        preference: RoleExecutionPreference | None = None,
+    ) -> SessionIdentity:
         return replace(
-            original_create(role),
+            original_create(role, preference=preference),
             session_instance_id="one-native-context",
         )
 
@@ -606,6 +656,32 @@ def test_orchestrator_waits_for_async_writer_completion(tmp_path: Path):
     )
     assert len(receipts) == 1
     assert json.loads(receipts[0].read_text(encoding="utf-8"))["status"] == "clean"
+
+
+def test_writer_files_never_replace_official_terminal_completion(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(
+                _prose("文件已写但任务未完成"),
+                terminal_status="timed_out",
+            ),
+            WriterStep(_prose("官方终态完成稿")),
+        ],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    prose = (
+        orchestrator.root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8")
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert "官方终态完成稿" in prose
+    assert "文件已写但任务未完成" not in prose
 
 
 def test_timed_out_writer_is_retired_and_late_output_cannot_replace_retry(
@@ -670,23 +746,73 @@ def test_writer_launch_exception_skips_completion_wait_and_retries(
         [_pass_reviews()],
     )
     orchestrator = _orchestrator(tmp_path, backend, retries=1)
-    waited_capsules: list[Path] = []
-    original_wait = orchestrator._wait_for_writer_completion
+    waited_operations: list[str] = []
+    original_wait = backend.wait_for_completion
 
-    def tracked_wait(capsule: Path, runtime_path: Path) -> bool:
-        waited_capsules.append(capsule)
-        return original_wait(capsule, runtime_path)
+    def tracked_wait(
+        session: SessionIdentity,
+        *,
+        run: SessionRunState,
+        timeout_seconds: float,
+    ) -> SessionRunState:
+        waited_operations.append(run.operation_id)
+        return original_wait(
+            session,
+            run=run,
+            timeout_seconds=timeout_seconds,
+        )
 
-    orchestrator._wait_for_writer_completion = tracked_wait  # type: ignore[method-assign]
+    backend.wait_for_completion = tracked_wait  # type: ignore[method-assign]
 
     result = orchestrator.start("demo", _request(), chapter=1)
 
     assert result.user_state == "chapter_complete"
     assert result.technical_retry_count == 1
-    assert len(waited_capsules) == 1
+    assert waited_operations == []
     assert [
         item.session_id for item in backend.sessions if item.role == "writer"
     ] == ["native-writer-01", "native-writer-02"]
+
+
+def test_role_model_preferences_are_forwarded_without_becoming_provenance(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("角色模型偏好"))],
+        [_pass_reviews()],
+    )
+    preferences = {
+        "writer": RoleExecutionPreference(inherit_parent_model=True),
+        "blind-reader": RoleExecutionPreference(
+            preferred_model="review-default"
+        ),
+        "chapter-editor": RoleExecutionPreference(
+            preferred_model="review-default"
+        ),
+    }
+    orchestrator = NovelWorkflowOrchestrator(
+        tmp_path / "repo",
+        backend,
+        capsule_root=tmp_path / "capsules",
+        role_preferences=preferences,
+    )
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert backend.session_preferences == [
+        ("writer", preferences["writer"]),
+        ("blind-reader", preferences["blind-reader"]),
+        ("chapter-editor", preferences["chapter-editor"]),
+    ]
+    generation = next(
+        (
+            orchestrator.root
+            / "books/demo/evidence/generations"
+        ).glob("generation*.md")
+    ).read_text(encoding="utf-8")
+    assert '"model": "writer-model"' in generation
+    assert "review-default" not in generation
 
 
 def test_user_story_contract_is_injected_without_planner_reinterpretation(
@@ -1110,7 +1236,12 @@ def test_role_completion_is_bound_to_exact_generation_body_and_artifact(
 
 def test_unavailable_backend_does_not_create_partial_book(tmp_path: Path):
     class UnavailableBackend:
-        def create_session(self, role: str) -> SessionIdentity:
+        def create_session(
+            self,
+            role: str,
+            *,
+            preference: RoleExecutionPreference | None = None,
+        ) -> SessionIdentity:
             raise RuntimeError("backend unavailable")
 
     root = tmp_path / "repo"

@@ -157,6 +157,14 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+- 创建后保存宿主返回的真实 task/agent ID；wait/join/stop 只能使用该句柄，禁止把
+  角色名当作 TaskOutput ID，禁止固定 sleep 或以文件出现猜测完成。每个创作角色默认
+  至少等待 30 分钟；仍在 working/progress 就继续等待，不得提前 stop。
+- 模型配置只是选择意图；证据只记录宿主终态返回的 `resolvedModel`。Writer 角色在
+  Claude Code 模板中使用 `model: inherit`，表示继承当前父会话模型，不绑定具体厂商。
+- Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
+  `novel-forge-blind-reader`、`novel-forge-chapter-editor`，不得退回
+  general-purpose 后仍宣称使用了项目角色。
 - 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
   / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
@@ -968,7 +976,12 @@ def _planning_research_boundaries_md() -> str:
 
 
 def _agent_context_collector_md() -> str:
-    return """# Context Collector
+    return """---
+name: novel-forge-context-collector
+description: "Collect one bounded chapter context packet without drafting prose."
+---
+
+# Context Collector
 
 只收集，不写正文。输出一页以内的写作包：
 
@@ -984,6 +997,28 @@ def _agent_context_collector_md() -> str:
 `build-memory-context`。
 不得读取全书审稿史、全部 Canon、其他章节规划或模板说明。上一章有
 source-hygiene blocking 时停止。事实缺口只记 candidate，不自行补全。
+"""
+
+
+def _agent_writer_md() -> str:
+    return """---
+name: novel-forge-writer
+description: "Draft exactly one Novel Forge chapter inside an assigned isolated capsule."
+model: inherit
+---
+
+# Writer
+
+你是本章唯一 Writer。`model: inherit` 只表示继承宿主当前父会话的模型选择，不绑定
+任何厂商或模型名称；宿主实际返回的 `resolvedModel` 才是正式来源真相。
+
+1. 只读取分配给你的 capsule 内 `capsule.json`、`guardian-contract.json`、
+   `instructions.md` 与 `handoff.md`。
+2. 只写 `draft/正文.md`，不得创建脚本、runtime、回执、审稿、状态或 Git 记录。
+3. 只完成一章；正文达到 `instructions.md` 的完整章节目标后停止。
+4. 不读取完整 Skill、验证器、其他章节、旧会话、旧审稿或 `books/` 控制面。
+5. 有 MUST 时仍是新的 Patch Writer 会话，只处理合并后的 MUST，不顺手处理 MAY。
+6. 无法遵守 capsule-only 边界时返回失败，不得降级为主会话直写。
 """
 
 
@@ -1048,7 +1083,12 @@ __pycache__/
 
 
 def _agent_chapter_editor_md() -> str:
-    return """# Chapter Editor
+    return """---
+name: novel-forge-chapter-editor
+description: "Run the final independent chapter-level editorial review after Blind Reader."
+---
+
+# Chapter Editor
 
 最后一个默认审稿环节，只审读，不重写正文。
 
@@ -1078,7 +1118,12 @@ MUST 最多 5 条。第 2 章起填写 `previous_chapter_quote`。verdict 只能
 
 
 def _agent_blind_reader_md() -> str:
-    return """# Blind Reader
+    return """---
+name: novel-forge-blind-reader
+description: "Blind-read only the current prose in a fresh isolated review session."
+---
+
+# Blind Reader
 
 ## 角色
 盲读者。必须运行在不同于 writer `run_id` 的独立会话，只读当前章的
@@ -1458,7 +1503,12 @@ def _agent_line_editor_md() -> str:
 
 def _agent_orchestrator_md() -> str:
     policy_lines = _human_narrative_policy_lines()
-    return f"""# Orchestrator
+    return f"""---
+name: novel-forge-orchestrator
+description: "Coordinate the deterministic Novel Forge three-role workflow without authoring role artifacts."
+---
+
+# Orchestrator
 
 维护状态和证据，不写正文。状态链：
 `{_STATE_CHAIN}`
@@ -1472,6 +1522,14 @@ def _agent_orchestrator_md() -> str:
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+- 创建角色后立即保存宿主返回的真实 task/agent ID；后续 wait/join/stop 只能使用该
+  句柄。禁止把角色名当作 TaskOutput ID，禁止凭自造名称查询任务。
+- 禁止固定 sleep、短轮询或以文件出现猜测完成。Writer、Blind Reader 和 Chapter
+  Editor 每个角色默认至少等待 30 分钟；角色仍处于 working/progress 时继续等待，
+  不得为节省 Lead 时间提前 stop。只有官方 failed/cancelled/timed_out 终态或用户明确
+  停止才退役角色。
+- 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
+  返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
 - 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
   / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
@@ -1486,6 +1544,7 @@ def _agent_orchestrator_md() -> str:
    时按请求建立序列，但最多 4 章，五章及以上必须拆分。起草前确认
    `memory-status=clean`，并运行 `build-memory-context`。
 3. 每次 launch directive 只允许当前一章。Lead 创建并等待新的原生 writer session，
+   Claude Code 使用 `novel-forge-writer`；其他宿主使用语义等价的 Writer role。
    控制面立即 `claim-chapter-session`，再运行 `prepare-writer-capsule`，
    把仓库外目录作为该 writer session 唯一可见、可写的文件系统范围。
 4. Guardian 按 `{FORMAL_WRITER_PROMPT_ID}` 编译短小的 `instructions.md`。Writer 只读
@@ -1504,7 +1563,8 @@ def _agent_orchestrator_md() -> str:
    `continue_allowed=false` 时在下一次请求前停机。
 7. 结束时运行 `record-session-audit`；宿主观测优先于 Agent 自报。runtime、来源、
    质量、叙事或文学结构 gate 有 blocking 立即短路。
-8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；Blind Reader 正式记录后才能启动 Chapter Editor。
+8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；Claude Code 分别使用
+   `novel-forge-blind-reader` 与 `novel-forge-chapter-editor`。Blind Reader 正式记录后才能启动 Chapter Editor。
    不得暂停询问是否开始审核。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
    “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
@@ -1600,6 +1660,7 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "tools/quality_check.py": (lambda: QUALITY_CHECK_PY, ()),
     "tools/narrative_gate.py": (lambda: NARRATIVE_GATE_PY, ()),
     ".claude/agents/context-collector.md": (_agent_context_collector_md, ()),
+    ".claude/agents/writer.md": (_agent_writer_md, ()),
     ".claude/agents/chapter-editor.md": (_agent_chapter_editor_md, ()),
     ".claude/agents/blind-reader.md": (_agent_blind_reader_md, ()),
     ".claude/agents/orchestrator.md": (_agent_orchestrator_md, ()),
@@ -1640,6 +1701,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "tools/quality_check.py",
     "tools/narrative_gate.py",
     ".claude/agents/context-collector.md",
+    ".claude/agents/writer.md",
     ".claude/agents/chapter-editor.md",
     ".claude/agents/blind-reader.md",
     ".claude/agents/orchestrator.md",

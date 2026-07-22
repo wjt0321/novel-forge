@@ -242,10 +242,23 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         "wait_for_host_terminal_state": True,
         "accepted_or_progress_is_not_complete": True,
         "file_stability_is_not_complete": True,
+        "returned_operation_handle_required": True,
+        "role_name_is_not_operation_handle": True,
+        "fixed_sleep_or_file_polling_forbidden": True,
+        "default_terminal_wait_seconds": 1800,
+        "working_status_must_continue_waiting": True,
         "host_session_identity_required": True,
         "late_result_after_retirement_is_invalid": True,
         "blind_reader_must_complete_before_chapter_editor": True,
         "context_isolation_is_not_filesystem_isolation": True,
+    }
+    assert contract["role_model_selection"] == {
+        "workflow_binds_provider_or_model": False,
+        "per_role_preference_allowed": True,
+        "inherit_parent_model_allowed": True,
+        "preference_is_not_provenance": True,
+        "terminal_resolved_model_is_authoritative": True,
+        "fallback_must_be_recorded_as_resolved": True,
     }
     assert contract["runtime_report_schema"]["const"] == (
         "novel-forge-runtime/v1"

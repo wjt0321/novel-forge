@@ -39,6 +39,10 @@ Blind Reader 或 Chapter Editor。
   Lead 必须等待每个异步角色完成，三个当前角色会话必须互不相同。
 - 完成只认宿主官方 `wait` / `join` 返回的终态。角色创建、任务接单、进度消息、正文
   文件暂时稳定都不代表完成；session 退役或超时后，晚到产物不得重新获得导入资格。
+- 创建角色后必须保存宿主返回的真实 operation/task/agent handle。后续
+  `wait`、`join`、`stop` 只能使用该句柄；角色名、团队成员名和 Lead 自造标签都不是
+  TaskOutput ID。禁止固定 `sleep`、短轮询或以文件出现替代终态。每个角色默认至少
+  等待 1800 秒；只要宿主仍返回 working/progress，就继续等待，不得提前停止角色。
 - Blind Reader 完成并正式记录后才启动 Chapter Editor，因为后者的允许上下文包含
   本轮盲审结果。Patch 后两者都使用新 session 重新全文审稿。
 - 初始 Writer 先执行 `phase=planning`，返回允许列表内的 `worldbuilding.md`、
@@ -62,6 +66,10 @@ Blind Reader 或 Chapter Editor。
 - 编排器只声明厂商无关的执行档位：规划和困难因果核验使用 `high`，正文与默认
   双审使用 `medium`。宿主负责把档位映射到自己的模型能力；没有对应档位时必须
   如实降级，不得伪造模型或 thinking 深度。
+- 模型选择同样是能力语义。宿主可以为不同角色指定偏好，也可以让 Writer 继承父会话
+  模型；Novel Forge 不保存 DeepSeek、Claude、Codex、Kimi 或其他模型的硬编码默认值。
+  请求值、角色 frontmatter 和环境默认值都不是来源证据，正式记录只认角色终态返回
+  的实际 resolved model。宿主回退模型时必须记录实际值，不能把偏好值写成真相。
 
 ## 文学收敛
 
@@ -121,6 +129,11 @@ session，签发绑定当前章节、该 session 和前两版正文的 regenerat
 支持 Novel Forge Skill 的宿主默认直接复用 Skill、adapter、Harness Contract 和
 Guardian Contract，以原生独立角色完成调度。模型和工具由宿主或用户选择，工作流
 不枚举平台，也不保存默认组合。原生角色接口无需翻译成环境变量或项目内脚本。
+
+Claude Code 项目模板提供带合法 frontmatter 的 Writer、Blind Reader、Chapter
+Editor 和 Orchestrator 角色。Writer 使用 `model: inherit`，只表示继承当前父会话
+模型，不绑定模型名称；其余角色保留宿主默认或用户级配置。其他宿主按自己的 Roles
+协议映射同一 `RoleExecutionPreference` 语义即可。
 
 只有无交互服务器或批处理通过进程桥接入时才设置：
 

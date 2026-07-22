@@ -865,7 +865,11 @@ def reject_writer_capsule(
     reason: str,
 ) -> dict[str, Any]:
     """Reject a prepared capsule without importing any late writer output."""
-    if reason != "writer_completion_timeout":
+    if reason not in {
+        "writer_completion_timeout",
+        "writer_launch_failed",
+        "writer_terminal_failure",
+    }:
         raise GuardianError("不支持的 writer capsule 拒绝原因。")
     root = Path(root).resolve()
     book_dir = _book_dir(root, slug)

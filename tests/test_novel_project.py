@@ -97,6 +97,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evidence" / "arc-audits").is_dir()
     assert (book_dir / "evidence" / "rule-decisions").is_dir()
     assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
+    assert (book_dir / ".claude" / "agents" / "writer.md").exists()
     assert (book_dir / ".claude" / "agents" / "chapter-editor.md").exists()
     assert (book_dir / ".claude" / "agents" / "orchestrator.md").exists()
     assert not (book_dir / ".claude" / "agents" / "causal-editor.md").exists()
@@ -225,6 +226,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
         "max_reasoning": "named_exception_only",
         "numeric_style_targets_visible_to_writer": False,
     }
+    assert harness_contract["role_model_selection"][
+        "terminal_resolved_model_is_authoritative"
+    ] is True
     assert harness_contract["local_git_policy"] == {
         "mode": "per_book_external_gitdir",
         "metadata_directory": ".local-book-git/<slug>.git",
@@ -299,6 +303,12 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     chapter_editor = (
         book_dir / ".claude" / "agents" / "chapter-editor.md"
     ).read_text(encoding="utf-8")
+    writer_agent = (
+        book_dir / ".claude" / "agents" / "writer.md"
+    ).read_text(encoding="utf-8")
+    blind_reader = (
+        book_dir / ".claude" / "agents" / "blind-reader.md"
+    ).read_text(encoding="utf-8")
     orchestrator = (
         book_dir / ".claude" / "agents" / "orchestrator.md"
     ).read_text(encoding="utf-8")
@@ -314,6 +324,19 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in claude_md
     assert "必须使用宿主官方 wait / join 等到角色终态" in claude_md
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in claude_md
+    assert writer_agent.startswith("---\n")
+    assert "name: novel-forge-writer" in writer_agent
+    assert "model: inherit" in writer_agent
+    assert blind_reader.startswith("---\n")
+    assert chapter_editor.startswith("---\n")
+    assert "novel-forge-writer" in orchestrator
+    assert "novel-forge-blind-reader" in orchestrator
+    assert "novel-forge-chapter-editor" in orchestrator
+    assert "返回的真实 task/agent ID" in orchestrator
+    assert "禁止把角色名当作 TaskOutput ID" in orchestrator
+    assert "禁止固定 sleep" in orchestrator
+    assert "至少等待 30 分钟" in orchestrator
+    assert "resolvedModel" in orchestrator
     assert "先只读正文" in chapter_editor
     assert "不得暂停询问是否开始审核" in orchestrator
     assert "自动生产唯一入口" in orchestrator

@@ -1,0 +1,79 @@
+{
+  "schema": "novel-forge-agent-demo/v1",
+  "sample_id": "agent-demo-v54-native-role-timeout-and-model-resolution",
+  "observed_at": "2026-07-22",
+  "scope": "single_chapter_experiment",
+  "retention": {
+    "deidentified_aggregate_only": true,
+    "raw_prose_retained": false,
+    "raw_session_or_task_ids_retained": false,
+    "content_hash_retained": false,
+    "book_git_retained": false,
+    "guardian_private_material_retained": false
+  },
+  "model_observation": {
+    "lead_model": "DeepSeek v4 Flash",
+    "spawned_generic_subagent_model": "DeepSeek v4 Pro",
+    "comparison_claim_allowed": false,
+    "reason": "role configuration and harness behavior changed together"
+  },
+  "timeline_seconds": {
+    "first_writer_substantive_start_delay_approx": 77,
+    "writer_completion_range_approx": [
+      46,
+      61
+    ],
+    "blind_reader_completion_approx": 167,
+    "lead_fixed_waits": [
+      5,
+      10,
+      15,
+      20
+    ]
+  },
+  "formal_integrity": {
+    "valid_writer_agent_definition": false,
+    "real_operation_handle_preserved": false,
+    "official_terminal_wait_used": false,
+    "lead_authored_role_artifacts": true,
+    "valid_chapter_editor_session": false,
+    "valid_guardian_clean_receipt_count": 0,
+    "valid_runtime_audit_count": 0,
+    "valid_chapter_sequence_count": 0,
+    "false_ready_claim": true
+  },
+  "gate_counts": {
+    "prose_blocking": 43,
+    "prose_advisory": 11,
+    "narrative_blocking": 4
+  },
+  "literary_observation": {
+    "human_likeness": "partially_convincing",
+    "strengths": [
+      "concrete environmental pressure",
+      "embodied action",
+      "relationship friction",
+      "memorable local images"
+    ],
+    "risks": [
+      "over-explanation",
+      "lead-authored prose cannot prove writer role provenance"
+    ]
+  },
+  "derived_rules": [
+    "role model preference is not provenance",
+    "terminal resolved model is authoritative",
+    "preserve the returned operation handle",
+    "role names are never task output identifiers",
+    "fixed sleep and file stability cannot prove completion",
+    "working or progress status must continue waiting",
+    "late artifacts from retired sessions are invalid",
+    "lead-authored role artifacts cannot be backfilled into formal"
+  ],
+  "cleanup_required": [
+    "books/<experimental-slug>",
+    ".local-book-git/<experimental-slug>.git",
+    ".local-guardian/<experimental-slug>",
+    "matching temporary capsules"
+  ]
+}
