@@ -15,6 +15,9 @@
 - 高权限只属于无模型推理的确定性控制面，用于 Guardian、状态、证据和 Git。
   Lead 只调度；Writer、Blind Reader、Chapter Editor 只产出各自角色产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+- 保存宿主返回的 `operation_handle.kind/value`，按 kind 使用对应官方结果通道；不得
+  把 agent ID 猜成 task ID。`idle/available` 不是角色结果，completed 还必须带
+  角色绑定的 `role_result`。结果缺失时换新同角色会话自动重试，不由 Lead 代填。
 - 宿主无法创建、隔离或等待真实独立角色时立即停止，只向用户说明：
   “自动写作环境尚未就绪，本章未开始。”
 - 小说创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness

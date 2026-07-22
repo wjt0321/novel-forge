@@ -135,6 +135,7 @@ class WriterStep:
     completion_delay_seconds: float = 0.0
     terminal_status: str = "completed"
     resolved_model: str | None = None
+    artifact_relative_path: str = "draft/正文.md"
 
 
 class ScriptedBackend:
@@ -142,9 +143,12 @@ class ScriptedBackend:
         self,
         writer_steps: list[WriterStep],
         review_rounds: list[tuple[ReviewOutcome, ReviewOutcome]],
+        *,
+        review_failures: dict[str, int] | None = None,
     ):
         self.writer_steps = list(writer_steps)
         self.review_rounds = list(review_rounds)
+        self.review_failures = dict(review_failures or {})
         self.sessions: list[SessionIdentity] = []
         self.review_contexts: list[tuple[str, set[str]]] = []
         self.review_instructions: list[tuple[str, str, str]] = []
@@ -226,14 +230,26 @@ class ScriptedBackend:
             thread.start()
             return SessionRunState(
                 operation_id=operation_id,
+                operation_kind="test-operation",
                 status="launched",
             )
         complete()
         self._writer_operations[operation_id] = (None, step)
         return SessionRunState(
             operation_id=operation_id,
+            operation_kind="test-operation",
             status=step.terminal_status,
             resolved_model=step.resolved_model,
+            result_transport="artifact",
+            role_result={
+                "schema": "novel-forge-role-result/v1",
+                "role": "writer",
+                "payload": {
+                    "artifact_relative_path": (
+                        step.artifact_relative_path
+                    ),
+                },
+            },
         )
 
     def wait_for_completion(
@@ -249,12 +265,24 @@ class ScriptedBackend:
             if thread.is_alive():
                 return SessionRunState(
                     operation_id=run.operation_id,
+                    operation_kind=run.operation_kind,
                     status="timed_out",
                 )
         return SessionRunState(
             operation_id=run.operation_id,
+            operation_kind=run.operation_kind,
             status=step.terminal_status,
             resolved_model=step.resolved_model,
+            result_transport="artifact",
+            role_result={
+                "schema": "novel-forge-role-result/v1",
+                "role": "writer",
+                "payload": {
+                    "artifact_relative_path": (
+                        step.artifact_relative_path
+                    ),
+                },
+            },
         )
 
     def run_planning(
@@ -398,6 +426,10 @@ class ScriptedBackend:
         self.review_instructions.append(
             (role, instructions, reasoning_effort)
         )
+        remaining_failures = self.review_failures.get(role, 0)
+        if remaining_failures > 0:
+            self.review_failures[role] = remaining_failures - 1
+            raise WorkflowError("test role result was not delivered")
         round_index = self._review_index // 2
         role_index = 0 if role == "blind-reader" else 1
         outcome = self.review_rounds[round_index][role_index]
@@ -682,6 +714,133 @@ def test_writer_files_never_replace_official_terminal_completion(
     assert result.technical_retry_count == 1
     assert "官方终态完成稿" in prose
     assert "文件已写但任务未完成" not in prose
+
+
+def test_writer_absolute_or_wrong_artifact_path_is_retried(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(
+                _prose("错误路径产物"),
+                artifact_relative_path=(
+                    "D:/tmp/capsule/draft/正文.md"
+                ),
+            ),
+            WriterStep(_prose("相对路径产物")),
+        ],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    prose = (
+        orchestrator.root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8")
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert "相对路径产物" in prose
+    assert "错误路径产物" not in prose
+
+
+def test_missing_blind_reader_result_uses_fresh_session_and_resumes(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+        review_failures={"blind-reader": 1},
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=2)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert [item.session_id for item in backend.sessions] == [
+        "native-writer-01",
+        "native-blind-reader-01",
+        "native-blind-reader-02",
+        "native-chapter-editor-01",
+    ]
+    completions = list(
+        (
+            orchestrator.root
+            / ".local-guardian/demo/session-completions"
+        ).glob("*.json")
+    )
+    assert len(completions) == 3
+
+
+def test_missing_editor_result_retries_only_editor_session(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+        review_failures={"chapter-editor": 1},
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=2)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert [
+        item.session_id
+        for item in backend.sessions
+        if item.role == "blind-reader"
+    ] == ["native-blind-reader-01"]
+    assert [
+        item.session_id
+        for item in backend.sessions
+        if item.role == "chapter-editor"
+    ] == [
+        "native-chapter-editor-01",
+        "native-chapter-editor-02",
+    ]
+
+
+def test_review_result_retry_exhaustion_asks_only_after_two_retries(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+        review_failures={"blind-reader": 3},
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=2)
+
+    failed = orchestrator.start("demo", _request(), chapter=1)
+
+    assert failed.user_state == "decision_required"
+    assert failed.technical_retry_count == 2
+    assert failed.options == (
+        "A. 保留草稿",
+        "B. 重新生成本章",
+        "C. 停止任务",
+    )
+    assert not any(
+        item.role == "chapter-editor" for item in backend.sessions
+    )
+    status = project_status(orchestrator.root, "demo", 1)
+    assert status["chapters"][0]["effective_status"] != "ready"
+
+    resumed = orchestrator.retry("demo")
+
+    assert resumed.user_state == "chapter_complete"
+    assert resumed.technical_retry_count == 2
+    assert [
+        item.session_id
+        for item in backend.sessions
+        if item.role == "blind-reader"
+    ] == [
+        "native-blind-reader-01",
+        "native-blind-reader-02",
+        "native-blind-reader-03",
+        "native-blind-reader-04",
+    ]
 
 
 def test_timed_out_writer_is_retired_and_late_output_cannot_replace_retry(
@@ -1398,6 +1557,80 @@ def test_quoted_external_command_string_creates_session(
 
     assert session.session_id == "native-session-01"
     assert session.session_instance_id == "native-instance-01"
+
+
+def test_command_backend_waits_with_typed_handle_and_reads_role_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    harness = tmp_path / "external-harness.py"
+    _command_harness_script(harness)
+    backend = CommandSessionBackend(
+        [sys.executable, str(harness)],
+        root=root,
+    )
+    requests: list[dict] = []
+
+    def invoke(request: dict) -> dict:
+        requests.append(request)
+        if request["action"] == "run_session":
+            return {
+                "status": "launched",
+                "operation_handle": {
+                    "kind": "host_team_member",
+                    "value": "opaque-review-member",
+                },
+            }
+        return {
+            "status": "completed",
+            "operation_handle": {
+                "kind": "host_team_member",
+                "value": "opaque-review-member",
+            },
+            "result_transport": "mailbox",
+            "resolved_model": "resolved-review-model",
+            "role_result": {
+                "schema": "novel-forge-role-result/v1",
+                "role": "blind-reader",
+                "payload": {
+                    "verdict": "pass",
+                    "human_likeness": "convincing",
+                    "reader_desire": "continue",
+                    "emotional_residue": "选择留下了余波。",
+                    "next_chapter_pull": "后果仍未解除。",
+                    "analysis": {"reconstruction_space": "空间可重建。"},
+                    "evidence_quote": "正文引文",
+                },
+            },
+        }
+
+    monkeypatch.setattr(backend, "_invoke", invoke)
+    session = SessionIdentity(
+        session_id="review-session",
+        session_instance_id="review-instance",
+        provider="host-provider",
+        model="requested-model",
+        agent_harness="host-native",
+        role="blind-reader",
+    )
+
+    outcome = backend.run_review(
+        session,
+        role="blind-reader",
+        context={"prose": "正文引文"},
+        instructions="只读正文。",
+        reasoning_effort="medium",
+    )
+
+    assert outcome.verdict == "pass"
+    assert outcome.resolved_model == "resolved-review-model"
+    assert requests[1]["operation_handle"] == {
+        "kind": "host_team_member",
+        "value": "opaque-review-member",
+    }
+    assert requests[1]["requirements"]["bound_role_result_required"] is True
 
 
 def test_inline_interpreter_command_cannot_impersonate_harness(

@@ -20,6 +20,7 @@ from .planning_spec import (
     MAX_REQUEST_CONTEXT_TOKENS,
     MAX_REQUESTS_PER_CHAPTER,
 )
+from .role_completion import ROLE_RESULT_SCHEMA, RESULT_TRANSPORT_ORDER
 from .writer_prompt import (
     FORMAL_WRITER_PROMPT_ID,
     MAX_FORMAL_WRITER_PROMPT_CHARS,
@@ -68,7 +69,9 @@ def harness_contract() -> dict[str, Any]:
             "accepted_or_progress_is_not_complete": True,
             "file_stability_is_not_complete": True,
             "returned_operation_handle_required": True,
+            "operation_handle_kind_required": True,
             "role_name_is_not_operation_handle": True,
+            "agent_id_is_not_implicitly_a_task_id": True,
             "fixed_sleep_or_file_polling_forbidden": True,
             "default_terminal_wait_seconds": 1800,
             "working_status_must_continue_waiting": True,
@@ -76,6 +79,26 @@ def harness_contract() -> dict[str, Any]:
             "late_result_after_retirement_is_invalid": True,
             "blind_reader_must_complete_before_chapter_editor": True,
             "context_isolation_is_not_filesystem_isolation": True,
+            "idle_or_available_is_not_role_result": True,
+            "terminal_state_requires_bound_role_result": True,
+            "writer_returns_capsule_relative_path_only": True,
+        },
+        "role_completion_envelope": {
+            "schema": ROLE_RESULT_SCHEMA,
+            "operation_handle_required": ["kind", "value"],
+            "terminal_statuses": ["completed", "failed", "timed_out"],
+            "result_transports": list(RESULT_TRANSPORT_ORDER),
+            "completed_requires": [
+                "result_transport",
+                "role_result",
+            ],
+            "role_result_required": [
+                "schema",
+                "role",
+                "payload",
+            ],
+            "idle_notification_is_result": False,
+            "host_absolute_artifact_path_from_role_forbidden": True,
         },
         "role_model_selection": {
             "workflow_binds_provider_or_model": False,
@@ -278,6 +301,11 @@ def harness_contract() -> dict[str, Any]:
             "auto_launch_after_surface_checked": True,
             "user_confirmation_required": False,
             "blind_reader_requires_new_native_session": True,
+            "chapter_editor_starts_after_blind_recorded": True,
+            "bound_role_result_required": True,
+            "invalid_result_uses_fresh_same_role_session": True,
+            "automatic_result_retry_count": 2,
+            "lead_can_synthesize_missing_review": False,
             "when_session_unavailable": "review_session_required",
             "open_ended_review_question_forbidden": True,
             "distinct_session_instance_required": True,

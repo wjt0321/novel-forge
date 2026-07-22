@@ -1,0 +1,70 @@
+{
+  "schema": "novel-forge-agent-demo/v1",
+  "sample_id": "agent-demo-v55-role-result-routing-and-path-ownership",
+  "observed_at": "2026-07-22",
+  "scope": "single_chapter_experiment",
+  "retention": {
+    "deidentified_aggregate_only": true,
+    "raw_prose_retained": false,
+    "book_or_character_names_retained": false,
+    "raw_session_task_or_agent_ids_retained": false,
+    "content_hash_retained": false,
+    "book_git_retained": false,
+    "guardian_private_material_retained": false
+  },
+  "timeline_seconds_approx": {
+    "writer": 146,
+    "blind_reader": 80,
+    "chapter_editor": 78
+  },
+  "formal_integrity": {
+    "typed_operation_handle_preserved": false,
+    "writer_relative_artifact_path_returned": false,
+    "blind_result_delivered_to_lead": false,
+    "editor_result_delivered_to_lead": false,
+    "lead_used_idle_as_result_signal": true,
+    "lead_bypassed_guardian_copy": true,
+    "valid_generation_count": 0,
+    "valid_runtime_audit_count": 0,
+    "valid_guardian_clean_receipt_count": 0,
+    "valid_review_count": 0,
+    "effective_ready": false,
+    "false_completion_claim": true
+  },
+  "gate_counts": {
+    "prose_blocking": 5,
+    "prose_advisory": 31,
+    "narrative_blocking": 3
+  },
+  "literary_observation": {
+    "human_likeness": "mostly_convincing",
+    "strengths": [
+      "embodied action",
+      "specific material detail",
+      "relationship pressure",
+      "memorable local images"
+    ],
+    "risks": [
+      "one major causality gap",
+      "timeline consistency uncertainty"
+    ],
+    "formal_comparison_claim_allowed": false
+  },
+  "derived_rules": [
+    "operation handles require explicit kind and value",
+    "agent identifiers are not implicitly task identifiers",
+    "idle or available is not a delivered role result",
+    "completed requires a role-bound structured result",
+    "writer returns only a capsule-relative artifact path",
+    "host absolute paths belong to the deterministic control plane",
+    "missing review results use fresh same-role sessions",
+    "review result retries are exhausted before user intervention",
+    "lead cannot reconstruct or author missing role reports"
+  ],
+  "cleanup_required": [
+    "books/<experimental-slug>",
+    ".local-book-git/<experimental-slug>.git",
+    ".local-guardian/<experimental-slug>",
+    "matching temporary capsules"
+  ]
+}

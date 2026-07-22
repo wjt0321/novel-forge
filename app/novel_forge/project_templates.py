@@ -140,7 +140,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.8（编排权限与精确会话产物绑定）
+- 工作流版本: v4.9（带类型句柄、正式角色结果与自动审稿恢复）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -157,9 +157,11 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-- 创建后保存宿主返回的真实 task/agent ID；wait/join/stop 只能使用该句柄，禁止把
-  角色名当作 TaskOutput ID，禁止固定 sleep 或以文件出现猜测完成。每个创作角色默认
-  至少等待 30 分钟；仍在 working/progress 就继续等待，不得提前 stop。
+- 创建后保存宿主返回的真实 `operation_handle.kind/value`；句柄 kind 决定宿主的
+  wait/join/result 通道。禁止把 agent ID 猜成 task ID、把角色名当作 TaskOutput ID、
+  固定 sleep 或以文件出现猜测完成。每个创作角色默认至少等待 30 分钟；仍在
+  working/progress 就继续等待。`idle_notification` 或 available 不是角色产物；
+  completed 还必须返回绑定该角色的 `role_result`。
 - 模型配置只是选择意图；证据只记录宿主终态返回的 `resolvedModel`。Writer 角色在
   Claude Code 模板中使用 `model: inherit`，表示继承当前父会话模型，不绑定具体厂商。
 - Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
@@ -223,7 +225,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    `simulated_blind` 且不能 pass。
    blind-reader 还要识别控制面泄漏、整齐问答、职业证明与修补接缝。
    chapter-editor 每轮重新完成因果、人物、行文、肌理和连续性五项审查。专业角色仅在
-   明确风险下按需调用。
+   明确风险下按需调用。审稿终态缺少正式结果通道、`role_result` 或角色绑定时，
+   废弃该 session 并新开同角色 session，最多自动重试两次；Blind 已正式记录后
+   Editor 故障只重试 Editor。
 9. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
    `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
    新 session；否则停止。第五章做 checkpoint audit，并用 `evidence-status`
@@ -255,7 +259,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.8；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.9；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -1015,6 +1019,8 @@ model: inherit
 1. 只读取分配给你的 capsule 内 `capsule.json`、`guardian-contract.json`、
    `instructions.md` 与 `handoff.md`。
 2. 只写 `draft/正文.md`，不得创建脚本、runtime、回执、审稿、状态或 Git 记录。
+   完成时只通过宿主正式结果通道返回 capsule 内相对路径 `draft/正文.md`，不得猜测、
+   拼接或回报宿主绝对路径。
 3. 只完成一章；正文达到 `instructions.md` 的完整章节目标后停止。
 4. 不读取完整 Skill、验证器、其他章节、旧会话、旧审稿或 `books/` 控制面。
 5. 有 MUST 时仍是新的 Patch Writer 会话，只处理合并后的 MUST，不顺手处理 MAY。
@@ -1107,7 +1113,8 @@ description: "Run the final independent chapter-level editorial review after Bli
 8. 检查人物可替换性、对白是否退化为整齐记录，以及局部 patch 是否形成集中解释段。
    不得按固定台词句数或固定动作间隔判错。
 
-写入 `reviews/chXX-chapter-editor.md`。每条 MUST/MAY 都要有原文证据和读者效果；
+通过宿主正式结果通道返回结构化报告，不直接写 `reviews/`。每条 MUST/MAY 都要有
+原文证据和读者效果；
 MUST 最多 5 条。第 2 章起填写 `previous_chapter_quote`。verdict 只能是
 `ready_for_editor_decision` / `needs_revision`。复审必须重读完整修订稿。
 报告必须逐项填写 `editorial_causality`、`editorial_agency`、
@@ -1140,7 +1147,8 @@ description: "Blind-read only the current prose in a fresh isolated review sessi
 5. **对话动态**：每个话轮谁说、对谁说、想要什么。
 6. **可记忆画面**：至少 3 个，每个必须附原文引用（≤2 句）。
 
-## 输出（写入 `reviews/chXX-blind-reader.md`）
+## 输出
+通过宿主正式结果通道返回结构化报告，不直接写 `reviews/`。
 - 六项重建结果逐项给出；任何一项重建失败即 MUST，注明卡在哪个位置、正文缺什么信息。
 - 每条结论必须有原文证据；禁止抽象赞扬。
 - `human_likeness: convincing | uncertain | synthetic`。只有 `convincing`
@@ -1522,12 +1530,16 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-- 创建角色后立即保存宿主返回的真实 task/agent ID；后续 wait/join/stop 只能使用该
-  句柄。禁止把角色名当作 TaskOutput ID，禁止凭自造名称查询任务。
+- 创建角色后立即保存宿主返回的真实 `operation_handle.kind/value`。句柄 kind
+  决定调用 Task Output、background output、mailbox 或其他宿主官方结果通道；
+  禁止把 agent ID 猜成 task ID、把角色名当作 TaskOutput ID，或凭自造名称查询。
 - 禁止固定 sleep、短轮询或以文件出现猜测完成。Writer、Blind Reader 和 Chapter
   Editor 每个角色默认至少等待 30 分钟；角色仍处于 working/progress 时继续等待，
   不得为节省 Lead 时间提前 stop。只有官方 failed/cancelled/timed_out 终态或用户明确
   停止才退役角色。
+- `idle_notification`、idle 或 available 只表示角色可接收新消息，不是报告已送达。
+  completed 必须同时取得 `novel-forge-role-result/v1` 的 `role_result`，且 role
+  与当前角色一致；否则废弃该 session 并新开同角色 session，最多自动重试两次。
 - 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
   返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
 - 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
@@ -1553,6 +1565,8 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
    Guardian sidecar。Writer 不接收完整 Skill、句长、段落长度、对白占比等数字目标，
    也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。handoff 只含
    过滤后的 Story Brief；完整 Scene Package 的决策审计只供 Chapter Editor 使用。
+   Writer 的正式 `role_result` 只返回 capsule 内相对路径 `draft/正文.md`；宿主绝对
+   路径由确定性控制面掌握，不要求角色发现或回报。
 5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
    隔离证明缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
    失效，必须 claim 新会话。一次集中 patch 使用预置当前正文的新 capsule；第三个
@@ -1568,7 +1582,8 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
    不得暂停询问是否开始审核。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
    “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
-   修补接缝；chapter-editor 每轮完整重审五项文学维度。
+   修补接缝；chapter-editor 每轮完整重审五项文学维度。两者只通过宿主正式结果通道
+   返回结构化报告；控制面验证并落盘。结果丢失时只换新当前角色，不由 Lead 代填。
 9. 同源 findings 合并成一个局部 patch，义务必须绑定位置、原文证据、读者效果和
    修订意图，不得直接增加解释段。第二份不同正文 SHA-256（第二份 generation）后
    仍有 MUST，退役 Patch Writer 并进入 `human_decision_required`；用户明确选择

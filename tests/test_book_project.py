@@ -1736,7 +1736,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v4.8（编排权限与精确会话产物绑定）",
+            "- 工作流版本: v4.9（带类型句柄、正式角色结果与自动审稿恢复）",
             "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
         ),
         encoding="utf-8",
@@ -1744,7 +1744,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "- 默认工作流: v4.8",
+            "- 默认工作流: v4.9",
             "- 默认工作流: v4.4",
         ),
         encoding="utf-8",
@@ -1754,8 +1754,8 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.8" in claude.read_text(encoding="utf-8")
-    assert "v4.8" in readme.read_text(encoding="utf-8")
+    assert "v4.9" in claude.read_text(encoding="utf-8")
+    assert "v4.9" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

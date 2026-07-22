@@ -17,7 +17,7 @@
 ## Writer 完成协议
 
 `NovelWorkflowOrchestrator` 在 `run_writer` 返回后不立即导入。Backend 必须返回
-真实 operation handle 与规范化状态：
+真实带类型 operation handle 与规范化状态：
 
 1. `launched`：只表示已启动，编排器使用同一 handle 调用宿主官方 wait/join；
 2. `completed`：官方终态完成，之后才检查 Capsule 正文与外置 runtime sidecar；
@@ -26,6 +26,11 @@
 角色名、团队成员名或 Lead 自造标签都不能代替 operation handle。`accepted`、
 `progress`、文件出现、文件大小稳定和固定 `sleep` 都不构成完成证据。默认终态等待
 上限仍为 30 分钟；角色仍在 working/progress 时继续等待。
+
+v4.9 进一步要求句柄包含 `kind/value`，宿主按 kind 选择 Task Output、background
+output、mailbox、artifact 或其他官方通道。`idle_notification`、idle、available
+都不等于产物；completed 必须同时返回角色绑定的 `role_result`。Writer 的 payload
+只包含 capsule 内相对路径 `draft/正文.md`，宿主绝对路径由控制面掌握。
 
 等待超时不产生“干净降级”：
 

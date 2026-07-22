@@ -110,7 +110,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.8" in claude_md
+    assert "v4.9" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
@@ -153,7 +153,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.8" in readme
+    assert "默认工作流: v4.9" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -332,11 +332,17 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "novel-forge-writer" in orchestrator
     assert "novel-forge-blind-reader" in orchestrator
     assert "novel-forge-chapter-editor" in orchestrator
-    assert "返回的真实 task/agent ID" in orchestrator
-    assert "禁止把角色名当作 TaskOutput ID" in orchestrator
+    assert "把角色名当作 TaskOutput ID" in orchestrator
     assert "禁止固定 sleep" in orchestrator
     assert "至少等待 30 分钟" in orchestrator
     assert "resolvedModel" in orchestrator
+    assert "operation_handle.kind" in orchestrator
+    assert "idle_notification" in orchestrator
+    assert "role_result" in orchestrator
+    assert "draft/正文.md" in writer_agent
+    assert "相对路径" in writer_agent
+    assert "正式结果通道" in blind_reader
+    assert "正式结果通道" in chapter_editor
     assert "先只读正文" in chapter_editor
     assert "不得暂停询问是否开始审核" in orchestrator
     assert "自动生产唯一入口" in orchestrator
@@ -570,12 +576,12 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
 
 
-def test_skill_documents_v48_orchestrated_artifact_workflow():
+def test_skill_documents_v49_orchestrated_artifact_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.8" in text
+    assert "v4.9" in text
     assert "自动生产唯一入口" in text
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
@@ -639,6 +645,10 @@ def test_skill_documents_v48_orchestrated_artifact_workflow():
     assert "两角色" in text
     assert "run_writer" in text
     assert "晚到旧稿不得覆盖重试稿" in text
+    assert "operation_handle.kind" in text
+    assert "idle/available" in text
+    assert "role_result" in text
+    assert "capsule 内相对路径" in text
     assert "literary-micro-rules/v3" in text
     assert "用户硬锚" in text
     assert len(text) < 9000

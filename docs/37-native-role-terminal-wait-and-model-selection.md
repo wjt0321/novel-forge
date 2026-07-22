@@ -32,12 +32,13 @@ Blind Reader 与 Chapter Editor 不写死模型，继续使用宿主默认或用
 
 `run_writer` 返回 `SessionRunState`：
 
-- `operation_id`：宿主返回的真实 task/agent handle；
+- `operation_kind` / `operation_id`：宿主返回的真实带类型 handle；
 - `status`：`launched | completed | failed | timed_out`；
 - `resolved_model`：宿主确认的实际模型，可为空但不得猜测。
 
 `launched` 必须进入 `wait_for_completion`。编排器默认等待 1800 秒，只认相同
-operation ID 的 `completed`。以下情况一律不能导入：
+kind/value 的 `completed`，并要求绑定 Writer 的正式 `role_result`。以下情况一律
+不能导入：
 
 - 用角色名、自造标签或旧 task ID 查询；
 - created、accepted、progress 或 working；

@@ -243,7 +243,9 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         "accepted_or_progress_is_not_complete": True,
         "file_stability_is_not_complete": True,
         "returned_operation_handle_required": True,
+        "operation_handle_kind_required": True,
         "role_name_is_not_operation_handle": True,
+        "agent_id_is_not_implicitly_a_task_id": True,
         "fixed_sleep_or_file_polling_forbidden": True,
         "default_terminal_wait_seconds": 1800,
         "working_status_must_continue_waiting": True,
@@ -251,6 +253,31 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         "late_result_after_retirement_is_invalid": True,
         "blind_reader_must_complete_before_chapter_editor": True,
         "context_isolation_is_not_filesystem_isolation": True,
+        "idle_or_available_is_not_role_result": True,
+        "terminal_state_requires_bound_role_result": True,
+        "writer_returns_capsule_relative_path_only": True,
+    }
+    assert contract["role_completion_envelope"] == {
+        "schema": "novel-forge-role-result/v1",
+        "operation_handle_required": ["kind", "value"],
+        "terminal_statuses": ["completed", "failed", "timed_out"],
+        "result_transports": [
+            "inline",
+            "background_output",
+            "mailbox",
+            "artifact",
+        ],
+        "completed_requires": [
+            "result_transport",
+            "role_result",
+        ],
+        "role_result_required": [
+            "schema",
+            "role",
+            "payload",
+        ],
+        "idle_notification_is_result": False,
+        "host_absolute_artifact_path_from_role_forbidden": True,
     }
     assert contract["role_model_selection"] == {
         "workflow_binds_provider_or_model": False,
@@ -273,10 +300,15 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         "auto_launch_after_surface_checked": True,
         "user_confirmation_required": False,
         "blind_reader_requires_new_native_session": True,
-            "when_session_unavailable": "review_session_required",
-            "open_ended_review_question_forbidden": True,
-            "distinct_session_instance_required": True,
-        }
+        "chapter_editor_starts_after_blind_recorded": True,
+        "bound_role_result_required": True,
+        "invalid_result_uses_fresh_same_role_session": True,
+        "automatic_result_retry_count": 2,
+        "lead_can_synthesize_missing_review": False,
+        "when_session_unavailable": "review_session_required",
+        "open_ended_review_question_forbidden": True,
+        "distinct_session_instance_required": True,
+    }
     assert contract["chapter_sequence"]["default_chapter_count"] == 1
     assert contract["chapter_sequence"]["maximum_chapter_count"] == 4
     assert (

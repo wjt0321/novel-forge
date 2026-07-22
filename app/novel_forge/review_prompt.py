@@ -73,7 +73,8 @@ def render_review_instructions(role: str) -> RolePrompt:
 
 只有正文同时具有可重建现场、人物特异性、关系摩擦、主动选择及其余波，并让你自愿继续
 阅读，才能给 convincing + continue + pass。MUST 只用于不改就会破坏人物选择、逻辑、
-可读性或核心钩子的问题，不为显得严格而制造。
+可读性或核心钩子的问题，不为显得严格而制造。通过宿主正式结果通道返回结构化判断，
+不直接写 reviews、状态或证据；idle/available 不等于报告已送达。
 """,
         )
     if role == "chapter-editor":
@@ -98,7 +99,8 @@ def render_review_instructions(role: str) -> RolePrompt:
 
 Scene Package 只能用于比较，不能证明正文已经交付。Blind Reader 的 pass 不能替代
 独立判断。每轮一次列全当前 MUST，避免第一次只抓因果、复审才发现对白。MUST 只用于
-不处理就不能认定本章成立的问题；风格偏好和可提升项保持 MAY。
+不处理就不能认定本章成立的问题；风格偏好和可提升项保持 MAY。通过宿主正式结果通道
+返回结构化判断，不直接写 reviews、状态或证据；idle/available 不等于报告已送达。
 """,
         )
     raise ReviewPromptError(f"unknown review role: {role}")

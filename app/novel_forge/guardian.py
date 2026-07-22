@@ -868,6 +868,7 @@ def reject_writer_capsule(
     if reason not in {
         "writer_completion_timeout",
         "writer_launch_failed",
+        "writer_result_invalid",
         "writer_terminal_failure",
     }:
         raise GuardianError("不支持的 writer capsule 拒绝原因。")
