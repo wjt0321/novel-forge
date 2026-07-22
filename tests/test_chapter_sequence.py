@@ -196,8 +196,8 @@ def test_writer_handoff_hides_editor_only_scene_reasoning(tmp_path: Path):
     assert "只完成本章正文" in handoff
     assert "当前章证据、当前章审稿与 ready 闭环" not in handoff
     assert "证据、审稿、状态与 ready 由编排器和独立角色处理" in handoff
-    assert "主动选择不能用好奇、观察或事后补救冒充" in handoff
-    assert "禁止把规划、因果链、替代解释或主题翻译成说明段" in handoff
+    assert "用好奇和事后补救冒充主动选择" in handoff
+    assert "把规划、审稿、因果清单或主题翻译成说明段" in handoff
 
 
 def test_claim_requires_new_native_session_and_advance_requires_ready(

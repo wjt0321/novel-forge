@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from . import book_project
-from .artifact_integrity import record_session_completion
+from .artifact_integrity import (
+    _issue_workflow_authority,
+    record_session_completion,
+)
 from .book_evidence import (
     record_evidence,
     render_evidence_markdown,
@@ -26,6 +29,7 @@ from .book_evidence import (
 from .book_git import checkpoint_book
 from .chapter_sequence import (
     advance_chapter_sequence,
+    attest_chapter_ready_candidate,
     begin_chapter_sequence,
     chapter_sequence_status,
     claim_chapter_session,
@@ -526,6 +530,7 @@ class NovelWorkflowOrchestrator:
         self.writer_completion_poll_seconds = writer_completion_poll_seconds
         self.writer_completion_stable_polls = writer_completion_stable_polls
         self.on_status = on_status or (lambda _: None)
+        self._workflow_authority = _issue_workflow_authority()
         self._seen_sessions: set[str] = set()
         self._seen_session_instances: set[str] = set()
 
@@ -778,8 +783,9 @@ class NovelWorkflowOrchestrator:
         chapter: int = 1,
     ) -> WorkflowResult:
         self.on_status("正在写作。")
-        book_dir = self._prepare_project(slug, request, chapter)
+        request.validate()
         writer_session = self._new_session("writer")
+        book_dir = self._prepare_project(slug, request, chapter)
         planning = self.backend.run_planning(
             writer_session,
             request=request,
@@ -966,6 +972,16 @@ class NovelWorkflowOrchestrator:
                 model=session.model,
                 agent_harness=session.agent_harness,
                 context_scope="writer_capsule_only",
+                chapter=chapter,
+                generation_id=generation_id,
+                content_sha256=imported["body_sha256"],
+                artifact=(
+                    self.root
+                    / "books"
+                    / slug
+                    / imported["target_path"]
+                ),
+                workflow_authority=self._workflow_authority,
             )
             return session, generation_id, attempt
         return None
@@ -1248,6 +1264,15 @@ class NovelWorkflowOrchestrator:
             blind_session,
             blind,
         )
+        blind_record = self._record_review_text(
+            slug, chapter, "blind-reader", blind_text
+        )
+        blind_binding = book_project.review_binding(
+            self.root,
+            slug,
+            chapter,
+            role="blind-reader",
+        )
         record_session_completion(
             self.root,
             slug,
@@ -1258,9 +1283,11 @@ class NovelWorkflowOrchestrator:
             model=blind_session.model,
             agent_harness=blind_session.agent_harness,
             context_scope="prose_only",
-        )
-        self._record_review_text(
-            slug, chapter, "blind-reader", blind_text
+            chapter=chapter,
+            generation_id=blind_binding["generation_id"],
+            content_sha256=blind_binding["chapter_sha256"],
+            artifact=book_dir / blind_record["review_file"],
+            workflow_authority=self._workflow_authority,
         )
         scene = (
             book_dir / f"planning/scene-package-ch{chapter:02d}.md"
@@ -1306,6 +1333,15 @@ class NovelWorkflowOrchestrator:
             editor_session,
             editor,
         )
+        editor_record = self._record_review_text(
+            slug, chapter, "chapter-editor", editor_text
+        )
+        editor_binding = book_project.review_binding(
+            self.root,
+            slug,
+            chapter,
+            role="chapter-editor",
+        )
         record_session_completion(
             self.root,
             slug,
@@ -1316,9 +1352,11 @@ class NovelWorkflowOrchestrator:
             model=editor_session.model,
             agent_harness=editor_session.agent_harness,
             context_scope="full_review_context",
-        )
-        self._record_review_text(
-            slug, chapter, "chapter-editor", editor_text
+            chapter=chapter,
+            generation_id=editor_binding["generation_id"],
+            content_sha256=editor_binding["chapter_sha256"],
+            artifact=book_dir / editor_record["review_file"],
+            workflow_authority=self._workflow_authority,
         )
         must = tuple(
             dict.fromkeys(
@@ -1379,7 +1417,7 @@ class NovelWorkflowOrchestrator:
         chapter: int,
         role: str,
         text: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -1389,7 +1427,7 @@ class NovelWorkflowOrchestrator:
             handle.write(text)
             source = Path(handle.name)
         try:
-            book_project.record_review(
+            return book_project.record_review(
                 self.root,
                 slug,
                 chapter,
@@ -1441,6 +1479,13 @@ class NovelWorkflowOrchestrator:
         writer_session: SessionIdentity,
         retries: int,
     ) -> WorkflowResult:
+        attest_chapter_ready_candidate(
+            self.root,
+            slug,
+            sequence_id,
+            writer_session.session_id,
+            workflow_authority=self._workflow_authority,
+        )
         book_project.advance_state(
             self.root,
             slug,
@@ -1448,6 +1493,7 @@ class NovelWorkflowOrchestrator:
             "ready",
             evidence="automatic-workflow/current",
             create_git_checkpoint=False,
+            workflow_authority=self._workflow_authority,
         )
         try:
             advance_chapter_sequence(
@@ -1508,6 +1554,13 @@ class NovelWorkflowOrchestrator:
             and checkpoint.get("remote_count") == 0
         )
         if not git_ok:
+            book_project.advance_state(
+                self.root,
+                slug,
+                chapter,
+                "editorial_reviewed",
+                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+            )
             return self._decision_result(
                 slug,
                 request,

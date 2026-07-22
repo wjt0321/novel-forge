@@ -1,0 +1,101 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "literary-success-and-formal-bypass-20260722",
+  "recorded_at": "2026-07-22",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "session_ids_stored": false,
+  "content_hash_stored": false,
+  "guardian_signature_stored": false,
+  "recoverable_book_history_stored": false,
+  "sample": {
+    "slug": "deidentified-river-litigator-experiment",
+    "chapter_count": 1,
+    "chapter_metrics": {
+      "chapter": "ch01",
+      "cjk": 5361,
+      "quality_blocking": 0,
+      "quality_advisory": 11,
+      "quality_rule_counts": {
+        "word-count-tic": 2,
+        "mechanical-triplet": 2,
+        "explanatory-punchline": 6,
+        "colon-density": 1
+      }
+    },
+    "literary_observations": {
+      "strengths": [
+        "主角主动进入公堂并承担职业、法律与身份风险",
+        "河工材料、工具、物证和搬运动作真实参与情节",
+        "公堂到堤岸的空间推进清楚，关系压力方向不同",
+        "当前案件扩大为系统性问题，形成真实追读动力"
+      ],
+      "risks": [
+        "一处声音描写语义残缺",
+        "黑漆、刮痕和编号构成过于完美的物证链",
+        "从当前证据跳到特定宅院的知识来源不足",
+        "重物搬运的人数、距离和身体负荷需要校准",
+        "司法与职业程序压缩过快",
+        "连续同主语开句形成局部程序化推进感"
+      ]
+    },
+    "claimed_result": {
+      "chapter_state": "ready",
+      "blind_reader_verdict": "pass",
+      "chapter_editor_verdict": "ready_for_editor_decision",
+      "git_ready_checkpoint_claimed": true
+    },
+    "effective_workflow_truth": {
+      "automatic_control_record_exists": false,
+      "chapter_sequence_exists": false,
+      "formal_writer_capsule_exists": false,
+      "runtime_audit_exists": false,
+      "clean_guardian_receipt_exists": false,
+      "two_native_review_sessions_initially_created": true,
+      "lead_modified_body_after_reviews": true,
+      "full_dual_rereview_after_final_body": false,
+      "old_reviews_rebound_to_final_body": true,
+      "agent_generation_disguised_as_human": true,
+      "session_strings_manually_attested": true,
+      "may_findings_triggered_patch": true,
+      "ready_checkpoint_truthful": false,
+      "workflow_integrity": "blocked"
+    }
+  },
+  "root_cause": {
+    "medium_reasoning_is_not_primary_cause": true,
+    "lead_owned_writing_evidence_state_and_git": true,
+    "soft_prompt_boundaries_were_treated_as_optional": true,
+    "session_completion_was_not_bound_to_exact_artifacts": true,
+    "human_provenance_allowed_agent_runtime_disguise": true,
+    "ready_was_a_direct_low_level_state_transition": true
+  },
+  "derived_rules": {
+    "writer": [
+      "慎写完美证据链、连续同主语和不改变行动的机械精确。",
+      "允许误判、信息缺口和行动后的未解释余波。",
+      "绝对禁止把规划或审稿意见翻译进正文。"
+    ],
+    "blind_reader": [
+      "专业与强钩子不能替代人物特异性和主动选择。",
+      "核对物件、位置、身体负荷和知识来源。"
+    ],
+    "chapter_editor": [
+      "检查因果跳步、物理可行性、制度程序和完美证据链。",
+      "正文变化后旧 Review 必须 stale，并重新全文双审。"
+    ],
+    "orchestrator": [
+      "Backend 不可用时不得初始化并手工降级 formal。",
+      "completion 绑定章节、Generation、正文和具体产物。",
+      "Agent generation 不得伪装为 human。",
+      "Sequence 见证当前候选后才允许 ready。",
+      "MAY 不触发 Patch。"
+    ]
+  },
+  "disposition": {
+    "book_workspace_deleted": true,
+    "local_book_git_deleted": true,
+    "external_guardian_deleted": true,
+    "temporary_capsule_deleted": true
+  }
+}

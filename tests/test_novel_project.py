@@ -78,9 +78,10 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     literary_rules = (
         book_dir / "evaluation" / "literary-micro-rules.md"
     ).read_text(encoding="utf-8")
-    assert "literary-micro-rules/v2" in literary_rules
-    assert "主动选择不能用好奇、观察或事后补救冒充" in literary_rules
-    assert "用户硬锚合同优先于 Scene Package" in literary_rules
+    assert "literary-micro-rules/v3" in literary_rules
+    assert "可以写：" in literary_rules
+    assert "绝对禁止：" in literary_rules
+    assert "用户硬锚漂移" in literary_rules
     assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
     assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
@@ -108,7 +109,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.5" in claude_md
+    assert "v4.8" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
@@ -151,7 +152,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.5" in readme
+    assert "默认工作流: v4.8" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -504,12 +505,12 @@ def test_skill_frontmatter_has_required_fields():
     assert re.search(r"^description:\s*\S", frontmatter, re.MULTILINE)
 
 
-def test_skill_documents_v46_compiled_prompt_and_runtime_truth_workflow():
+def test_skill_documents_v48_orchestrated_artifact_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.7" in text
+    assert "v4.8" in text
     assert "guardian-contract" in text
     assert "prepare-writer-capsule" in text
     assert "ingest-writer-capsule" in text
@@ -559,7 +560,7 @@ def test_skill_documents_v46_compiled_prompt_and_runtime_truth_workflow():
     assert "两角色" in text
     assert "run_writer" in text
     assert "晚到旧稿不得覆盖重试稿" in text
-    assert "literary-micro-rules/v2" in text
+    assert "literary-micro-rules/v3" in text
     assert "用户硬锚" in text
     assert len(text) < 9000
 

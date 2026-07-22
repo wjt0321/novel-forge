@@ -459,6 +459,23 @@ def test_generation_rejects_agent_claiming_human_writer():
         render_evidence_markdown(fake_human)
 
 
+def test_generation_rejects_agent_runtime_disguised_as_human_delegate():
+    fake_human = _base(
+        "generation",
+        "generation.ch01.fake-human-delegate",
+        authority="human_delegate",
+        writer_type="human",
+        provider="anthropic",
+        model="deepseek-v4-flash",
+        agent_harness="claude-code-direct",
+        provenance_confidence="user_attested",
+        content_sha256="0" * 64,
+    )
+
+    with pytest.raises(BookEvidenceError, match="human.*provider|human.*model"):
+        render_evidence_markdown(fake_human)
+
+
 def test_record_generation_rejects_duplicate_content_version(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     chapter = book_dir / "chapters/e01/ch-01/正文.md"

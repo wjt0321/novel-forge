@@ -18,7 +18,7 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
 Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 `--confirm <operation>`。先用 `--help` 查看参数，不在 Skill 中复制全部 CLI。
 
-## Books v4.7
+## Books v4.8
 
 默认状态链只有八态：
 
@@ -26,8 +26,8 @@ Adapter 从仓库根运行，`--root` 必须是绝对路径；变更操作必须
 
 `ready` 只是材料齐备，不是作者批准或发布许可。
 
-入口：`tools/novel-workflow.py`。`SessionBackend` 厂商无关；规划和逐项审稿由
-真实角色会话返回，Lead 禁止代填。
+入口：`tools/novel-workflow.py`。`SessionBackend` 厂商无关；角色判断由真实会话返回，
+Lead 禁止代填。Backend 不可用时在建书前停止，不得手工降级 formal。
 
 ### 通用 Harness Contract
 
@@ -59,8 +59,7 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
 系统用 `planning/chapter-sequences/<sequence-id>.json` 返回 launch directive：
 
 1. 新 Writer 先交付本章规划；再运行 `begin-chapter-sequence --chapter-count 1`。
-2. 用户要求连续多章：同一编排器可自动顺序执行，但单次序列最多 4 章；五章及以上
-   必须拆分，禁止用一个 writer session 连写。
+2. 连续多章仍逐章换 Writer；单次序列最多 4 章，五章及以上拆分。
 3. Harness 用 `claim-chapter-session` 绑定该 Writer 的真实 session ID；后续章按
    launch directive 创建新会话。角色名、子 Agent 名和编排器 ID 不能代替原生
    session ID；Backend 还须返回跨角色唯一的 `session_instance_id`。随后创建 capsule。
@@ -69,9 +68,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    编排器再运行
    `advance-chapter-sequence`，只有返回 `launch_next_session=true` 时才顺序创建
    下一章的新 session。
-5. 同一 session ID 不得用于另一章或另一书；generation `run_id` 必须等于 claim
-   的 session ID。三角色完成后在外置 Guardian 写签名凭证，缺一不能 ready。
-   上一章未完整 `ready` 时不得签发下一章。
+5. session 不得跨章或跨书；generation `run_id` 必须等于 claim ID。三角色完成凭证
+   绑定当前章、Generation、正文和角色产物，只由 Orchestrator 写；缺一不能 ready。
 
 交接包写入 `memory/context-cache/chXX-handoff.md`，只含用户六项输入形成的硬锚合同、
 相关 Canon/认知与承诺、
@@ -146,8 +144,8 @@ capsule，并把 writer 文件系统限制为 capsule-only。writer 只见合同
    ch05/ch10/... 还需当前 checkpoint arc audit，`open_must=0`。进入 ready 前，
    八态证据表不得保留 `-`/空值，并给出当前 ready 决定的 evidence 指针；formal
    Agent generation 还必须有匹配正文与 `run_id` 的干净 Guardian 回执。本章
-   ready 后先完成 Sequence 并确认 effective 一致，再创建 ready Git 恢复点；失败
-   即回退，不留假 ready 提交。
+   ready 前由 Sequence 见证当前 Writer、Generation 与正文；随后确认 effective 一致
+   再建 ready Git 恢复点，失败即回退。
 
 ## 文学门
 
@@ -158,9 +156,9 @@ blocking；句长塌缩和低量精确复读仍是 advisory。`pattern-saturatio
 也不把声音指纹变成 writer 的数值目标。中文叙事行混入 ASCII 逗号或直引号同样只做
 advisory。机器不认证文学价值。
 
-`literary-micro-rules/v2` 是三角色短规则唯一来源；日常不加载样本全文。Writer 查主动
-选择、具体私人代价、有效专业数字和状态物件，Blind Reader 查人物欲望、关系、动作
-连续与机械精确，Chapter Editor 查硬锚、时序/物件/知识边界、停止点和修补接缝。
+`literary-micro-rules/v3` 是短规则唯一来源；日常不加载样本全文。三角色按“可以写、
+慎写、允许、绝对禁止”判断主动选择、私人代价、物理状态、知识来源、机械精确、
+完美证据链和控制面泄漏；完整解释见 `docs/35-literary-rule-manual.md`。
 
 ### Blind Reader
 
@@ -207,8 +205,8 @@ advisory。机器不认证文学价值。
   指标只填本次增量；未知保持 null/unknown。
 - formal ready 需要匹配 `run_id` 且未超限的外部审计；一章 runtime audit 只能绑定当前 generation，
   同一 writer `run_id` 不得跨章复用，计数缺失或超限均阻断。
-- Generation、Runtime Audit、Review 均有外置内容封印；原地改写会使 effective
-  状态变为 inconsistent，新正文必须新建证据。
+- Generation、Runtime Audit、Review History 不可重封；completion 精确绑定当前产物。
+  Agent 不得自称 human；新正文必须新建 Generation 和两份 Review。
 
 ## 事实与记忆
 
@@ -225,7 +223,7 @@ Canon。事实与认知分开。
 只读：`project-status`、`run-gates`、`evidence-status`、`memory-status`、
 `chapter-sequence-status`、`session-audit`、`book-git-status`。变更参数查 `--help`。
 
-`sync-tools` 只迁移带版本标记的生成文件到 v4.7；手写项目宪法不动，旧专业 Agent
+`sync-tools` 只迁移带版本标记的生成文件到 v4.8；手写项目宪法不动，旧专业 Agent
 仅作兼容资产。
 
 同章同正文 SHA-256 只能算一个 generation。`harness_exposed` 必须有真实 `run_id`、

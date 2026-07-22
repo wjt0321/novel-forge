@@ -168,6 +168,22 @@ def _validate_generation(data: dict[str, Any]) -> None:
             "generation.writer_type=human 时 authority 必须是 "
             "author 或 human_delegate。"
         )
+    if data.get("writer_type") == "human":
+        provider = str(data.get("provider") or "").strip().lower()
+        model = str(data.get("model") or "").strip().lower()
+        harness = str(data.get("agent_harness") or "").strip().lower()
+        if provider not in {"human", "not_applicable"}:
+            raise BookEvidenceError(
+                "generation.writer_type=human 时 provider 必须标记为 human。"
+            )
+        if model not in {"human", "not_applicable"}:
+            raise BookEvidenceError(
+                "generation.writer_type=human 时 model 必须标记为 human。"
+            )
+        if harness and harness not in {"human_direct", "not_applicable"}:
+            raise BookEvidenceError(
+                "generation.writer_type=human 不得绑定 Agent Harness。"
+            )
     _require_string(data, "provider")
     _require_string(data, "model")
     _require_string(data, "content_path")

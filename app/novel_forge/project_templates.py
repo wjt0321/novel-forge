@@ -140,7 +140,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.5（编译 Writer Prompt 与提示词来源证明）
+- 工作流版本: v4.8（编排权限与精确会话产物绑定）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -231,7 +231,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.5；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v4.8；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：

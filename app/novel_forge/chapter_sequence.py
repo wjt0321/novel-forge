@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from . import book_project
+from .artifact_integrity import (
+    WorkflowAuthority,
+    require_workflow_authority,
+)
 from .book_evidence import find_evidence_record
 from .book_memory import (
     build_context_packet,
@@ -591,6 +595,104 @@ def claim_chapter_session(
     return _public(record)
 
 
+def attest_chapter_ready_candidate(
+    root: Path,
+    slug: str,
+    sequence_id: str,
+    session_id: str,
+    *,
+    workflow_authority: WorkflowAuthority | None = None,
+) -> dict[str, Any]:
+    """Bind the exact reviewed body before the orchestrator may set ready."""
+    require_workflow_authority(workflow_authority)
+    book_dir, path, record = _load_sequence(root, slug, sequence_id)
+    if record.get("status") != "running":
+        raise ChapterSequenceError(
+            "只有正在运行的章节序列可以见证 ready 候选。"
+        )
+    if record.get("active_session_id") != session_id:
+        raise ChapterSequenceError(
+            "session_id 与当前章节绑定的原生 writer session 不一致。"
+        )
+    chapter = record["chapters"][record["current_index"]]
+    _, state = _chapter_state(root, slug, chapter)
+    if state.get("status") != "editorial_reviewed":
+        raise ChapterSequenceError(
+            "章节必须完成双审并处于 editorial_reviewed 才能见证 ready。"
+        )
+    generation_id = str(state.get("generation_id") or "").strip()
+    if not generation_id or generation_id == "unrecorded":
+        raise ChapterSequenceError("ready 候选缺少 generation 绑定。")
+    generation, _ = find_evidence_record(root, slug, generation_id)
+    if generation.data.get("run_id") != session_id:
+        raise ChapterSequenceError(
+            "ready 候选 generation.run_id 与当前 writer session 不一致。"
+        )
+    chapter_path = book_project.find_chapter_file(book_dir, chapter)
+    content_sha256 = _sha256(chapter_path)
+    if generation.data.get("content_sha256") != content_sha256:
+        raise ChapterSequenceError(
+            "ready 候选正文已不同于当前 generation。"
+        )
+    record.setdefault("ready_candidates", {})[str(chapter)] = {
+        "session_id": session_id,
+        "generation_id": generation_id,
+        "content_sha256": content_sha256,
+        "attested_at": _now(),
+    }
+    record["updated_at"] = _now()
+    _atomic_json(path, record)
+    return {
+        "sequence_id": sequence_id,
+        "chapter": chapter,
+        "ready_candidate_attested": True,
+    }
+
+
+def chapter_ready_candidate_is_attested(
+    root: Path,
+    slug: str,
+    chapter: int,
+    *,
+    session_id: str,
+    generation_id: str,
+    content_sha256: str,
+) -> bool:
+    """Return whether an active sequence attests this exact ready candidate."""
+    book_dir = book_project.book_dir_for(root, slug)
+    directory = book_dir / CHAPTER_SEQUENCE_DIRECTORY
+    if not directory.is_dir():
+        return False
+    for path in directory.glob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            not isinstance(record, dict)
+            or record.get("schema") != CHAPTER_SEQUENCE_SCHEMA
+            or record.get("slug") != slug
+            or record.get("status") != "running"
+            or record.get("active_session_id") != session_id
+        ):
+            continue
+        candidates = record.get("ready_candidates")
+        candidate = (
+            candidates.get(str(chapter))
+            if isinstance(candidates, dict)
+            else None
+        )
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("session_id") == session_id
+            and candidate.get("generation_id") == generation_id
+            and candidate.get("content_sha256") == content_sha256
+            and isinstance(candidate.get("attested_at"), str)
+        ):
+            return True
+    return False
+
+
 def advance_chapter_sequence(
     root: Path,
     slug: str,
@@ -617,6 +719,22 @@ def advance_chapter_sequence(
         raise ChapterSequenceError(
             "ready generation.run_id 与章节序列 claim 的 writer session "
             "不一致。"
+        )
+    chapter_path = book_project.find_chapter_file(book_dir, chapter)
+    candidates = record.get("ready_candidates")
+    candidate = (
+        candidates.get(str(chapter))
+        if isinstance(candidates, dict)
+        else None
+    )
+    if (
+        not isinstance(candidate, dict)
+        or candidate.get("session_id") != session_id
+        or candidate.get("generation_id") != generation_id
+        or candidate.get("content_sha256") != _sha256(chapter_path)
+    ):
+        raise ChapterSequenceError(
+            "章节 ready 未绑定编排器见证的当前正文。"
         )
 
     record["completed_chapters"].append(chapter)

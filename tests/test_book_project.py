@@ -6,15 +6,22 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import uuid
 
 import pytest
 
 from app.novel_forge import book_project, guardian as guardian_module
-from app.novel_forge.artifact_integrity import record_session_completion
+from app.novel_forge.artifact_integrity import (
+    ArtifactIntegrityError,
+    _issue_workflow_authority,
+    record_session_completion,
+    seal_artifact,
+)
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.chapter_sequence import (
     ChapterSequenceError,
     advance_chapter_sequence,
+    attest_chapter_ready_candidate,
     begin_chapter_sequence,
     claim_chapter_session,
 )
@@ -154,8 +161,11 @@ def _review_file(
             for line in previous_text.splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         )
-    path = tmp_path / f"review-{role}.md"
-    review_session_id = review_session_id or f"review-session-{role}"
+    path = book_dir / "reviews" / f"{chapter}-{role}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    review_session_id = review_session_id or (
+        f"review-session-{role}-{uuid.uuid4().hex[:8]}"
+    )
     context_scope = context_scope or (
         "prose_only" if role == "blind-reader" else "full_review_context"
     )
@@ -223,6 +233,11 @@ def _review_file(
             model=model,
             agent_harness="test-harness",
             context_scope=context_scope,
+            chapter=number,
+            generation_id=binding["generation_id"],
+            content_sha256=binding["chapter_sha256"],
+            artifact=path,
+            workflow_authority=_issue_workflow_authority(),
         )
     return path
 
@@ -401,6 +416,11 @@ def _record_generation(
         model=model,
         agent_harness="test-harness",
         context_scope="writer_capsule_only",
+        chapter=chapter_number,
+        generation_id=generation_id,
+        content_sha256=generation_data["content_sha256"],
+        artifact=chapter,
+        workflow_authority=_issue_workflow_authority(),
     )
     return generation_id
 
@@ -681,17 +701,71 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
                 else f"planning/{state}.md"
             ),
         )
-    result = book_project.advance_state(
+    with pytest.raises(BookProjectError, match="章节序列"):
+        book_project.advance_state(
+            tmp_path,
+            "demo",
+            1,
+            "ready",
+            evidence="project-status/current",
+        )
+
+
+def test_immutable_review_history_cannot_be_resealed_after_mutation(
+    tmp_path: Path,
+):
+    _make_book(tmp_path)
+    source = _review_file(
+        tmp_path,
+        "blind-reader",
+        "needs_revision",
+        record_completion=False,
+    )
+    recorded = book_project.record_review(
         tmp_path,
         "demo",
         1,
-        "ready",
-        evidence="project-status/current",
+        "blind-reader",
+        source,
     )
-    assert result["to"] == "ready"
-    assert result["local_git"]["committed"] is True
-    assert result["local_git"]["message"] == "chapter: ch01 ready"
-    assert book_git_status(tmp_path, "demo")["dirty"] is False
+    history = tmp_path / "books/demo" / recorded["review_record"]
+    history.write_text(
+        history.read_text(encoding="utf-8") + "\n被原地修改。\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="不得重新封印"):
+        seal_artifact(
+            tmp_path,
+            "demo",
+            history,
+            kind="review-history",
+        )
+
+
+def test_session_completion_requires_orchestrator_authority(tmp_path: Path):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+
+    with pytest.raises(
+        ArtifactIntegrityError,
+        match="编排器权限",
+    ):
+        record_session_completion(
+            tmp_path,
+            "demo",
+            session_id="fabricated-session",
+            session_instance_id="fabricated-instance",
+            role="writer",
+            provider="fabricated-provider",
+            model="fabricated-model",
+            agent_harness="fabricated-harness",
+            context_scope="writer_capsule_only",
+            chapter=1,
+            generation_id="generation.ch01.fabricated",
+            content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
+            artifact=chapter,
+        )
 
 
 def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
@@ -768,12 +842,21 @@ def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
                 else f"planning/{state}.md"
             ),
         )
+    authority = _issue_workflow_authority()
+    attest_chapter_ready_candidate(
+        tmp_path,
+        "demo",
+        "two-chapters",
+        "writer-session-001",
+        workflow_authority=authority,
+    )
     book_project.advance_state(
         tmp_path,
         "demo",
         1,
         "ready",
         evidence="project-status/current",
+        workflow_authority=authority,
     )
 
     voice = book_dir / "memory/voice-bible.md"
@@ -924,7 +1007,7 @@ def test_runtime_audit_must_bind_exactly_one_generation(tmp_path: Path):
     assert any("只能绑定当前 generation" in error for error in errors)
 
 
-def test_project_status_blocks_cross_chapter_writer_session_reuse(
+def test_second_chapter_cannot_record_reused_writer_session(
     tmp_path: Path,
 ):
     book_dir = _make_book(tmp_path)
@@ -943,21 +1026,18 @@ def test_project_status_blocks_cross_chapter_writer_session_reuse(
         book_dir,
         run_id="reused-writer-session",
     )
-    _record_generation(
-        tmp_path,
-        book_dir,
-        generation_id="generation.ch02.current",
-        chapter_number=2,
-        run_id="reused-writer-session",
-        record_audit=False,
-    )
-
-    status = book_project.project_status(tmp_path, "demo", None)
-
-    assert any(
-        item["code"] == "writer_session_reused_across_chapters"
-        for item in status["workflow_integrity"]["blockers"]
-    )
+    with pytest.raises(
+        ArtifactIntegrityError,
+        match="session_id 已被其他角色使用",
+    ):
+        _record_generation(
+            tmp_path,
+            book_dir,
+            generation_id="generation.ch02.current",
+            chapter_number=2,
+            run_id="reused-writer-session",
+            record_audit=False,
+        )
 
 
 def test_ready_rejects_exceeded_draft_mutation_budget(tmp_path: Path):
@@ -1656,7 +1736,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v4.5（编译 Writer Prompt 与提示词来源证明）",
+            "- 工作流版本: v4.8（编排权限与精确会话产物绑定）",
             "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
         ),
         encoding="utf-8",
@@ -1664,7 +1744,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "- 默认工作流: v4.5",
+            "- 默认工作流: v4.8",
             "- 默认工作流: v4.4",
         ),
         encoding="utf-8",
@@ -1674,8 +1754,8 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.5" in claude.read_text(encoding="utf-8")
-    assert "v4.5" in readme.read_text(encoding="utf-8")
+    assert "v4.8" in claude.read_text(encoding="utf-8")
+    assert "v4.8" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

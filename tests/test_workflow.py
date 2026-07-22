@@ -880,6 +880,32 @@ def test_patch_uses_new_writer_session_and_replaces_reviews_without_mutation(
     assert not any(item["stale"] for item in current_reviews)
 
 
+def test_may_findings_do_not_trigger_patch_writer(tmp_path: Path):
+    blind, editor = _pass_reviews()
+    may = ReviewFinding(
+        severity="MAY",
+        location="中段",
+        evidence="林舟握住门把",
+        reader_effect="局部节奏还可以更松一些。",
+        revision_intent="作者后续可自行判断是否调整。",
+    )
+    backend = ScriptedBackend(
+        [WriterStep(_prose("含 MAY 的通过稿"))],
+        [(replace(blind, findings=(may,)), editor)],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert [
+        item.session_id
+        for item in backend.sessions
+        if item.role == "writer"
+    ] == ["native-writer-01"]
+    assert len(backend.writer_directives) == 1
+
+
 def test_noop_patch_is_rejected_without_creating_a_generation(tmp_path: Path):
     prose = _prose("正文没有变化")
     backend = ScriptedBackend(
@@ -1011,6 +1037,50 @@ def test_modified_review_history_is_reported_as_immutable_tampering(
     )
 
 
+def test_role_completion_is_bound_to_exact_generation_body_and_artifact(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    orchestrator.start("demo", _request(), chapter=1)
+    completion_dir = (
+        orchestrator.root
+        / ".local-guardian/demo/session-completions"
+    )
+    completions = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in completion_dir.glob("*.json")
+    ]
+
+    assert len(completions) == 3
+    assert {item["chapter"] for item in completions} == {1}
+    assert all(item["generation_id"] for item in completions)
+    assert all(len(item["content_sha256"]) == 64 for item in completions)
+    assert all(item["artifact_path"] for item in completions)
+    assert all(len(item["artifact_sha256"]) == 64 for item in completions)
+
+
+def test_unavailable_backend_does_not_create_partial_book(tmp_path: Path):
+    class UnavailableBackend:
+        def create_session(self, role: str) -> SessionIdentity:
+            raise RuntimeError("backend unavailable")
+
+    root = tmp_path / "repo"
+    orchestrator = NovelWorkflowOrchestrator(
+        root,
+        UnavailableBackend(),  # type: ignore[arg-type]
+        capsule_root=tmp_path / "capsules",
+    )
+
+    with pytest.raises(RuntimeError, match="backend unavailable"):
+        orchestrator.start("demo", _request(), chapter=1)
+
+    assert not (root / "books/demo").exists()
+
+
 def test_sequence_finalization_failure_creates_no_ready_git_checkpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1043,6 +1113,32 @@ def test_sequence_finalization_failure_creates_no_ready_git_checkpoint(
         check=True,
     ).stdout
     assert "chapter: ch01 ready" not in log
+
+
+def test_git_checkpoint_failure_rolls_back_declared_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("初稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    monkeypatch.setattr(
+        workflow_module,
+        "checkpoint_book",
+        lambda *args, **kwargs: {
+            "commit_hash": None,
+            "remote_count": 0,
+        },
+    )
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    status = project_status(orchestrator.root, "demo", 1)
+
+    assert result.user_state == "decision_required"
+    assert status["chapters"][0]["status"] == "editorial_reviewed"
+    assert status["chapters"][0]["effective_status"] != "ready"
 
 
 def test_sequence_waiting_for_new_session_never_displays_ready(tmp_path: Path):

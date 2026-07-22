@@ -20,7 +20,9 @@ from typing import Any
 
 from . import book_gates
 from .artifact_integrity import (
+    WorkflowAuthority,
     artifact_integrity_errors,
+    require_workflow_authority,
     seal_artifact,
     session_completion_errors,
 )
@@ -790,6 +792,14 @@ def list_reviews(book_dir: Path, ch_id: str | None = None) -> list[dict[str, Any
                     expected_context_scope=expected_scope,
                     expected_provider=str(parsed.get("provider") or ""),
                     expected_model=str(parsed.get("model") or ""),
+                    expected_chapter=number,
+                    expected_generation_id=str(
+                        parsed.get("generation_id") or ""
+                    ),
+                    expected_content_sha256=str(
+                        parsed.get("chapter_sha256") or ""
+                    ),
+                    expected_artifact=path,
                 )
             )
         except (BookProjectError, ValueError):
@@ -985,6 +995,14 @@ def _runtime_audit_errors(
                 session_id=run_id,
                 expected_role="writer",
                 expected_context_scope="writer_capsule_only",
+                expected_chapter=int(generation.get("chapter") or 0),
+                expected_generation_id=str(generation.get("id") or ""),
+                expected_content_sha256=str(
+                    generation.get("content_sha256") or ""
+                ),
+                expected_artifact=book_dir / str(
+                    generation.get("content_path") or ""
+                ),
             )
         )
     generation_id = str(generation.get("id") or "").strip()
@@ -1097,6 +1115,7 @@ def advance_state(
     evidence: str | None = None,
     next_action: str | None = None,
     create_git_checkpoint: bool = True,
+    workflow_authority: WorkflowAuthority | None = None,
 ) -> dict[str, Any]:
     book_dir = book_dir_for(root, slug)
     if to_state != STATE_BLOCKED and to_state not in CHAPTER_STATES:
@@ -1233,6 +1252,23 @@ def advance_state(
             )
         if evidence is None or evidence.strip().lower() in placeholder_values:
             raise BookProjectError("进入 ready 必须提供非占位 evidence 指针。")
+        from .chapter_sequence import chapter_ready_candidate_is_attested
+
+        generation_id = str(generation.data.get("id") or "")
+        generation_run_id = str(generation.data.get("run_id") or "")
+        content_sha256 = str(generation.data.get("content_sha256") or "")
+        if not chapter_ready_candidate_is_attested(
+            root,
+            slug,
+            number,
+            session_id=generation_run_id,
+            generation_id=generation_id,
+            content_sha256=content_sha256,
+        ):
+            raise BookProjectError(
+                "进入 ready 前章节序列必须见证当前 Writer、Generation 与正文。"
+            )
+        require_workflow_authority(workflow_authority)
 
     from_state = current["status"] or "planned"
     if (

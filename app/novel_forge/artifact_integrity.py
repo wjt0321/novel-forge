@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,12 +17,50 @@ from .models import NovelForgeError
 
 
 ARTIFACT_SEAL_SCHEMA = "novel-forge-artifact-seal/v1"
-SESSION_COMPLETION_SCHEMA = "novel-forge-session-completion/v1"
+SESSION_COMPLETION_SCHEMA = "novel-forge-session-completion/v2"
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_WORKFLOW_AUTHORITIES: set[str] = set()
+_IMMUTABLE_ARTIFACT_KINDS = frozenset(
+    {
+        "generation",
+        "runtime-audit",
+        "review-history",
+    }
+)
 
 
 class ArtifactIntegrityError(NovelForgeError):
     """Raised when an external integrity record is invalid."""
+
+
+class WorkflowAuthority:
+    """Opaque in-process authority held only by the active orchestrator."""
+
+    __slots__ = ("_nonce",)
+
+    def __init__(self, nonce: str):
+        self._nonce = nonce
+
+
+def _issue_workflow_authority() -> WorkflowAuthority:
+    """Issue a non-serializable capability for one orchestrator process."""
+    nonce = secrets.token_hex(32)
+    _WORKFLOW_AUTHORITIES.add(nonce)
+    return WorkflowAuthority(nonce)
+
+
+def require_workflow_authority(
+    authority: WorkflowAuthority | None,
+) -> None:
+    """Reject control-plane mutations outside an active orchestrator."""
+    if (
+        not isinstance(authority, WorkflowAuthority)
+        or authority._nonce not in _WORKFLOW_AUTHORITIES
+    ):
+        raise ArtifactIntegrityError(
+            "正式自动流程缺少编排器权限，不能伪造会话完成或 ready。"
+        )
 
 
 def _now() -> str:
@@ -142,6 +181,12 @@ def seal_artifact(
         / "artifact-seals"
         / f"{path_hash}-{content_hash}.json"
     )
+    if kind in _IMMUTABLE_ARTIFACT_KINDS:
+        prior = list(target.parent.glob(f"{path_hash}-*.json"))
+        if prior and target not in prior:
+            raise ArtifactIntegrityError(
+                f"不可变产物已封印，不得重新封印不同内容：{relative}"
+            )
     _write_immutable_json(target, payload)
     return {
         "artifact_path": relative,
@@ -216,8 +261,27 @@ def record_session_completion(
     model: str,
     agent_harness: str,
     context_scope: str,
+    chapter: int,
+    generation_id: str,
+    content_sha256: str,
+    artifact: Path,
+    workflow_authority: WorkflowAuthority | None = None,
 ) -> dict[str, Any]:
-    """Record one completed native role session outside the book."""
+    """Record one completed native role session bound to exact artifacts."""
+    require_workflow_authority(workflow_authority)
+    if not isinstance(chapter, int) or isinstance(chapter, bool) or chapter < 1:
+        raise ArtifactIntegrityError("会话完成凭证 chapter 必须是正整数。")
+    if not generation_id.strip():
+        raise ArtifactIntegrityError("会话完成凭证缺少 generation_id。")
+    if not _SHA256_RE.fullmatch(content_sha256):
+        raise ArtifactIntegrityError(
+            "会话完成凭证 content_sha256 必须是 SHA-256。"
+        )
+    _, artifact_path, _, artifact_sha256 = _artifact_identity(
+        root,
+        slug,
+        artifact,
+    )
     values = {
         "session_id": session_id,
         "session_instance_id": session_instance_id,
@@ -226,6 +290,11 @@ def record_session_completion(
         "model": model,
         "agent_harness": agent_harness,
         "context_scope": context_scope,
+        "chapter": chapter,
+        "generation_id": generation_id,
+        "content_sha256": content_sha256,
+        "artifact_path": artifact_path,
+        "artifact_sha256": artifact_sha256,
     }
     if any(not str(value).strip() for value in values.values()):
         raise ArtifactIntegrityError("会话完成凭证缺少必要字段。")
@@ -267,6 +336,10 @@ def session_completion_errors(
     expected_context_scope: str,
     expected_provider: str | None = None,
     expected_model: str | None = None,
+    expected_chapter: int | None = None,
+    expected_generation_id: str | None = None,
+    expected_content_sha256: str | None = None,
+    expected_artifact: Path | None = None,
 ) -> list[str]:
     """Validate a role session against the external completion ledger."""
     directory = _ledger_dir(root, slug) / "session-completions"
@@ -302,4 +375,33 @@ def session_completion_errors(
         errors.append(f"session_provider_mismatch:{expected_role}")
     if expected_model is not None and matching.get("model") != expected_model:
         errors.append(f"session_model_mismatch:{expected_role}")
+    if (
+        expected_chapter is not None
+        and matching.get("chapter") != expected_chapter
+    ):
+        errors.append(f"session_chapter_mismatch:{expected_role}")
+    if (
+        expected_generation_id is not None
+        and matching.get("generation_id") != expected_generation_id
+    ):
+        errors.append(f"session_generation_mismatch:{expected_role}")
+    if (
+        expected_content_sha256 is not None
+        and matching.get("content_sha256") != expected_content_sha256
+    ):
+        errors.append(f"session_content_mismatch:{expected_role}")
+    if expected_artifact is not None:
+        try:
+            _, relative, _, digest = _artifact_identity(
+                root,
+                slug,
+                expected_artifact,
+            )
+        except ArtifactIntegrityError:
+            errors.append(f"session_artifact_missing:{expected_role}")
+        else:
+            if matching.get("artifact_path") != relative:
+                errors.append(f"session_artifact_mismatch:{expected_role}")
+            if matching.get("artifact_sha256") != digest:
+                errors.append(f"session_artifact_hash_mismatch:{expected_role}")
     return errors
