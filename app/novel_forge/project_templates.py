@@ -23,9 +23,11 @@ from .planning_spec import (
     CHAPTER_STATES,
     EVIDENCE_DIRECTORIES,
     HUMAN_NARRATIVE_POLICIES,
+    LITERARY_MICRO_RULES_VERSION,
     MECHANISM_CLAUSES,
     REVIEW_ROLES,
     genre_preset,
+    render_literary_micro_rules,
 )
 from .session_audit import harness_contract
 from .writer_prompt import (
@@ -631,6 +633,21 @@ def _evaluation_rule_registry_md() -> str:
 |---|---|---|---|---|---|
 |  |  | experimental |  |  |  |
 """
+
+
+def _evaluation_literary_micro_rules_md() -> str:
+    return (
+        "# 文学微规则\n\n"
+        f"- version: {LITERARY_MICRO_RULES_VERSION}\n\n"
+        "> 由脱敏样本提炼，只传递可执行判断，不向日常会话注入原文样本、"
+        "数值风格目标或长篇反例。\n\n"
+        "## Writer\n\n"
+        f"{render_literary_micro_rules('writer')}\n\n"
+        "## Blind Reader\n\n"
+        f"{render_literary_micro_rules('blind-reader')}\n\n"
+        "## Chapter Editor\n\n"
+        f"{render_literary_micro_rules('chapter-editor')}\n"
+    )
 
 
 def _evaluation_generation_template_md() -> str:
@@ -1517,6 +1534,10 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "evaluation/case-template.md": (_evaluation_case_template_md, ()),
     "evaluation/experiment-template.md": (_evaluation_experiment_template_md, ()),
     "evaluation/rule-registry.md": (_evaluation_rule_registry_md, ()),
+    "evaluation/literary-micro-rules.md": (
+        _evaluation_literary_micro_rules_md,
+        (),
+    ),
     "evaluation/generation-template.md": (_evaluation_generation_template_md, ()),
     "evaluation/harness-contract.json": (
         _evaluation_harness_contract_json,
@@ -1598,6 +1619,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
     "memory/memory-record-template.md",
     "evaluation/case-template.md",
     "evaluation/experiment-template.md",
+    "evaluation/literary-micro-rules.md",
     "evaluation/generation-template.md",
     "evaluation/harness-contract.json",
     "evaluation/guardian-contract.json",

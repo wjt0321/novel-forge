@@ -29,6 +29,7 @@ from .planning_spec import (
     MAX_HANDOFF_TOTAL_CHARS,
     MAX_HANDOFF_VOICE_EXEMPLAR_CHARS,
     WRITER_VISIBLE_SCENE_SECTIONS,
+    render_literary_micro_rules,
 )
 
 
@@ -274,7 +275,8 @@ def build_chapter_handoff(
         "",
         f"- 本次 writer scope 仅限第 {chapter:02d} 章。",
         "- 必须使用新的原生 writer session；不得续用上一章 session。",
-        "- 本章完整 ready 后结束 writer session，由编排器另行签发下一章。",
+        "- 正文输出后立即停止角色工作；编排器完成 ready 后退役该 session 身份，"
+        "再另行签发下一章。",
         "- 不加载旧会话消息、旧工具输出、旧审稿全文或其他书资产。",
         "- 2,000,000 cached-input tokens 是硬停止上限，不是目标额度。",
         "",
@@ -304,9 +306,15 @@ def build_chapter_handoff(
         "",
         scene_text,
         "",
+        "## 文学微规则",
+        "",
+        render_literary_micro_rules("writer"),
+        "",
         "## 停止规则",
         "",
-        "- 只完成本章正文、当前章证据、当前章审稿与 ready 闭环。",
+        "- 只完成本章正文。",
+        "- 证据、审稿、状态与 ready 由编排器和独立角色处理；"
+        "Writer 不得代做或等待期间越权补做。",
         "- 不提前起草下一章；下一章必须等待新的 launch directive。",
     ]
     text = "\n".join(lines).strip() + "\n"

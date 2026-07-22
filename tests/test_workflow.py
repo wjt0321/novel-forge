@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -82,6 +84,7 @@ def _runtime(session_id: str, capsule_id: str) -> dict:
 class WriterStep:
     prose: str
     failure: str | None = None
+    completion_delay_seconds: float = 0.0
 
 
 class ScriptedBackend:
@@ -98,6 +101,8 @@ class ScriptedBackend:
         self.planning_calls: list[tuple[str, int]] = []
         self.planning_instructions: list[tuple[str, str]] = []
         self.writer_directives: list[tuple[str, tuple[str, ...]]] = []
+        self.review_payloads: list[tuple[str, dict[str, str]]] = []
+        self.background_threads: list[threading.Thread] = []
         self._role_counts: dict[str, int] = {}
         self._review_index = 0
 
@@ -125,24 +130,37 @@ class ScriptedBackend:
     ) -> None:
         self.writer_directives.append((session.session_id, must_findings))
         step = self.writer_steps.pop(0)
-        (capsule_dir / "draft/正文.md").write_text(
-            step.prose,
-            encoding="utf-8",
-        )
-        if step.failure == "unexpected_file":
-            (capsule_dir / "runtime.json").write_text(
-                "{}",
+        if step.failure == "raise":
+            raise RuntimeError("test harness failed before launch")
+
+        def complete() -> None:
+            if step.completion_delay_seconds:
+                time.sleep(step.completion_delay_seconds)
+            (capsule_dir / "draft/正文.md").write_text(
+                step.prose,
                 encoding="utf-8",
             )
-        if step.failure != "missing_runtime_sidecar":
-            runtime_path.parent.mkdir(parents=True, exist_ok=True)
-            runtime_path.write_text(
-                json.dumps(
-                    _runtime(session.session_id, capsule_id),
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
+            if step.failure == "unexpected_file":
+                (capsule_dir / "runtime.json").write_text(
+                    "{}",
+                    encoding="utf-8",
+                )
+            if step.failure != "missing_runtime_sidecar":
+                runtime_path.parent.mkdir(parents=True, exist_ok=True)
+                runtime_path.write_text(
+                    json.dumps(
+                        _runtime(session.session_id, capsule_id),
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+
+        if step.completion_delay_seconds:
+            thread = threading.Thread(target=complete, daemon=True)
+            self.background_threads.append(thread)
+            thread.start()
+            return
+        complete()
 
     def run_planning(
         self,
@@ -281,6 +299,7 @@ class ScriptedBackend:
         reasoning_effort: str,
     ) -> ReviewOutcome:
         self.review_contexts.append((role, set(context)))
+        self.review_payloads.append((role, dict(context)))
         self.review_instructions.append(
             (role, instructions, reasoning_effort)
         )
@@ -396,6 +415,7 @@ def _orchestrator(
     backend: ScriptedBackend,
     *,
     retries: int = 2,
+    completion_timeout_seconds: float = 0.5,
 ) -> NovelWorkflowOrchestrator:
     root = tmp_path / "repo"
     capsule_root = tmp_path / "capsules"
@@ -404,6 +424,9 @@ def _orchestrator(
         backend,
         capsule_root=capsule_root,
         max_technical_retries=retries,
+        writer_completion_timeout_seconds=completion_timeout_seconds,
+        writer_completion_poll_seconds=0.005,
+        writer_completion_stable_polls=2,
     )
 
 
@@ -439,6 +462,7 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
     assert backend.review_contexts[1][1] == {
         "prose",
         "scene_package",
+        "story_contract",
         "canon",
         "blind_review",
         "machine_diagnostics",
@@ -455,6 +479,164 @@ def test_normal_workflow_completes_writer_reviews_ready_and_git(tmp_path: Path):
         in blind_review
     )
     assert "- reviewer_id: native-blind-reader-01" in blind_review
+
+
+def test_orchestrator_waits_for_async_writer_completion(tmp_path: Path):
+    backend = ScriptedBackend(
+        [
+            WriterStep(
+                _prose("异步完成"),
+                completion_delay_seconds=0.03,
+            )
+        ],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(
+        tmp_path,
+        backend,
+        retries=0,
+        completion_timeout_seconds=0.5,
+    )
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    for thread in backend.background_threads:
+        thread.join(timeout=1)
+
+    assert result.user_state == "chapter_complete"
+    assert [
+        item.session_id for item in backend.sessions if item.role == "writer"
+    ] == ["native-writer-01"]
+    receipts = list(
+        (
+            orchestrator.root
+            / "books/demo/evidence/guardian-receipts"
+        ).glob("*.json")
+    )
+    assert len(receipts) == 1
+    assert json.loads(receipts[0].read_text(encoding="utf-8"))["status"] == "clean"
+
+
+def test_timed_out_writer_is_retired_and_late_output_cannot_replace_retry(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(
+                _prose("迟到旧稿"),
+                completion_delay_seconds=0.15,
+            ),
+            WriterStep(_prose("新会话成功稿")),
+        ],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(
+        tmp_path,
+        backend,
+        retries=1,
+        completion_timeout_seconds=0.03,
+    )
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+    for thread in backend.background_threads:
+        thread.join(timeout=1)
+    prose = (
+        orchestrator.root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8")
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert "新会话成功稿" in prose
+    assert "迟到旧稿" not in prose
+    assert [
+        item.session_id for item in backend.sessions if item.role == "writer"
+    ] == ["native-writer-01", "native-writer-02"]
+    receipts = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (
+            orchestrator.root
+            / "books/demo/evidence/guardian-receipts"
+        ).glob("*.json")
+    ]
+    assert {item["status"] for item in receipts} == {
+        "clean",
+        "compromised",
+    }
+    compromised = next(
+        item for item in receipts if item["status"] == "compromised"
+    )
+    assert "writer_completion_timeout" in compromised["reasons"]
+
+
+def test_writer_launch_exception_skips_completion_wait_and_retries(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [
+            WriterStep(_prose("未启动"), failure="raise"),
+            WriterStep(_prose("异常后重试成功")),
+        ],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+    waited_capsules: list[Path] = []
+    original_wait = orchestrator._wait_for_writer_completion
+
+    def tracked_wait(capsule: Path, runtime_path: Path) -> bool:
+        waited_capsules.append(capsule)
+        return original_wait(capsule, runtime_path)
+
+    orchestrator._wait_for_writer_completion = tracked_wait  # type: ignore[method-assign]
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert len(waited_capsules) == 1
+    assert [
+        item.session_id for item in backend.sessions if item.role == "writer"
+    ] == ["native-writer-01", "native-writer-02"]
+
+
+def test_user_story_contract_is_injected_without_planner_reinterpretation(
+    tmp_path: Path,
+):
+    backend = ScriptedBackend(
+        [WriterStep(_prose("硬锚稿"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+    request = WorkflowRequest(
+        title="旧城屋脊",
+        genre="民俗灾变",
+        protagonist="裴照野，失业的古建修缮工",
+        world="传统手艺消失会让天空开裂。",
+        conflict="他必须在黎明前提前开脊救人，并承担违反行规的后果。",
+        ending_hook="整条旧街的屋顶同时睁开，天空出现第一道裂缝。",
+    )
+
+    orchestrator.start("demo", request, chapter=1)
+
+    book_dir = orchestrator.root / "books/demo"
+    scene = (
+        book_dir / "planning/scene-package-ch01.md"
+    ).read_text(encoding="utf-8")
+    handoff = (
+        book_dir / "memory/context-cache/ch01-handoff.md"
+    ).read_text(encoding="utf-8")
+    editor_payload = next(
+        payload
+        for role, payload in backend.review_payloads
+        if role == "chapter-editor"
+    )
+
+    assert "## 0a. 用户硬锚合同" in scene
+    assert request.conflict in scene
+    assert request.ending_hook in scene
+    assert request.conflict in handoff
+    assert request.ending_hook in handoff
+    assert editor_payload["story_contract"] in scene
+    assert request.conflict in editor_payload["story_contract"]
+    assert request.ending_hook in editor_payload["story_contract"]
 
 
 def test_orchestrator_does_not_invent_generic_story_decisions(tmp_path: Path):

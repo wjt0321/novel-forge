@@ -15,6 +15,7 @@ books/
 .reasonix/
 upstream/
 .worktrees/
+.tmp-capsule/
 .local-book-git/
 .local-guardian/
 

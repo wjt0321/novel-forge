@@ -109,6 +109,7 @@ MAX_HANDOFF_TOTAL_CHARS = 28_000
 # causal responsibility, and professional audit remain available to editors.
 WRITER_VISIBLE_SCENE_SECTIONS: tuple[str, ...] = (
     "0. 边界",
+    "0a. 用户硬锚合同",
     "0b. 章际交接",
     "1. 场景压力",
     "2. 在场者状态",
@@ -118,6 +119,39 @@ WRITER_VISIBLE_SCENE_SECTIONS: tuple[str, ...] = (
     "6. 人物性呼吸段",
     "7. 场景余波",
 )
+
+# Short, role-specific literary rules distilled from deidentified production
+# samples. They are compiled into bounded prompts; examples and numeric style
+# targets stay out of model context.
+LITERARY_MICRO_RULES_VERSION = "literary-micro-rules/v1"
+LITERARY_MICRO_RULES: dict[str, tuple[str, ...]] = {
+    "writer": (
+        "主动选择不能用好奇、观察或事后补救冒充；欲望必须进入动作、关系变化和可见代价。",
+        "专业细节只通过材料、工具、身体限制、执行风险和结果出现；允许误判、迟疑、遮掩和说不尽。",
+        "禁止把规划、因果链、替代解释或主题翻译成说明段；避免连续否定翻转、机械三连短句、堆比喻和漂亮结论。",
+        "逐项守住时间方向、金额或数量、物件位置、人物知识来源、核心冲突和章末钩子，不改成更方便的版本。",
+    ),
+    "blind-reader": (
+        "先判断人物欲望是否进入动作、关系和代价，再判断谜题、专业性或悬念是否成立。",
+        "警惕整齐问答、通用冷静能人、职业证明、规划清单、解释性独词句和漂亮结论替代现场余波。",
+        "局部句子好看不等于有人味；必须有具体身体、关系摩擦、可能出错的判断和选择后的残留。",
+    ),
+    "chapter-editor": (
+        "用户硬锚合同优先于 Scene Package；规划和正文都不得改写时间方向、金额或数量、物件位置、人物知识来源、核心冲突和章末钩子。",
+        "逐项核对时序、空间、物件去向、人物已知边界与选择代价；主动选择不能被好奇或事后反应替代。",
+        "检查控制面翻译、集中解释段、通用冷静能人、模式饱和、漂亮结论和局部修补接缝。",
+        "引用规划只能发现缺失，不能证明正文已经交付；每轮重读全文并一次列全当前 MUST。",
+    ),
+}
+
+
+def render_literary_micro_rules(role: str) -> str:
+    """Render the compact literary rule set for one production role."""
+    try:
+        rules = LITERARY_MICRO_RULES[role]
+    except KeyError as exc:
+        raise ValueError(f"unknown literary micro-rule role: {role}") from exc
+    return "\n".join(f"- {rule}" for rule in rules)
 
 # Cells that identify a Markdown table header row (excluded from row counts).
 TABLE_HEADER_CELLS = frozenset({"#", "信息", "人物", "触发"})

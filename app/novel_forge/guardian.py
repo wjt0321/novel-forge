@@ -857,6 +857,46 @@ def _record_compromised(
     _atomic_json(control_path, control)
 
 
+def reject_writer_capsule(
+    root: Path,
+    slug: str,
+    capsule_id: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Reject a prepared capsule without importing any late writer output."""
+    if reason != "writer_completion_timeout":
+        raise GuardianError("不支持的 writer capsule 拒绝原因。")
+    root = Path(root).resolve()
+    book_dir = _book_dir(root, slug)
+    control_path, control = _load_control(book_dir, capsule_id)
+    if control.get("status") != "prepared":
+        raise GuardianError(
+            f"writer capsule 状态 {control.get('status')} 不能拒绝。"
+        )
+    capsule = _outside_repository(root, Path(control["capsule_dir"]))
+    unexpected: list[str] = []
+    reasons = [reason]
+    if capsule.is_dir():
+        unexpected, unsafe = _capsule_inventory(capsule)
+        if unexpected:
+            reasons.append("unexpected_files")
+        if unsafe:
+            reasons.append("path_escape")
+            unexpected = sorted(set(unexpected + unsafe))
+    _record_compromised(
+        root,
+        slug,
+        book_dir,
+        control_path,
+        control,
+        unexpected,
+        sorted(set(reasons)),
+    )
+    receipt_path = _receipt_path(book_dir, capsule_id)
+    return json.loads(receipt_path.read_text(encoding="utf-8"))
+
+
 def record_capsule_runtime(
     root: Path,
     slug: str,

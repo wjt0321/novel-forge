@@ -1,0 +1,108 @@
+{
+  "schema": "novel-forge-agent-demo-summary/v1",
+  "experiment_id": "async-writer-bypass-and-partial-humanity-20260722",
+  "recorded_at": "2026-07-22",
+  "full_raw_prose_stored": false,
+  "raw_session_stored": false,
+  "session_ids_stored": false,
+  "content_hash_stored": false,
+  "guardian_signature_stored": false,
+  "recoverable_book_history_stored": false,
+  "sample": {
+    "slug": "deidentified-old-roof-experiment",
+    "chapter_count": 1,
+    "chapter_metrics": {
+      "chapter": "ch01",
+      "cjk": 8808,
+      "quality_blocking": 99,
+      "quality_advisory": 49,
+      "quality_rule_counts": {
+        "em-dash": 75,
+        "not-is-flip": 24,
+        "ascii-punctuation": 39,
+        "word-count-tic": 7,
+        "explanatory-punchline": 1,
+        "simile-density": 1,
+        "colon-density": 1
+      },
+      "narrative_blocking": 5,
+      "narrative_advisory": 2,
+      "literary_advisory": 1
+    },
+    "claimed_result": {
+      "chapter_state": "ready",
+      "blind_reader_verdict": "experience_reconstructable",
+      "chapter_editor_verdict": "ready_for_editor_decision",
+      "git_ready_checkpoint_claimed": true
+    },
+    "effective_workflow_truth": {
+      "chapter_state": "planned",
+      "workflow_integrity": "blocked",
+      "sequence_effective_status": "awaiting_session",
+      "generation_count": 0,
+      "formal_review_count": 0,
+      "invalidated_writer_session_count": 1,
+      "guardian_receipt_status": "compromised",
+      "guardian_failure_reason": "missing_runtime_sidecar",
+      "failed_session_reused_after_invalidation": true,
+      "failed_capsule_mutated_after_failure": true,
+      "automatic_orchestrator_control_record_exists": false,
+      "ready_checkpoint_truthful": false
+    },
+    "literary_observations": {
+      "strengths": [
+        "材料、工具、触觉和职业动作让场景明显比早期 Demo 更可感",
+        "父子手艺记忆为主角提供了私人关系和情感残留",
+        "雨夜屋脊、旧瓦异响和整街屋顶异变形成多个可记忆画面",
+        "局部段落具备真实职业者在场的质感，整体人味明显改善"
+      ],
+      "risks": [
+        "用户要求的时间方向被规划和正文改写，反常委托形成自相矛盾表述",
+        "预告次日塌陷并主动核实救人的核心冲突，被改成当夜灾难直接发生",
+        "主角的主动选择部分被好奇、父亲线索和事后反应替代",
+        "金额、信封位置和树种等物件连续性出现冲突",
+        "大量破折号与否定翻转形成可识别的机械强调节奏",
+        "审稿报告被强场景和专业细节说服，没有回到原始用户硬锚核验",
+        "规划内部同时存在本章坍塌与下一章爆发，Editor 未识别矛盾"
+      ]
+    }
+  },
+  "root_cause": {
+    "backend_launch_mistaken_for_completion": true,
+    "lead_did_not_wait_for_native_writer": true,
+    "writer_handoff_required_evidence_review_and_ready": true,
+    "formal_guardian_failure_was_bypassed_manually": true,
+    "user_architecture_not_preserved_as_independent_contract": true,
+    "reviewers_compared_prose_only_to_drifted_planning": true,
+    "sample_guidance_was_too_long_to_use_as_daily_context": true
+  },
+  "derived_rules": {
+    "writer": [
+      "主动选择不能用好奇、观察或事后补救冒充。",
+      "专业细节必须改变动作、限制、风险或代价。",
+      "禁止把规划、替代解释、主题和人物履历翻译成说明段。",
+      "逐项守住时间方向、数量、物件位置、知识来源、核心冲突和章末钩子。"
+    ],
+    "blind_reader": [
+      "先判断人物欲望是否进入动作、关系和代价，再判断谜题与专业性。",
+      "漂亮场景不能抵消通用冷静能人、规划清单和解释性结论。"
+    ],
+    "chapter_editor": [
+      "用户硬锚合同优先于 Scene Package。",
+      "每轮核对时序、空间、物件、人物知识与主动选择，并全文重读。",
+      "规划引用只能发现缺失，不能证明正文已经交付。"
+    ],
+    "orchestrator": [
+      "子会话已启动不等于已完成；正文和外置 runtime 稳定后才能导入。",
+      "超时保留失败回执，废弃 Session 和 Capsule，晚到旧稿不得参与重试。",
+      "Writer 只写正文；Lead、Writer、Blind Reader 和 Chapter Editor 不得互相代工。"
+    ]
+  },
+  "disposition": {
+    "book_workspace_deleted": true,
+    "local_book_git_deleted": true,
+    "external_guardian_deleted": true,
+    "formal_capsule_deleted": true,
+    "repository_temp_capsule_deleted": true
+  }
+}

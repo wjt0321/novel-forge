@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -35,6 +36,7 @@ from .guardian import (
     ingest_writer_capsule,
     prepare_writer_capsule,
     record_capsule_runtime,
+    reject_writer_capsule,
 )
 from .models import NovelForgeError
 from .project_templates import init_book_project
@@ -50,6 +52,9 @@ from .session_audit import (
 
 
 WORKFLOW_SCHEMA = "novel-forge-automatic-workflow/v1"
+DEFAULT_WRITER_COMPLETION_TIMEOUT_SECONDS = 1800.0
+DEFAULT_WRITER_COMPLETION_POLL_SECONDS = 0.25
+DEFAULT_WRITER_COMPLETION_STABLE_POLLS = 3
 USER_OPTIONS = (
     "A. 保留草稿",
     "B. 重新生成本章",
@@ -477,6 +482,15 @@ class NovelWorkflowOrchestrator:
         *,
         capsule_root: Path | None = None,
         max_technical_retries: int = 2,
+        writer_completion_timeout_seconds: float = (
+            DEFAULT_WRITER_COMPLETION_TIMEOUT_SECONDS
+        ),
+        writer_completion_poll_seconds: float = (
+            DEFAULT_WRITER_COMPLETION_POLL_SECONDS
+        ),
+        writer_completion_stable_polls: int = (
+            DEFAULT_WRITER_COMPLETION_STABLE_POLLS
+        ),
         on_status: Callable[[str], None] | None = None,
     ):
         self.root = Path(root).resolve()
@@ -494,7 +508,18 @@ class NovelWorkflowOrchestrator:
             raise WorkflowError("写作隔离目录必须位于项目仓库外。")
         if max_technical_retries < 0:
             raise WorkflowError("自动重试次数不能为负数。")
+        if writer_completion_timeout_seconds <= 0:
+            raise WorkflowError("Writer 完成等待时间必须大于零。")
+        if writer_completion_poll_seconds <= 0:
+            raise WorkflowError("Writer 完成轮询间隔必须大于零。")
+        if writer_completion_stable_polls < 1:
+            raise WorkflowError("Writer 稳定输出采样次数必须至少为 1。")
         self.max_technical_retries = max_technical_retries
+        self.writer_completion_timeout_seconds = (
+            writer_completion_timeout_seconds
+        )
+        self.writer_completion_poll_seconds = writer_completion_poll_seconds
+        self.writer_completion_stable_polls = writer_completion_stable_polls
         self.on_status = on_status or (lambda _: None)
         self._seen_sessions: set[str] = set()
 
@@ -633,9 +658,46 @@ class NovelWorkflowOrchestrator:
         return context
 
     @staticmethod
+    def _story_contract(request: WorkflowRequest, chapter: int) -> str:
+        """Render the user's immutable chapter architecture as a short contract."""
+        return (
+            "## 0a. 用户硬锚合同\n"
+            f"- 章节：第 {chapter:02d} 章\n"
+            f"- 书名：{request.title.strip()}\n"
+            f"- 题材：{request.genre.strip()}\n"
+            f"- 主角：{request.protagonist.strip()}\n"
+            f"- 世界观：{request.world.strip()}\n"
+            f"- 本章核心冲突：{request.conflict.strip()}\n"
+            f"- 本章结尾钩子：{request.ending_hook.strip()}"
+        )
+
+    @classmethod
+    def _inject_story_contract(
+        cls,
+        scene_text: str,
+        request: WorkflowRequest,
+        chapter: int,
+    ) -> str:
+        """Replace any planner-authored contract with the exact user input."""
+        cleaned = re.sub(
+            r"(?ms)^## 0a\. 用户硬锚合同\s*\n.*?(?=^## |\Z)",
+            "",
+            scene_text,
+        ).strip()
+        contract = cls._story_contract(request, chapter)
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("# "):
+            return "\n".join(
+                (lines[0], "", contract, "", *lines[1:])
+            ).strip()
+        return f"{contract}\n\n{cleaned}".strip()
+
+    @classmethod
     def _write_writer_planning(
+        cls,
         book_dir: Path,
         chapter: int,
+        request: WorkflowRequest,
         outcome: PlanningOutcome,
     ) -> None:
         """Validate and persist planning authored by the current Writer."""
@@ -663,6 +725,8 @@ class NovelWorkflowOrchestrator:
         for relative, text in outcome.files.items():
             if not text.strip():
                 raise WorkflowError(f"Writer 规划文件为空：{relative}")
+            if relative == f"planning/scene-package-ch{chapter:02d}.md":
+                text = cls._inject_story_contract(text, request, chapter)
             pure = Path(relative)
             if pure.is_absolute() or ".." in pure.parts:
                 raise WorkflowError("Writer 规划文件路径越界。")
@@ -712,7 +776,7 @@ class NovelWorkflowOrchestrator:
             instructions=render_planning_instructions().text,
             reasoning_effort="high",
         )
-        self._write_writer_planning(book_dir, chapter, planning)
+        self._write_writer_planning(book_dir, chapter, request, planning)
         sequence_id = f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
         begin_chapter_sequence(
             self.root,
@@ -810,6 +874,7 @@ class NovelWorkflowOrchestrator:
                 regeneration_authorization_id=authorization_id,
                 patch_directive=directive or None,
             )
+            writer_launched = False
             try:
                 self.backend.run_writer(
                     session,
@@ -818,8 +883,28 @@ class NovelWorkflowOrchestrator:
                     runtime_path=runtime_path,
                     must_findings=must_findings,
                 )
+                writer_launched = True
             except Exception:
                 pass
+            writer_completed = False
+            if writer_launched:
+                writer_completed = self._wait_for_writer_completion(
+                    capsule,
+                    runtime_path,
+                )
+            if writer_launched and not writer_completed:
+                reject_writer_capsule(
+                    self.root,
+                    slug,
+                    prepared["capsule_id"],
+                    reason="writer_completion_timeout",
+                )
+                if attempt < self.max_technical_retries:
+                    self.on_status(
+                        "写作会话异常，已自动换新会话重试。"
+                    )
+                    continue
+                return None
             if runtime_path.is_file():
                 try:
                     record_capsule_runtime(
@@ -861,6 +946,58 @@ class NovelWorkflowOrchestrator:
             )
             return session, generation_id, attempt
         return None
+
+    @staticmethod
+    def _writer_output_snapshot(
+        capsule: Path,
+        runtime_path: Path,
+    ) -> tuple[int, int, int, int] | None:
+        draft = capsule / "draft/正文.md"
+        if not draft.is_file() or not runtime_path.is_file():
+            return None
+        try:
+            draft_stat = draft.stat()
+            runtime_stat = runtime_path.stat()
+        except OSError:
+            return None
+        if draft_stat.st_size <= 0 or runtime_stat.st_size <= 0:
+            return None
+        return (
+            draft_stat.st_size,
+            draft_stat.st_mtime_ns,
+            runtime_stat.st_size,
+            runtime_stat.st_mtime_ns,
+        )
+
+    def _wait_for_writer_completion(
+        self,
+        capsule: Path,
+        runtime_path: Path,
+    ) -> bool:
+        """Wait until asynchronous Harness outputs exist and stop changing."""
+        deadline = (
+            time.monotonic() + self.writer_completion_timeout_seconds
+        )
+        previous: tuple[int, int, int, int] | None = None
+        stable_polls = 0
+        while True:
+            snapshot = self._writer_output_snapshot(capsule, runtime_path)
+            if snapshot is None:
+                previous = None
+                stable_polls = 0
+            elif snapshot == previous:
+                stable_polls += 1
+            else:
+                previous = snapshot
+                stable_polls = 1
+            if stable_polls >= self.writer_completion_stable_polls:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(
+                min(self.writer_completion_poll_seconds, remaining)
+            )
 
     def _record_generation(
         self,
@@ -1067,6 +1204,7 @@ class NovelWorkflowOrchestrator:
         slug: str,
         chapter: int,
         writer_session: SessionIdentity,
+        request: WorkflowRequest,
     ) -> tuple[tuple[str, ...], str]:
         book_dir = self.root / "books" / slug
         prose = book_project.find_chapter_file(
@@ -1101,6 +1239,7 @@ class NovelWorkflowOrchestrator:
         editor_context = {
             "prose": prose,
             "scene_package": scene,
+            "story_contract": self._story_contract(request, chapter),
             "canon": "\n".join(canon_parts)[:12000],
             "blind_review": blind_text,
             "machine_diagnostics": self._machine_diagnostics(
@@ -1381,7 +1520,9 @@ class NovelWorkflowOrchestrator:
             evidence="run-gates/current",
         )
         self.on_status("正在自动审稿。")
-        must, _ = self._review_round(slug, chapter, writer_session)
+        must, _ = self._review_round(
+            slug, chapter, writer_session, request
+        )
         book_project.advance_state(
             self.root,
             slug,
@@ -1443,7 +1584,7 @@ class NovelWorkflowOrchestrator:
             )
             self.on_status("正在自动审稿。")
             must, _ = self._review_round(
-                slug, chapter, writer_session
+                slug, chapter, writer_session, request
             )
             book_project.advance_state(
                 self.root,
@@ -1630,7 +1771,9 @@ class NovelWorkflowOrchestrator:
             evidence="run-gates/current",
         )
         self.on_status("正在自动审稿。")
-        must, _ = self._review_round(slug, chapter, writer_session)
+        must, _ = self._review_round(
+            slug, chapter, writer_session, request
+        )
         book_project.advance_state(
             self.root,
             slug,

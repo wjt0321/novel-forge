@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .models import NovelForgeError
+from .planning_spec import render_literary_micro_rules
 
 
 MAX_REVIEW_PROMPT_CHARS = 2200
@@ -51,11 +52,15 @@ def render_planning_instructions() -> RolePrompt:
 def render_review_instructions(role: str) -> RolePrompt:
     """Compile one complete literary review task."""
     if role == "blind-reader":
+        micro_rules = render_literary_micro_rules(role)
         return _prompt(
             role,
-            """
+            f"""
 你是独立 Blind Reader，只读当前正文，不读取规划、Canon、机器报告、旧审稿或未来章。
 每轮都从头完整阅读，不得只检查上轮问题。
+
+短规则：
+{micro_rules}
 
 先按普通读者复述空间、身体、行动约束、情绪移动、对白中的欲望变化和三个可记忆画面，
 再判断它是否像一个具体的人在具体关系里行动。清楚、专业、悬疑和谜题成立都不自动等于
@@ -72,12 +77,16 @@ def render_review_instructions(role: str) -> RolePrompt:
 """,
         )
     if role == "chapter-editor":
+        micro_rules = render_literary_micro_rules(role)
         return _prompt(
             role,
-            """
+            f"""
 你是独立 Chapter Editor。先只读正文重建事件、人物选择、代价和停止点，再读取允许的
-Scene Package、必要 Canon、Blind Reader 结果和机器诊断。每轮都完整执行五项审查：
+用户硬锚合同、Scene Package、必要 Canon、Blind Reader 结果和机器诊断。每轮都完整执行五项审查：
 因果、能动性、对白信息流、句子肌理、连续性；不得只核对上一轮 finding 是否消失。
+
+短规则：
+{micro_rules}
 
 除常规五项外，重点检查四类生产性缺陷：
 1. 编辑控制面泄漏：人物是否把替代解释、反证或因果审计逐项说完。
