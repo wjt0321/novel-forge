@@ -140,130 +140,59 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v5.2（完成信封补交、封存 Review Capsule 与按角色恢复）
+- 工作流版本: v5.3（正文优先 Lean 原生工作流）
 
-## 唯一正文与事实源
+## 唯一目标与入口
+- 小说正文是唯一主产品。规划、表、证据、状态和 Git 都是附属记录，不能因遥测
+  未知或技术字段缺失要求重写有效正文。
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
-- `memory/canon/**/*.md` 是连续性权威源，SQLite 只是缓存；新事实先进入 candidate。
-- 严禁复制其他书的正文、记忆、审稿或已填写模板。
-- `evidence/` 证明过程，不代表作者批准；`ready` 也不代表发布许可。
-
-## 自动生产唯一入口
 - 创作任务禁止先探索仓库实现。首个写操作必须是
-  `python tools/novel-workflow.py ... start`；没有命令 Backend 时自动进入原生会话
-  Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
-- Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写角色产物、
-  evidence、状态或 ready，也不从缺失结果中补造完成态。
-- Lead 使用动作的 `completion_template`；格式错只补交同一终态，不重跑角色。
-- Writer 只接收 Writer Capsule；审稿只接收 `review_capsule.path`，Lead 不搬正文。
-- 创作角色对项目仓库零写入：规划和审稿只返回结构化结果，Writer 只写仓库外
-  capsule 的 `draft/正文.md`。新增项目产物会被清理并换新会话。
-- ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
-- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
-  `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
-- 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
-- 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-- 创建后保存宿主返回的真实 `operation_handle.kind/value`；句柄 kind 决定宿主的
-  wait/join/result 通道。禁止把 agent ID 猜成 task ID、把角色名当作 TaskOutput ID、
-  固定 sleep 或以文件出现猜测完成。每个创作角色默认至少等待 30 分钟；仍在
-  working/progress 就继续等待。`idle_notification` 或 available 不是角色产物；
-  completed 还必须返回绑定 role、session_id、session_instance_id 的 `role_result`。
-- Writer、Blind Reader、Chapter Editor 与 Patch Writer 分别计算技术重试次数；
-  有效 Generation 后的审稿运输故障只从未完成的审稿角色恢复，不重新生成正文。
-- 模型配置只是选择意图；证据只记录宿主终态返回的 `resolvedModel`。Writer 角色在
-  Claude Code 模板中使用 `model: inherit`，表示继承当前父会话模型，不绑定具体厂商。
-- Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
-  `novel-forge-blind-reader`、`novel-forge-chapter-editor`，不得退回
-  general-purpose 后仍宣称使用了项目角色。
-- 无法创建或等待真实独立角色时停止，只说明“本章未开始”。
-- 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
-  / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
-- `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
-  也不得把探索稿称为完成。
-- Writer 规划阶段可做最多 5 次题材、事实边界和重名检索；不得借此阅读工作流源码。
-- 默认 `formal_native` 使用外置 Capsule、零项目写入、全仓快照和 Guardian；
-  宿主有真实 OS 沙箱时透明升级为 `formal_sandboxed`，不询问用户 A/B。
+  `python tools/novel-workflow.py ... start`，随后只执行
+  `next-action → 宿主官方终态 → complete-role --session-id <真实ID>`。
 
-## 本地版本历史
-- 本书使用独立本地 Git；工作区内 `.git` 只指向主仓库忽略的
-  `.local-book-git/{slug}.git`，不得配置 remote 或上传。
-- generation 绑定后自动提交 `chapter: chNN draft`；进入 ready 后自动提交
-  `chapter: chNN ready`；第 5/10/15... 章创建本地 checkpoint tag。
-- Git 只负责 diff 与恢复，不替代 evidence、ready、作者批准或发布决定。
-- 用 `book-git-status` 检查 head、dirty 与 remote_count；adapter 仍显式传入
-  Novel Forge 主仓库的绝对 `--root`。
+## 角色边界
+- Python 状态机决定下一步并自动计算哈希、stale、证据绑定、状态和 Git。
+- 宿主只负责创建独立 Session、等待官方终态、让角色写动作指定的外置产物，
+  并只回传真实 session ID。
+- Writer 只写 Capsule 内 `draft/正文.md`；规划和审稿只写动作的 `result_file`。
+- Blind Reader 只读当前正文；Chapter Editor 再读场景包、必要 Canon 和 Blind 结果。
+- Lead 不写正文、不审稿、不填 Runtime、Guardian、Generation、token、请求数或 Git。
+- 不得创建或注册宿主专用 Agent 类型，不得写项目或用户级 `.claude/agents`。
+- working/progress 时继续等待；创建成功、idle/available 或文件出现都不算完成。
+- 无法创建真实独立角色时停止，只说明“本章未开始”，不得单会话模拟三角色。
+- `NOVEL_FORGE_HARNESS_COMMAND` 仅是可选 headless 入口；不得在创作中配置 Harness。
+- 默认 `lean_native`；未知遥测保持 null，不阻断正文和双审。只有明确使用
+  `--strict-audit` 时才启用完整技术信封与全仓快照。
 
-## 每章状态链与执行闭环
-`planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
-
-1. Orchestrator 先读 `evaluation/harness-contract.json` 与
-   `evaluation/guardian-contract.json`。用户要求写 1 章时运行
-   `begin-chapter-sequence --chapter-count 1`；要求连续写多章时，
-   仍由同一编排器按顺序执行，但单次最多 4 章，五章及以上必须拆分。用
-   `set-draft-mode` 固定 formal/exploration。起草前确认 `memory-status=clean`，
-   并运行 `build-memory-context` 生成当前章有界上下文。
-2. 每章都用 launch directive 创建新的原生 writer session，并立即用
-   `claim-chapter-session` 绑定真实 session id。不得把编排器 session、角色名或
-   上一章 session 冒充新会话。
-3. Orchestrator 运行 `prepare-writer-capsule`，把当前章有界 handoff 放进仓库外
-   capsule。默认 `formal_native` 只向 writer 交付 Capsule 输入并用全仓前后快照
-   验证零项目写入；宿主有真实沙箱时透明升级为 `formal_sandboxed` capsule-only。
-   writer 只能读取 `instructions.md` 与 `handoff.md`，只能输出 `draft/正文.md`，
-   不得接收本书控制面、evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
-   `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。handoff 中只放过滤后的
-   Writer Story Brief；完整 Scene Package 的决策问题、替代解释、可证伪假设、因果
-   归属和专业判断审计只供 Chapter Editor 使用。确定性控制面或可选 headless Harness 在 capsule 外生成标准
-   累计 runtime，并用 `record-capsule-runtime` 写入 Guardian sidecar；writer 不得写 runtime。
-4. 一次只做一章，writer 一次写完整章；正式章 ≥5000 CJK。规划与疑难因果核验可用 high；正文默认
-   standard/medium；默认审稿也用 standard/medium。Max/长思考只处理被明确命名的
-   困难问题，不用于整章自由生成。规划是后台故事义务，不得在正文中逐项证明；
-   人物允许误判、遗漏、自欺和延迟反应。对白按回应关系、身体位置和权力变化判断，
-   不按固定句数机械插动作。
-5. Writer 结束后运行 `ingest-writer-capsule`。额外脚本、路径逃逸、保护输入变化、
-   runtime 缺失或 session 不一致会把回执标成 `compromised`，当前 session 自动
-   失效，必须 claim 新会话。一次集中 patch 必须使用新 capsule，它会预置当前正文；
-   第三个潜在正文版本必须先用 `authorize-regeneration` 记录绑定当前章节、
-   session 与前两份正文哈希的签名人类授权，再把 authorization ID 交给新 capsule。
-6. 记录 generation；`run_id`、provider/model/Harness/思考强度、工具失败、
-   `prompt_template_id` 与 `prompt_sha256` 必须来自真实 capsule/回执，并经
-   `record-evidence` 落盘。初稿后只允许一次集中 patch，即最多两份不同正文 SHA-256。
-7. 每次模型响应后更新累计快照并运行 `session-audit`；若
-   `budget.continue_allowed=false`，必须在下一次模型请求前停止。结束时再经
-   `record-session-audit` 固化脱敏审计。预算超限、来源不一致、逐字复用覆盖过高、
-   长段复制、损坏对白、Markdown 粗体、工作流标记、`——`、`……` 等任一 blocking
-   都立即短路。
-8. 默认只做两角色审稿：blind-reader 必须在不同于 writer `run_id` 的独立会话中
-   只读正文并给 `human_likeness`、`reader_desire` 与追读证据；同会话只能标记
-   `simulated_blind` 且不能 pass。
-   blind-reader 还要识别控制面泄漏、整齐问答、职业证明与修补接缝。
-   chapter-editor 每轮重新完成因果、人物、行文、肌理和连续性五项审查。专业角色仅在
-   明确风险下按需调用。审稿终态缺少正式结果通道、`role_result` 或角色绑定时，
-   废弃该 session 并新开同角色 session，最多自动重试两次；Blind 已正式记录后
-   Editor 故障只重试 Editor。
-9. 上一章完整 ready（当前有效状态为 `ready`）后结束 writer session，并由编排器运行
-   `advance-chapter-sequence`。返回 `launch_next_session=true` 时才创建下一章的
-   新 session；否则停止。第五章做 checkpoint audit，并用 `evidence-status`
-   核对证据闭环。
+## 闭环
+1. Writer 新 Session 完成必要规划和正式正文；规划可做最多 5 次题材、事实边界或
+   重名检索，不得探索仓库实现。正式章至少 5000 CJK。
+2. Python 导入正文、跑机器门并自动建立 Generation、Guardian、Runtime 和 draft Git。
+3. 新 Blind Reader Session 只读正文；通过后才创建新 Chapter Editor Session。
+4. 两审通过后 Python 自动推进 ready 并建立 ready Git。
+5. 有 MUST 时创建新的 Patch Writer，只集中修一次 MUST，然后全文重新双审。
+6. 第二版仍有 MUST 时停止自动回炉并让用户选择，不无限循环。
+7. 有效正文已产生后，技术附属记录失败必须优先原地补记；禁止无理由重写正文。
 
 ## 文学目标
-- 问题不是“表格填完了吗”，而是：人物是否在压力中选择，世界是否有独立意志，细节是否改变行动，声音是否在章际保持活性。
-- blind-reader 必须回答 `human_likeness: convincing|uncertain|synthetic` 与
-  `reader_desire: continue|conditional|stop`；只有 convincing + continue 可通过，
-  并必须说明读后残留的关系/情绪压力与下一章追读问题。
-- 机器只拦高置信结构破绽：极端跨章逐字复用、长段复制、损坏对白；句长塌缩、
-  Voice 范文表层复制和章内模式饱和仍只报告风险，不认证文学价值。
-- Writer 不接收句长、段落长度、对白占比等数字目标；这些统计只由审稿阶段诊断，
-  不得当作生成配额或文学达标线。
+- 人物在压力中主动选择并付出私人代价；身体、物件、位置和关系持续改变行动。
+- 允许误判、迟疑、沉默、不对称对白、延迟反应和未解释余波。
+- 禁止把规划、审稿、因果清单或主题翻译成说明段；禁止职业证明循环、机械三连、
+  连续否定翻转、解释性修补和用户硬锚漂移。
+- Blind Reader 只有 `human_likeness=convincing` 且
+  `reader_desire=continue` 才能 pass。
 - {mechanism}
 
-## 不可绕过
+## 连续性与不可绕过
+- `memory/canon/**/*.md` 是连续性权威源；新事实先进入 candidate。
+- handoff 只含相关 Canon、开放承诺、上一章末段、Voice exemplar 和当前场景目标。
+- 不得复制其他书的正文、记忆、审稿或样本。
 {policy_lines}
 
-- 只有用户明确要求探索稿时才能使用 `degraded_exploration`，记录真实
-  `tool_failures`，不得伪装 formal 或称为完成。
-- `正文.md` 不得出现提示词、Agent 身份、章节工作流编号、SHA-256、generation evidence/id、surface_checked 或 ready 等生产元数据。
-- 不得暂停询问“是否开始审核”；formal 门禁通过后自动创建独立审稿会话并完成两角色审核。无法创建新会话时返回 `review_session_required`，不得改成开放式提问。只有事实冲突、覆盖风险、作者取舍或第二份 generation 后仍有 MUST 才暂停。
+- `正文.md` 不得出现提示词、Agent 身份、哈希、Generation、状态、Guardian 或 Git。
+- Generation、Runtime、Guardian Receipt 和 Review History 创建后不可覆盖；正文改变
+  必须新建 Generation 和两份 Review，旧记录变 stale。
+- 本书 Git 位于 `.local-book-git/{slug}.git`，不得配置 remote；ready 不代表作者批准。
 """
 
 
@@ -272,7 +201,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v5.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v5.3；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -297,9 +226,9 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-章节序列签发 → 新 writer session claim → 编译短提示词 → 仓库外隔离 capsule → 一次完整初稿 →
-Guardian 导入回执 → 机器门禁 → blind-reader → chapter-editor → 至多一次集中 patch → ready →
-结束本章 session → 顺序签发下一章。
+Writer 规划与正文 → Python 自动导入和记账 → blind-reader → chapter-editor →
+至多一次集中 patch → 全文双审 → ready。角色只交付正文或审稿结论，哈希、状态、
+stale、Guardian、Runtime 和 Git 由 Python 自动处理。
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
@@ -1702,11 +1631,6 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "reviews/review-template.md": (_reviews_review_template_md, ()),
     "tools/quality_check.py": (lambda: QUALITY_CHECK_PY, ()),
     "tools/narrative_gate.py": (lambda: NARRATIVE_GATE_PY, ()),
-    ".claude/agents/context-collector.md": (_agent_context_collector_md, ()),
-    ".claude/agents/writer.md": (_agent_writer_md, ()),
-    ".claude/agents/chapter-editor.md": (_agent_chapter_editor_md, ()),
-    ".claude/agents/blind-reader.md": (_agent_blind_reader_md, ()),
-    ".claude/agents/orchestrator.md": (_agent_orchestrator_md, ()),
 }
 
 # Directories that should exist; files under them are created via TEMPLATE_FILES.
@@ -1735,7 +1659,6 @@ REQUIRED_DIRECTORIES = [
     "patches",
     ".snapshots",
     "tools",
-    ".claude/agents",
 ]
 
 # Files that `sync-tools` may refresh in existing books (managed, never
@@ -1743,11 +1666,6 @@ REQUIRED_DIRECTORIES = [
 SYNCABLE_FILES: tuple[str, ...] = (
     "tools/quality_check.py",
     "tools/narrative_gate.py",
-    ".claude/agents/context-collector.md",
-    ".claude/agents/writer.md",
-    ".claude/agents/chapter-editor.md",
-    ".claude/agents/blind-reader.md",
-    ".claude/agents/orchestrator.md",
     "planning/scene-package-template.md",
     "planning/action-draft-template.md",
     "planning/dialogue-ledger-template.md",

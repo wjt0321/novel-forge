@@ -269,6 +269,34 @@ def _completion_template(action: dict[str, Any]) -> dict[str, Any]:
     return template
 
 
+def _lean_result_contract(role: str) -> dict[str, Any]:
+    """Describe only the creative artifact a role must deliver."""
+    if role == "writer-planning":
+        return {
+            "format": "json",
+            "required": ["files"],
+            "purpose": "写作前的内部规划附属产物",
+        }
+    if role == "writer-session":
+        return {"format": "none"}
+    if role == "writer":
+        return {
+            "format": "markdown",
+            "output": "draft/正文.md",
+            "purpose": "本章正文",
+        }
+    required = _result_contract(role)["payload"]["required"]
+    return {
+        "format": "json",
+        "required": required,
+        "purpose": (
+            "盲读结论"
+            if role == "blind-reader"
+            else "章节编辑结论"
+        ),
+    }
+
+
 class _RelayOnlyBackend:
     """Reject accidental synchronous role execution from the relay."""
 
@@ -285,8 +313,13 @@ class NativeWorkflowRelay:
         *,
         capsule_root: Path | None = None,
         max_technical_retries: int = 2,
+        strict_audit: bool = True,
     ):
         self.root = Path(root).resolve()
+        self.strict_audit = strict_audit
+        self.assurance_mode = (
+            "strict_audit" if strict_audit else "lean_native"
+        )
         self.orchestrator = NovelWorkflowOrchestrator(
             self.root,
             _RelayOnlyBackend(),  # type: ignore[arg-type]
@@ -298,6 +331,171 @@ class NativeWorkflowRelay:
             ),
             max_technical_retries=max_technical_retries,
         )
+
+    def _integrity_root(self, slug: str) -> Path:
+        """Limit routine role mutation checks to the current book."""
+        if self.strict_audit:
+            return self.root
+        return self.root / "books" / slug
+
+    @staticmethod
+    def _phase_role(state: dict[str, Any]) -> str:
+        phase = str(state.get("phase") or "")
+        if phase == "awaiting_writer_planning":
+            return "writer-planning"
+        if phase in {
+            "awaiting_writer_session",
+            "awaiting_patch_writer_session",
+        }:
+            return "writer-session"
+        if phase == "awaiting_blind_reader":
+            return "blind-reader"
+        if phase == "awaiting_chapter_editor":
+            return "chapter-editor"
+        return "writer"
+
+    @staticmethod
+    def _result_payload(result_file: Path | None) -> dict[str, Any]:
+        if result_file is None:
+            return {}
+        try:
+            payload = json.loads(
+                Path(result_file).read_text(encoding="utf-8-sig")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowError("角色结果文件不存在或不是有效 JSON。") from exc
+        if not isinstance(payload, dict):
+            raise WorkflowError("角色结果文件顶层必须是 JSON 对象。")
+        role_result = payload.get("role_result")
+        if isinstance(role_result, dict):
+            nested = role_result.get("payload")
+            if isinstance(nested, dict):
+                return dict(nested)
+        nested = payload.get("payload")
+        if isinstance(nested, dict):
+            return dict(nested)
+        return dict(payload)
+
+    @staticmethod
+    def _lean_runtime_snapshot(
+        session: SessionIdentity,
+        capsule_id: str,
+    ) -> dict[str, Any]:
+        """Record unknown telemetry truthfully without asking the role."""
+        return {
+            "schema": "novel-forge-runtime/v1",
+            "session_id": session.session_id,
+            "scope": {"chapter_count": 1},
+            "harness": {
+                "name": session.agent_harness,
+                "version": "unknown",
+            },
+            "model": {
+                "provider": session.provider,
+                "name": session.model,
+                "reasoning_effort": "unknown",
+            },
+            "timing": {"elapsed_seconds": None},
+            "usage": {
+                "request_count": None,
+                "input_tokens": None,
+                "output_tokens": None,
+                "cached_input_tokens": None,
+                "total_tokens": None,
+                "max_request_context_tokens": None,
+                "context_reset_count": None,
+            },
+            "tools": {
+                "call_count": None,
+                "failure_count": None,
+                "by_name": {},
+            },
+            "guardian": {
+                "capsule_id": capsule_id,
+                "workspace_mode": "isolated_writer_capsule",
+                "assurance_mode": "lean_native",
+                "filesystem_scope": "capsule_output",
+                "write_scope": "post_execution_verified",
+                "repository_snapshot_enforced": False,
+                "book_control_plane_visible": False,
+                "validator_source_visible": False,
+                "reported_by": "deterministic_control_plane",
+            },
+        }
+
+    def complete_minimal(
+        self,
+        slug: str,
+        *,
+        session_id: str,
+        result_file: Path | None = None,
+        session_instance_id: str | None = None,
+        provider: str = "unknown",
+        model: str = "unknown",
+        agent_harness: str = "native-host",
+    ) -> WorkflowResult:
+        """Complete the current Lean action without a technical envelope."""
+        state = self._load_state(slug)
+        if self.strict_audit:
+            raise WorkflowError("严格审计模式必须提交完整角色终态。")
+        action = self.next_action(slug)
+        role = self._phase_role(state)
+        expected = action.get("session")
+        if (
+            isinstance(expected, dict)
+            and expected.get("mode") == "reuse"
+        ):
+            session_id = str(expected["session_id"])
+            session_instance_id = str(expected["session_instance_id"])
+        session = SessionIdentity(
+            session_id=session_id.strip(),
+            session_instance_id=(
+                str(session_instance_id or session_id).strip()
+            ),
+            provider=provider.strip() or "unknown",
+            model=model.strip() or "unknown",
+            agent_harness=agent_harness.strip() or "native-host",
+            role="writer" if role == "writer-planning" else role,
+        )
+        if not session.session_id or not session.session_instance_id:
+            raise WorkflowError("角色完成必须提供真实会话 ID。")
+        if result_file is None and action.get("result_file"):
+            result_file = Path(str(action["result_file"]))
+        payload = self._result_payload(result_file)
+        if role == "writer":
+            payload = {"artifact_relative_path": "draft/正文.md"}
+        completion: dict[str, Any] = {
+            "schema": NATIVE_COMPLETION_SCHEMA,
+            "action_id": action["action_id"],
+            "status": "completed",
+            "session": {
+                "session_id": session.session_id,
+                "session_instance_id": session.session_instance_id,
+                "provider": session.provider,
+                "model": session.model,
+                "agent_harness": session.agent_harness,
+            },
+            "operation_handle": {
+                "kind": "native-session",
+                "value": session.session_id,
+            },
+            "result_transport": "artifact",
+            "role_result": {
+                "schema": "novel-forge-role-result/v1",
+                "role": role,
+                "payload": payload,
+            },
+        }
+        review_capsule = action.get("review_capsule")
+        if isinstance(review_capsule, dict):
+            completion["review_capsule_id"] = review_capsule["id"]
+        capsule = action.get("capsule")
+        if role == "writer" and isinstance(capsule, dict):
+            completion["runtime_snapshot"] = self._lean_runtime_snapshot(
+                session,
+                str(capsule["id"]),
+            )
+        return self.complete_role(slug, completion)
 
     def _relay_dir(self, slug: str) -> Path:
         return self.root / ".local-guardian" / slug / "native-relay"
@@ -324,6 +522,14 @@ class NativeWorkflowRelay:
             / f"{action_id}.zip"
         )
 
+    def _result_path(self, slug: str, action_id: str) -> Path:
+        return (
+            self.orchestrator.capsule_root
+            / "native-role-results"
+            / slug
+            / f"{action_id}.json"
+        )
+
     def _load_state(self, slug: str) -> dict[str, Any]:
         path = self._state_path(slug)
         if not path.is_file():
@@ -334,6 +540,10 @@ class NativeWorkflowRelay:
             raise WorkflowError("原生工作流状态损坏。") from exc
         if payload.get("schema") != NATIVE_RELAY_SCHEMA:
             raise WorkflowError("原生工作流状态格式无效。")
+        mode = str(payload.get("assurance_mode") or "")
+        if mode in {"strict_audit", "lean_native"}:
+            self.assurance_mode = mode
+            self.strict_audit = mode == "strict_audit"
         return payload
 
     @staticmethod
@@ -562,16 +772,46 @@ class NativeWorkflowRelay:
         state: dict[str, Any],
         action: dict[str, Any],
     ) -> None:
-        action["completion_template"] = _completion_template(action)
+        action["assurance_mode"] = self.assurance_mode
+        if self.strict_audit:
+            action["completion_template"] = _completion_template(action)
+        else:
+            action.pop("completion_template", None)
+            role = self._phase_role(state)
+            action["result"] = _lean_result_contract(role)
+            if role in {
+                "writer-planning",
+                "blind-reader",
+                "chapter-editor",
+            }:
+                result_path = self._result_path(
+                    slug,
+                    str(action["action_id"]),
+                )
+                result_path.parent.mkdir(parents=True, exist_ok=True)
+                result_path.unlink(missing_ok=True)
+                action["result_file"] = str(result_path)
+                action["delivery"] = (
+                    "角色只把创作结论写入 result_file；"
+                    "Lead 等待官方终态后只回传真实 session ID。"
+                )
+            else:
+                action.pop("result_file", None)
+                action["delivery"] = (
+                    "Writer 只写 capsule 内的 draft/正文.md；"
+                    "Lead 等待官方终态后只回传真实 session ID。"
+                )
         state["action_id"] = action["action_id"]
+        state["assurance_mode"] = self.assurance_mode
         _atomic_json(self._state_path(slug), state)
         _atomic_json(self._action_path(slug), action)
+        integrity_root = self._integrity_root(slug)
         _atomic_json(
             self._snapshot_path(slug, action["action_id"]),
-            snapshot_workspace(self.root),
+            snapshot_workspace(integrity_root),
         )
         create_workspace_backup(
-            self.root,
+            integrity_root,
             self._backup_path(slug, action["action_id"]),
         )
 
@@ -585,19 +825,20 @@ class NativeWorkflowRelay:
             raise WorkflowError("原生角色仓库快照损坏。") from exc
         if not isinstance(before, dict):
             raise WorkflowError("原生角色仓库快照格式无效。")
-        delta = workspace_delta(before, snapshot_workspace(self.root))
+        integrity_root = self._integrity_root(slug)
+        delta = workspace_delta(before, snapshot_workspace(integrity_root))
         backup_path = self._backup_path(slug, action_id)
         if delta.changed:
-            remove_created_paths(self.root, delta.created)
+            remove_created_paths(integrity_root, delta.created)
             restore_workspace_paths(
-                self.root,
+                integrity_root,
                 backup_path,
                 before,
                 delta.modified + delta.deleted,
             )
             restored = workspace_delta(
                 before,
-                snapshot_workspace(self.root),
+                snapshot_workspace(integrity_root),
             )
             if restored.changed:
                 raise WorkflowError("项目控制面自动恢复失败。")
@@ -628,7 +869,10 @@ class NativeWorkflowRelay:
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": action_id,
             "kind": "run_role",
-            "role": "writer-planning",
+            "role": (
+                "writer-planning" if self.strict_audit else "writer"
+            ),
+            **({"stage": "planning"} if not self.strict_audit else {}),
             "session": {
                 "mode": "new",
                 "must_be_independent": True,
@@ -754,7 +998,14 @@ class NativeWorkflowRelay:
                     f"native-action-{uuid.uuid4().hex[:16]}"
                 ),
                 "kind": "run_role",
-                "role": "writer-planning",
+                "role": (
+                    "writer-planning" if self.strict_audit else "writer"
+                ),
+                **(
+                    {"stage": "planning"}
+                    if not self.strict_audit
+                    else {}
+                ),
                 "session": {
                     "mode": "new",
                     "must_be_independent": True,
@@ -1187,6 +1438,7 @@ class NativeWorkflowRelay:
             "action_id": action_id,
             "kind": "run_role",
             "role": "writer",
+            **({"stage": "draft"} if not self.strict_audit else {}),
             "session": {
                 "mode": "reuse",
                 "session_id": session.session_id,
@@ -1203,15 +1455,27 @@ class NativeWorkflowRelay:
             },
             "runtime": {
                 "schema": "novel-forge-runtime/v1",
-                "assurance_mode": "formal_native",
-                "reported_by": "native_host",
-                "filesystem_scope": "guarded_native",
+                "assurance_mode": (
+                    "formal_native"
+                    if self.strict_audit
+                    else "lean_native"
+                ),
+                "reported_by": (
+                    "native_host"
+                    if self.strict_audit
+                    else "deterministic_control_plane"
+                ),
+                "filesystem_scope": (
+                    "guarded_native"
+                    if self.strict_audit
+                    else "capsule_output"
+                ),
                 "write_scope": "post_execution_verified",
-                "repository_snapshot_enforced": True,
+                "repository_snapshot_enforced": self.strict_audit,
             },
             "result": {
                 **_result_contract("writer"),
-                "runtime_snapshot_required": True,
+                "runtime_snapshot_required": self.strict_audit,
             },
             "repository_exploration_forbidden": True,
             "allowed_project_writes": [],
@@ -1384,7 +1648,7 @@ class NativeWorkflowRelay:
                 "writer_artifact_path_invalid"
             )
         runtime_snapshot = completion.get("runtime_snapshot")
-        if not isinstance(runtime_snapshot, dict):
+        if not isinstance(runtime_snapshot, dict) and self.strict_audit:
             raise NativeCompletionRepairError(
                 "missing_runtime_snapshot"
             )
@@ -1398,6 +1662,11 @@ class NativeWorkflowRelay:
             / slug
             / f"{capsule_id}.json"
         )
+        if not isinstance(runtime_snapshot, dict):
+            runtime_snapshot = self._lean_runtime_snapshot(
+                session,
+                capsule_id,
+            )
         _atomic_json(runtime_path, runtime_snapshot)
         try:
             record_capsule_runtime(
@@ -1405,6 +1674,7 @@ class NativeWorkflowRelay:
                 slug,
                 capsule_id,
                 runtime_path,
+                require_complete_budget=self.strict_audit,
             )
         except GuardianError as exc:
             raise NativeCompletionRepairError(
@@ -1431,6 +1701,7 @@ class NativeWorkflowRelay:
             generation_id,
             parent_generation_id=state.get("parent_generation_id"),
             is_patch=bool(state.get("must_findings")),
+            assurance_mode=self.assurance_mode,
         )
         book_dir = self.root / "books" / slug
         record_session_completion(

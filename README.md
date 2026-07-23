@@ -40,33 +40,27 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 没有命令 Backend 时，`start` 会签发宿主原生会话动作；Lead 只循环
 `next-action → 创建/运行角色 → 等官方终态 → complete-role`。Agent 不得先探索
 工作流源码、自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。
-每个动作自带完整 `completion_template`；格式错误只补交同一终态，不重跑角色。
-审稿输入由 Python 封存在仓库外 Review Capsule，Lead 只传路径，不复制正文。
-命令桥仍是可选 headless 接入；协议不绑定宿主、供应商或模型。
+默认 `lean_native` 下，规划和审稿角色把简短 JSON 写入动作的 `result_file`，
+Writer 只写 Capsule 内正文；Lead 只回传真实 session ID。哈希、Generation、
+Runtime、Guardian、stale、状态和 Git 全由 Python 自动处理，未知遥测保持 null，
+不会因为技术字段缺失重写有效正文。`--strict-audit` 仅用于明确的取证或基准。
+新书不生成 `.claude/agents`，协议不绑定宿主、供应商或模型。
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
-1. 每章新开 writer session；由该 Writer 根据用户架构产出 Voice Bible、故事发动机
-   与一页式场景包，Orchestrator 只校验允许路径并落盘，不代写文学内容；
-2. 绑定 Writer 的真实 `run_id`，再由外部 Harness 创建仓库外
-   writer capsule；Guardian 将固定边界编译为不超过 1200 字符的
-   `formal-writer/v1` `instructions.md`，writer 只读取它与过滤后的 Story Brief，
-   只能写正文；
-3. 任意 Harness 先读 `evaluation/harness-contract.json` 与
-   `evaluation/guardian-contract.json`，输出
-   `novel-forge-runtime/v1` 累计快照；每次模型响应后运行 `session-audit`，
-   超预算或来源不实立即停止，结束时由 Guardian 导入正文并固化隔离回执，再
-   `record-session-audit`；
-4. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
+1. 每章新开 Writer Session；该 Writer 完成必要规划与正文，规划只是附属产物；
+2. Writer 只读取仓库外 Capsule，只写 `draft/正文.md`；Python 自动导入并建立
+   Generation、Guardian、Runtime 和 draft Git 记录；
+3. 跑质量、叙事与跨章文学结构门；极端逐字复用、长段复制和损坏对白会阻断，
    章内模式饱和、Voice 表层复制与 ASCII 标点会提示编辑器回读；
-5. 在独立会话运行 prose-only blind-reader，记录 `human_likeness`、追读意愿与
+4. 在独立会话运行 prose-only blind-reader，记录 `human_likeness`、追读意愿与
    情绪余波，再由 chapter-editor 综合审读；两者同时检查控制面泄漏、整齐问答、
    人物可替换性和解释性修补接缝；
-6. 有 MUST 时合并为一次证据绑定的集中 Patch，由新的 Writer session 执行后重新
+5. 有 MUST 时合并为一次证据绑定的集中 Patch，由新的 Writer session 执行后重新
    全文双审；第二版仍有 MUST 时等待用户选择，只有用户明确重新生成才授权第三版；
-7. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
+6. generation 绑定后自动提交 `chapter: chNN draft`，推进到 `ready` 后自动提交
    `chapter: chNN ready`；每五章建立一个本地 checkpoint 标签；
-8. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
+7. 状态机推进到 `ready`；它只表示材料齐备，不是作者批准。
 
 ## 两种工作流
 
@@ -155,6 +149,8 @@ research/            # 前期调研
 - Python 确定性控制与零污染：`docs/39-deterministic-native-control-and-workspace-hygiene.md`
 - 原生 Relay 双保证模式：`docs/40-native-relay-and-assurance-modes.md`
 - 完成补交与封存 Review Capsule：`docs/41-completion-repair-and-sealed-review-capsules.md`
+- 硬锚、会话与 ready 完整性：`docs/42-hard-anchor-session-and-ready-integrity.md`
+- 正文优先 Lean 原生工作流：`docs/43-fiction-first-lean-native-workflow.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

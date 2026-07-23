@@ -1550,6 +1550,18 @@ def test_missing_command_backend_starts_native_relay(
         tmp_path
         / ".local-guardian/demo/native-relay/next-action.json"
     ).is_file()
+    action = json.loads(
+        (
+            tmp_path
+            / ".local-guardian/demo/native-relay/next-action.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert action["role"] == "writer"
+    assert action["stage"] == "planning"
+    assert action["assurance_mode"] == "lean_native"
+    assert "completion_template" not in action
+    assert action["result_file"].endswith(".json")
+    assert "真实 session ID" in action["delivery"]
 
 
 def test_command_workflow_help_marks_native_relay_as_default(

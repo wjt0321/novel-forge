@@ -1534,10 +1534,12 @@ class NovelWorkflowOrchestrator:
         *,
         parent_generation_id: str | None,
         is_patch: bool,
+        assurance_mode: str = "strict_audit",
     ) -> None:
         book_dir = self.root / "books" / slug
         chapter_path = book_dir / imported["target_path"]
         metrics = runtime_generation_metrics(report)
+        lean_native = assurance_mode == "lean_native"
         record = {
             "schema_version": 1,
             "id": generation_id,
@@ -1564,10 +1566,17 @@ class NovelWorkflowOrchestrator:
             ).hexdigest(),
             "prompt_template_id": prepared["prompt_template_id"],
             "prompt_sha256": prepared["prompt_sha256"],
-            "metrics_source": "harness_reported",
+            "metrics_source": (
+                "unknown" if lean_native else "harness_reported"
+            ),
             "generation_stage": "revised" if is_patch else "raw",
-            "provenance_confidence": "harness_exposed",
-            "sandbox_profile": "restricted",
+            "provenance_confidence": (
+                "unknown" if lean_native else "harness_exposed"
+            ),
+            "sandbox_profile": (
+                "unknown" if lean_native else "restricted"
+            ),
+            "assurance_mode": assurance_mode,
             "tool_capabilities": ["write_file"],
             "tool_failures": [],
             "draft_write_count": 0 if is_patch else 1,
@@ -2625,6 +2634,11 @@ def main(argv: list[str] | None = None) -> int:
         default=Path.cwd(),
         help="Novel Forge 项目根目录。",
     )
+    parser.add_argument(
+        "--strict-audit",
+        action="store_true",
+        help="启用完整运行遥测与仓库级审计；日常创作默认关闭。",
+    )
     sub = parser.add_subparsers(dest="operation", required=True)
     start = sub.add_parser("start")
     start.add_argument("slug")
@@ -2640,31 +2654,55 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("slug")
     complete = sub.add_parser("complete-role")
     complete.add_argument("slug")
-    complete.add_argument("--from-file", type=Path, required=True)
+    complete.add_argument("--from-file", type=Path)
+    complete.add_argument("--session-id")
+    complete.add_argument("--session-instance-id")
+    complete.add_argument("--provider", default="unknown")
+    complete.add_argument("--model", default="unknown")
+    complete.add_argument("--agent-harness", default="native-host")
     args = parser.parse_args(argv)
     try:
         from .native_relay import NativeWorkflowRelay
 
+        relay = NativeWorkflowRelay(
+            args.root,
+            strict_audit=args.strict_audit,
+        )
         if args.operation == "next-action":
-            action = NativeWorkflowRelay(args.root).next_action(args.slug)
+            action = relay.next_action(args.slug)
             print(json.dumps(action, ensure_ascii=False, sort_keys=True))
             return 0
         if args.operation == "complete-role":
-            completion = json.loads(
-                args.from_file.read_text(encoding="utf-8")
-            )
-            if not isinstance(completion, dict):
-                raise WorkflowError("原生角色终态必须是 JSON 对象。")
-            result = NativeWorkflowRelay(args.root).complete_role(
-                args.slug,
-                completion,
-            )
+            if args.session_id:
+                result = relay.complete_minimal(
+                    args.slug,
+                    session_id=args.session_id,
+                    session_instance_id=args.session_instance_id,
+                    provider=args.provider,
+                    model=args.model,
+                    agent_harness=args.agent_harness,
+                    result_file=args.from_file,
+                )
+            else:
+                if args.from_file is None:
+                    raise WorkflowError(
+                        "complete-role 必须提供 --session-id；"
+                        "严格审计兼容入口需提供 --from-file。"
+                    )
+                completion = json.loads(
+                    args.from_file.read_text(encoding="utf-8")
+                )
+                if not isinstance(completion, dict):
+                    raise WorkflowError("原生角色终态必须是 JSON 对象。")
+                result = relay.complete_role(
+                    args.slug,
+                    completion,
+                )
             _print_result(result)
             return 0 if result.user_state != "decision_required" else 2
         command_backend = bool(
             os.environ.get("NOVEL_FORGE_HARNESS_COMMAND", "").strip()
         )
-        relay = NativeWorkflowRelay(args.root)
         if args.operation == "start" and not command_backend:
             result = relay.start(
                 args.slug,

@@ -102,10 +102,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert (book_dir / "evidence" / "guardian-receipts").is_dir()
     assert (book_dir / "evidence" / "arc-audits").is_dir()
     assert (book_dir / "evidence" / "rule-decisions").is_dir()
-    assert (book_dir / ".claude" / "agents" / "context-collector.md").exists()
-    assert (book_dir / ".claude" / "agents" / "writer.md").exists()
-    assert (book_dir / ".claude" / "agents" / "chapter-editor.md").exists()
-    assert (book_dir / ".claude" / "agents" / "orchestrator.md").exists()
+    assert not (book_dir / ".claude" / "agents").exists()
     assert not (book_dir / ".claude" / "agents" / "causal-editor.md").exists()
     assert not (book_dir / ".claude" / "agents" / "line-editor.md").exists()
     assert not (book_dir / ".claude" / "agents" / "texture-editor.md").exists()
@@ -116,38 +113,22 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v5.2" in claude_md
-    assert "book-git-status" in claude_md
-    assert "draft" in claude_md
+    assert "v5.3" in claude_md
+    assert "小说正文是唯一主产品" in claude_md
+    assert "只回传真实 session ID" in claude_md
+    assert "result_file" in claude_md
+    assert "draft/正文.md" in claude_md
     assert "ready" in claude_md
     assert "不得配置 remote" in claude_md
-    assert "begin-chapter-sequence" in claude_md
-    assert "prepare-writer-capsule" in claude_md
-    assert "instructions.md" in claude_md
-    assert "formal-writer/v1" in claude_md
-    assert "一次只做一章" in claude_md
-    assert "record-capsule-runtime" in claude_md
-    assert "authorize-regeneration" in claude_md
-    assert "ingest-writer-capsule" in claude_md
-    assert "仓库外" in claude_md
-    assert "控制面" in claude_md
-    assert "最多 4 章" in claude_md
-    assert "上一章完整 ready" in claude_md
-    assert "record-session-audit" in claude_md
+    assert "lean_native" in claude_md
+    assert "--strict-audit" in claude_md
+    assert "未知遥测保持 null" in claude_md
+    assert "至少 5000 CJK" in claude_md
     assert "reader_desire" in claude_md
-    assert "Writer Story Brief" in claude_md
-    assert "只供 Chapter Editor 使用" in claude_md
-    assert "人物允许误判、遗漏、自欺和延迟反应" in claude_md
-    assert "修补接缝" in claude_md
-    assert "不得暂停询问" in claude_md
-    assert "Markdown 粗体" in claude_md
-    assert "surface_checked" in claude_md
-    assert "严禁复制其他书的正文" in claude_md
-    assert "build-memory-context" in claude_md
+    assert "不得创建或注册宿主专用 Agent 类型" in claude_md
+    assert "技术附属记录失败必须优先原地补记" in claude_md
+    assert "不得复制其他书的正文" in claude_md
     assert "memory/canon" in claude_md
-    assert "evidence-status" in claude_md
-    assert "record-evidence" in claude_md
-    assert "set-draft-mode" in claude_md
     assert "no-deliberate-defects" in claude_md
     assert "single-winner-branch" in claude_md
     assert "model-score-not-approval" in claude_md
@@ -159,7 +140,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v5.2" in readme
+    assert "默认工作流: v5.3" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -306,92 +287,17 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     ).read_text(encoding="utf-8")
     assert '"salience": "medium"' in memory_template
 
-    chapter_editor = (
-        book_dir / ".claude" / "agents" / "chapter-editor.md"
-    ).read_text(encoding="utf-8")
-    writer_agent = (
-        book_dir / ".claude" / "agents" / "writer.md"
-    ).read_text(encoding="utf-8")
-    blind_reader = (
-        book_dir / ".claude" / "agents" / "blind-reader.md"
-    ).read_text(encoding="utf-8")
-    orchestrator = (
-        book_dir / ".claude" / "agents" / "orchestrator.md"
-    ).read_text(encoding="utf-8")
-    assert "自动生产唯一入口" in claude_md
     assert "本章未开始" in claude_md
-    assert "只有用户明确要求探索稿" in claude_md
-    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in claude_md
-    assert "不得创建、修改、修复、包装、安装或配置 Harness" in claude_md
     assert "创作任务禁止先探索仓库实现" in claude_md
-    assert "没有命令 Backend 时自动进入原生会话" in claude_md
-    assert "`NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless" in claude_md
-    assert "formal_native" in claude_md
-    assert "formal_sandboxed" in claude_md
-    assert "不询问用户 A/B" in claude_md
-    assert "高权限只属于无模型推理的确定性控制面" in claude_md
-    assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in claude_md
-    assert "必须使用宿主官方 wait / join 等到角色终态" in claude_md
-    assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in claude_md
-    assert "Python 状态机决定下一步" in claude_md
-    assert "宿主只负责创建、等待和回传" in claude_md
-    assert "创作角色对项目仓库零写入" in claude_md
-    assert "ACP 只用于事后取证" in claude_md
-    assert "session_instance_id" in claude_md
-    assert writer_agent.startswith("---\n")
-    assert "name: novel-forge-writer" in writer_agent
-    assert "model: inherit" in writer_agent
-    assert blind_reader.startswith("---\n")
-    assert chapter_editor.startswith("---\n")
-    assert "novel-forge-writer" in orchestrator
-    assert "novel-forge-blind-reader" in orchestrator
-    assert "novel-forge-chapter-editor" in orchestrator
-    assert "把角色名当作 TaskOutput ID" in orchestrator
-    assert "禁止固定 sleep" in orchestrator
-    assert "至少等待 30 分钟" in orchestrator
-    assert "resolvedModel" in orchestrator
-    assert "operation_handle.kind" in orchestrator
-    assert "idle_notification" in orchestrator
-    assert "role_result" in orchestrator
-    assert "draft/正文.md" in writer_agent
-    assert "相对路径" in writer_agent
-    assert "正式结果通道" in blind_reader
-    assert "正式结果通道" in chapter_editor
-    assert "先只读正文" in chapter_editor
-    assert "不得暂停询问是否开始审核" in orchestrator
-    assert "自动生产唯一入口" in orchestrator
-    assert "本章未开始" in orchestrator
-    assert "只有用户明确要求探索稿" in orchestrator
-    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in orchestrator
-    assert "不得创建、修改、修复、包装、安装或配置 Harness" in orchestrator
-    assert "创作任务禁止先探索仓库实现" in orchestrator
-    assert "没有命令 Backend 时自动进入原生会话" in orchestrator
-    assert "`NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless" in orchestrator
-    assert "formal_native" in orchestrator
-    assert "formal_sandboxed" in orchestrator
-    assert "高权限只属于无模型推理的确定性控制面" in orchestrator
-    assert "Blind Reader 正式记录后才能启动 Chapter Editor" in orchestrator
-    assert "begin-chapter-sequence" in orchestrator
-    assert "claim-chapter-session" in orchestrator
-    assert "advance-chapter-sequence" in orchestrator
-    assert "新的原生 writer session" in orchestrator
-    assert "第二份 generation" in orchestrator
-    assert "degraded_exploration" in orchestrator
-    assert "不同正文 SHA-256" in orchestrator
-    assert "previous_chapter_quote" in chapter_editor
-    assert "human_likeness" in (
-        book_dir / ".claude" / "agents" / "blind-reader.md"
-    ).read_text(encoding="utf-8")
-    assert "reader_desire" in (
-        book_dir / ".claude" / "agents" / "blind-reader.md"
-    ).read_text(encoding="utf-8")
+    assert "只回传真实 session ID" in claude_md
+    assert "不得创建或注册宿主专用 Agent 类型" in claude_md
+    assert "Python 导入正文、跑机器门" in claude_md
+    assert "第二版仍有 MUST" in claude_md
+    assert "Generation 和两份 Review" in claude_md
     assert "next_chapter_pull" in (
         book_dir / "reviews" / "review-template.md"
     ).read_text(encoding="utf-8")
-    assert "不同于 writer" in (
-        book_dir / ".claude" / "agents" / "blind-reader.md"
-    ).read_text(encoding="utf-8")
-    assert len(claude_md) < 6500
+    assert len(claude_md) < 5000
 
 
 
@@ -429,7 +335,6 @@ def test_init_book_project_does_not_overwrite_existing_files(tmp_path: Path):
     result = init_book_project(tmp_path, "preserve", "Preserve", "科幻")
 
     assert "CLAUDE.md" in result["skipped_files"]
-    assert ".claude/agents/context-collector.md" in result["skipped_files"]
     assert (book_dir / "README.md").exists()
     assert (book_dir / "CLAUDE.md").read_text(encoding="utf-8") == "existing"
     assert (
@@ -588,103 +493,46 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "`next-action`" in text
     assert "`complete-role`" in text
     assert "`NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless" in text
-    assert "formal_native" in text
-    assert "formal_sandboxed" in text
-    assert "不询问用户 A/B" in text
+    assert "lean_native" in text
+    assert "--strict-audit" in text
     assert "高权限只属于无模型推理的确定性控制面" in text
     assert "必须使用宿主官方 wait / join 等到角色终态" in text
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
     assert "Python 状态机决定下一步" in text
-    assert "宿主只负责创建、等待和回传" in text
+    assert "只回传真实 session ID" in text
     assert "创作角色对项目仓库零写入" in text
     assert "ACP 只用于事后取证" in text
+    assert "不得创建或注册宿主专用 Agent 类型" in text
 
 
-def test_skill_documents_v51_native_relay_workflow():
+def test_skill_documents_v53_fiction_first_native_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v5.2" in text
-    assert "自动生产唯一入口" in text
+    assert "唯一主产品" in text
+    assert "lean_native" in text
+    assert "--strict-audit" in text
     assert "本章未开始" in text
-    assert "只有用户明确要求探索稿" in text
-    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
-    assert "不得创建、修改、修复、包装、安装或配置 Harness" in text
-    assert "不得向用户提供部署或配置 Harness 的选项" in text
-    assert "不要探索仓库实现" in text
-    assert "`next-action <slug>`" in text
-    assert "`complete-role <slug>" in text
-    assert "没有命令 Backend 时自动进入" in text
-    assert "`NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless" in text
-    assert "formal_native" in text
-    assert "formal_sandboxed" in text
-    assert "不是用户 A/B 选择" in text
-    assert "默认最多 5 次" in text
-    assert "高权限只属于无模型推理的确定性控制面" in text
-    assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in text
-    assert "必须使用宿主官方 wait / join 等到角色终态" in text
-    assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
-    assert "Python 状态机决定下一步" in text
-    assert "宿主只负责创建、等待和回传" in text
-    assert "创作角色对项目仓库零写入" in text
+    assert "不要先探索" in text
+    assert "next-action <slug>" in text
+    assert "complete-role <slug>" in text
+    assert "`NOVEL_FORGE_HARNESS_COMMAND` 只是可选 headless" in text
+    assert "Python 创建项目骨架" in text
+    assert "只回传真实 session ID" in text
+    assert "不得创建、注册、修改或安装宿主专用 Agent 类型" in text
+    assert ".claude/agents" in text
     assert "ACP 只用于事后取证" in text
-    assert "session_id、session_instance_id" in text
-    assert "typed operation handle" in text
-    assert "Blind Reader 正式记录后才能启动 Chapter Editor" in text
-    assert "guardian-contract" in text
-    assert "prepare-writer-capsule" in text
-    assert "ingest-writer-capsule" in text
-    assert "仓库外 Capsule" in text
-    assert "instructions.md" in text
-    assert "formal-writer/v1" in text
-    assert "一次只做一章" in text
-    assert "ACP 和完整 transcript 不是" in text
-    assert "begin-chapter-sequence" in text
-    assert "claim-chapter-session" in text
-    assert "advance-chapter-sequence" in text
-    assert "最多 4 章" in text
-    assert "上一章完整 `ready`" in text
-    assert "session-audit" in text
-    assert "Writer Story Brief" in text
-    assert "完整 Scene Package 是 Chapter Editor 控制面" in text
-    assert "规划是后台故事义务" in text
-    assert "位置、" in text and "读者效果和修订意图" in text
-    assert "谜题成立不等于真人愿意追读" in text
-    assert "第三版必须等待用户明确选择" in text
-    assert "review_session_id" in text
-    assert "degraded_exploration" in text
-    assert "同章同正文 SHA-256" in text
-    assert "0b. 章际交接" in text
-    assert "previous_chapter_sha256" in text
-    assert "tool_capabilities" in text
-    assert "数值风格指标" in text
-    assert "pattern-saturation" in text
-    assert "voice-anchor-surface-copy" in text
-    assert "标准或中等推理" in text
-    assert "明确决定" in text
-    assert "触发事件原文" in text
-    assert ".local-book-git" in text
-    assert "book-git-status" in text
-    assert "chapter: chNN draft" in text
-    assert "chapter: chNN ready" in text
-    assert "不得配置 remote" in text
-    assert "同时清除" in text
-    assert "tool_failures" in text
-    assert "Markdown 粗体" in text
-    assert "surface_checked" in text
-    assert "Max/长思考" in text
+    assert "至少 5000 个 CJK" in text
+    assert "Writer 已产生合规正文" in text
+    assert "不重写正文" in text
+    assert "未知遥测保持 null" in text
+    assert "第二版仍有 MUST" in text
+    assert "Generation 和两份 Review" in text
+    assert "不配置 remote" in text
     assert "human_likeness" in text
     assert "reader_desire" in text
-    assert "runtime audit 只能绑定当前 generation" in text
-    assert "不得暂停询问" in text
-    assert "两角色" in text
-    assert "run_writer" in text
-    assert "晚到旧稿不得覆盖重试稿" in text
-    assert "operation_handle.kind" in text
-    assert "idle/available" in text
-    assert "role_result" in text
-    assert "capsule 内相对路径" in text
+    assert "idle、available" in text
     assert "literary-micro-rules/v4" in text
     assert "用户硬锚" in text
     assert len(text) < 9000
@@ -748,15 +596,13 @@ def test_evidence_templates_use_canonical_marker_and_kinds(tmp_path: Path):
         assert f'"kind": "{kind}"' in combined
 
 
-def test_generated_agents_enforce_human_narrative_policy_ids(tmp_path: Path):
+def test_generated_constitution_enforces_human_narrative_policy_ids(
+    tmp_path: Path,
+):
     from app.novel_forge.planning_spec import HUMAN_NARRATIVE_POLICY_IDS
 
     result = init_book_project(tmp_path, "agents", "Agents", "现实悬疑")
     book_dir = Path(result["book_dir"])
-    agent_text = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (book_dir / ".claude/agents").glob("*.md")
-    )
     constitution = (book_dir / "CLAUDE.md").read_text(encoding="utf-8")
     skill = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
@@ -764,5 +610,4 @@ def test_generated_agents_enforce_human_narrative_policy_ids(tmp_path: Path):
 
     for policy_id in HUMAN_NARRATIVE_POLICY_IDS:
         assert policy_id in constitution
-        assert policy_id in agent_text
         assert policy_id in skill

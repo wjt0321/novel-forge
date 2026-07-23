@@ -971,6 +971,8 @@ def _runtime_audit_errors(
     """Validate externally observed runtime evidence for one generation."""
     if generation.get("writer_type") == "human":
         return []
+    if generation.get("assurance_mode") == "lean_native":
+        return []
     run_id = str(generation.get("run_id") or "").strip()
     if run_id.lower() in {"", "unknown", "unrecorded"}:
         return ["generation.run_id 未绑定真实 Harness 会话。"]
@@ -1993,11 +1995,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4))(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.2)(?:\s|（|\()"
         ),
         "README.md": re.compile(
             r"(?m)^-\s*默认工作流\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4))(?:$|[\s；;。])"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.2)(?:$|[\s；;。])"
         ),
     }
     refresh_set = (

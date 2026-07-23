@@ -1783,18 +1783,18 @@ def test_ready_rejects_placeholder_evidence_before_writing_state(
 def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     # Simulate an outdated managed file and a hand-filled voice bible.
-    agent = book_dir / ".claude/agents/chapter-editor.md"
-    agent.write_text("old version", encoding="utf-8")
+    managed = book_dir / "tools/narrative_gate.py"
+    managed.write_text("old version", encoding="utf-8")
     voice = book_dir / "memory/voice-bible.md"
     voice.write_text("# 手写声音圣经\n", encoding="utf-8")
 
     dry = book_project.sync_tools(tmp_path, "demo", dry_run=True)
-    assert ".claude/agents/chapter-editor.md" in dry["updated"]
-    assert agent.read_text(encoding="utf-8") == "old version"  # dry run did not write
+    assert "tools/narrative_gate.py" in dry["updated"]
+    assert managed.read_text(encoding="utf-8") == "old version"
 
     result = book_project.sync_tools(tmp_path, "demo")
-    assert ".claude/agents/chapter-editor.md" in result["updated"]
-    assert agent.read_text(encoding="utf-8") != "old version"
+    assert "tools/narrative_gate.py" in result["updated"]
+    assert managed.read_text(encoding="utf-8") != "old version"
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
@@ -1805,7 +1805,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v5.2（完成信封补交、封存 Review Capsule 与按角色恢复）",
+            "- 工作流版本: v5.3（正文优先 Lean 原生工作流）",
             "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
         ),
         encoding="utf-8",
@@ -1813,7 +1813,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "- 默认工作流: v5.2",
+            "- 默认工作流: v5.3",
             "- 默认工作流: v4.4",
         ),
         encoding="utf-8",
@@ -1823,8 +1823,8 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v5.2" in claude.read_text(encoding="utf-8")
-    assert "v5.2" in readme.read_text(encoding="utf-8")
+    assert "v5.3" in claude.read_text(encoding="utf-8")
+    assert "v5.3" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

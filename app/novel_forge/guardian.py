@@ -799,6 +799,15 @@ def _isolation_attestation_mode(
     }
     if all(attestation.get(key) == value for key, value in guarded.items()):
         return "formal_native"
+    lean = {
+        "assurance_mode": "lean_native",
+        "filesystem_scope": "capsule_output",
+        "write_scope": "post_execution_verified",
+        "repository_snapshot_enforced": False,
+        "reported_by": "deterministic_control_plane",
+    }
+    if all(attestation.get(key) == value for key, value in lean.items()):
+        return "lean_native"
     return None
 
 
@@ -936,6 +945,8 @@ def record_capsule_runtime(
     slug: str,
     capsule_id: str,
     runtime_file: Path,
+    *,
+    require_complete_budget: bool = True,
 ) -> dict[str, Any]:
     """Store a Harness-owned runtime sidecar outside the book workspace."""
     root = Path(root).resolve()
@@ -959,7 +970,13 @@ def record_capsule_runtime(
     if report.get("scope_chapter_count") != 1:
         raise GuardianError("runtime scope 必须严格绑定一章。")
     budget = evaluate_session_budget(report, chapter_count=1)
-    if budget.get("status") != "within_budget":
+    if (
+        budget.get("status") != "within_budget"
+        and (
+            require_complete_budget
+            or budget.get("continue_allowed") is not True
+        )
+    ):
         raise GuardianError("runtime 预算观测不完整或已经超限。")
     sidecar = _runtime_sidecar_path(root, slug, capsule_id)
     payload = source.read_bytes()
@@ -1071,7 +1088,13 @@ def ingest_writer_capsule(
             if report.get("scope_chapter_count") != 1:
                 reasons.append("runtime_scope_mismatch")
             budget = evaluate_session_budget(report, chapter_count=1)
-            if budget.get("status") != "within_budget":
+            if (
+                budget.get("status") != "within_budget"
+                and (
+                    control.get("isolation_mode") != "lean_native"
+                    or budget.get("continue_allowed") is not True
+                )
+            ):
                 reasons.append("runtime_budget_incomplete_or_exceeded")
     if draft.is_file():
         candidate_sha256 = _sha256(draft)

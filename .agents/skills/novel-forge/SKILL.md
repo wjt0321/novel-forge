@@ -1,227 +1,179 @@
 ---
 name: novel-forge
-description: Use when creating, planning, drafting, reviewing, auditing, repairing, or exporting a Novel Forge fiction project.
+description: Use when creating, planning, drafting, reviewing, repairing, auditing, or continuing a Novel Forge fiction project.
 ---
 
 # Novel Forge
 
-Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小说像人写的吗？**
+Novel Forge 的唯一主产品是**小说正文**。规划、表、哈希、Generation、Runtime、
+Guardian、状态和 Git 都是服务正文的附属记录，不得反过来阻碍有效正文。
 
-## 创作任务快速路径
+## 直接开始
 
-创作时**不要探索仓库实现**，不读 `app/`、`tests/`、`docs/`、Git 历史或旧实验书。
-首个写操作只能是：
+创作任务不要先探索 `app/`、`tests/`、`docs/`、Git 历史或旧实验书。首个写操作只能是：
 
 ```bash
 python tools/novel-workflow.py --root <绝对仓库根> start <slug> \
   --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 ```
 
-1. 运行 `next-action <slug>` 取得 Python 签发的有界动作。
-2. 按动作创建或复用真实原生 Session；不得由 Lead 扮演角色。
-3. Writer 只接收 Writer Capsule；审稿角色只接收 `review_capsule.path`，Lead
-   禁止读取、复制、粘贴或重组 Capsule 内正文。
-4. 等待宿主官方终态后，以动作自带的 `completion_template` 为唯一 JSON 骨架，
-   只填真实终态、typed operation handle、Session、模型、`role_result` 和遥测，再运行
-   `complete-role <slug> --from-file <临时JSON>`。
-5. 重复到 Python 返回完成、决策或停止；不得自行推进状态、证据或 Git。
+之后只循环：
 
-Writer 规划可做题材常识、重名与事实边界检索，默认最多 5 次；不得借此读源码。
-正文和两个审稿角色不做开放式仓库探索。
+```bash
+python tools/novel-workflow.py --root <根> next-action <slug>
+python tools/novel-workflow.py --root <根> complete-role <slug> \
+  --session-id <宿主返回的真实会话ID>
+```
 
-## 选择入口
+`next-action` 已给出角色、上下文 Capsule、输出位置和停止条件。规划或审稿角色把
+简短 JSON 写入动作的 `result_file`；Writer 只写 Capsule 内的 `draft/正文.md`。
+Lead 等待宿主官方终态后只回传真实 session ID，不搬运正文，不拼装技术 JSON。
 
-- **自动生产唯一入口**：`tools/novel-workflow.py start`。没有命令 Backend 时自动进入
-  原生会话 Relay；宿主原生 Roles / Teams / Task Agent / Session 负责上下文隔离。
-- Python 状态机决定下一步；宿主只负责创建、等待和回传，不写证据、状态或 ready。
-  completed 必须绑定 role、session_id、session_instance_id、typed operation handle、
-  结果通道和 `role_result`。必须使用宿主官方 wait / join 等到角色终态；
-  创建成功、已接单、进度消息或文件暂时稳定都不算完成，`idle/available` 与晚到结果无效。
-- 创作角色对项目仓库零写入：规划和审稿只回传结构化结果；Writer 只写仓库外
-  capsule 的 `draft/正文.md`；异常产物或 `control_plane_mutation` 会废弃会话。
-- 高权限只属于无模型推理的确定性控制面；新书先由确定性控制面通过 `init-novel-project` 初始化。
-  不得自行创建正文、规划、审稿或 ready Git 恢复点；
-  Blind Reader 正式记录后才能启动 Chapter Editor。宿主无法创建或等待真实独立
-  Session 时只说明“本章未开始”；`degraded_exploration` 只有用户明确要求探索稿时才允许。
-- ACP 只用于事后取证；模型偏好不绑定厂商，证据只认终态 `resolvedModel`。
-  `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend。
-- 创作 Lead/角色不得创建、修改、修复、包装、安装或配置 Harness / SessionBackend；
-  不得自行设置命令桥，不得向用户提供部署或配置 Harness 的选项。
+## 默认模式
 
-## Books v5.2
+默认是 `lean_native`：
 
-默认状态链只有八态：
+- Python 创建项目骨架，计算正文与规划哈希，建立 Generation，标记旧记录 stale，
+  绑定 Review，推进状态并建立每书 Git 恢复点。
+- Python 对 Writer Capsule 和当前书做确定性完整性检查；角色不得写项目控制面。
+- provider、model、token、请求数、耗时或 thinking 深度取不到时保持
+  `unknown` / `null`，只记录，不阻断正文、双审或 ready。
+- 未知遥测保持 null；不得估算，也不得把未知值变成写作失败。
+- 不要求 Lead 或创作角色填写 Runtime、Guardian、Generation、SHA-256、状态或 Git。
+- 有效正文已经产生后，技术附属记录失败必须优先原地收尾，禁止无理由重写正文。
 
-`planned → context_collected → scene_packaged → drafted → surface_checked → blind_read → editorial_reviewed → ready`
+只有用户明确要求取证、基准或完整运行审计时，才在命令前加入 `--strict-audit`。
+严格模式保留完整遥测、技术完成信封和全仓快照；它不是日常创作默认值。
 
-`ready` 不是作者批准或发布许可；角色判断由真实会话返回，Lead 禁止代填。
+## 通用宿主
 
-### 隔离 Writer Capsule
+本 Skill 不绑定 Claude、Kimi、Codex、OMP、Trae、Qoder、模型厂商或具体模型。
 
-Formal writer 不进入 `books/<slug>/`。默认 `formal_native` 使用仓库外 Capsule、
-角色零项目写入和执行前后全仓快照；宿主具备真实文件系统沙箱时可透明升级为
-`formal_sandboxed`。这不是用户 A/B 选择。writer
-只见 `guardian-contract`、`handoff.md`、`formal-writer/v1` 的 `instructions.md` 和
-`draft/正文.md`。runtime 经 `record-capsule-runtime` 外置，导入由 Guardian 核验。
-额外文件、路径逃逸、保护输入变化或证明不实均为 `compromised`。无变化 Patch 记为
-`no_content_change`，不创建 Generation 或刷新审稿。
-`run_writer=launched` 后必须按 `operation_handle.kind` 用原句柄等待官方
-`completed`，并取得 writer `role_result`；其中只允许返回 capsule 内相对路径
-`draft/正文.md`，不得让 Writer 猜宿主绝对路径。`accepted`、`progress`、
-`idle/available` 或文件稳定无效。完成信封或 Runtime Snapshot 装配错误时保留同一
-Session/Capsule/正文，按模板补交同一终态，Lead 不得重跑 Writer。真实完整性或终态
-失败才废弃 Session/Capsule，晚到旧稿不得覆盖重试稿。
-协议不绑厂商；ACP 和完整 transcript 不是 formal 依赖；无法创建独立上下文或取得
-官方终态时停止。
+- 使用宿主已有的独立 Session、Teams、Task Agent、Role 或等价能力。
+- 不得创建、注册、修改或安装宿主专用 Agent 类型。
+- 不得写入项目级或用户级 `.claude/agents`、自定义 Harness 或 SessionBackend。
+- `NOVEL_FORGE_HARNESS_COMMAND` 只是可选 headless 命令桥，不是交互式创作前置条件。
+- ACP 只用于事后取证，不参与生产调度。
+- 宿主无法创建真实独立会话时停止并说明“本章未开始”，不得用单会话冒充三角色。
 
-### 章节序列与新会话
+## 三角色
 
-正式一次只做一章，一章一个新 writer session；序列最多 4 章。用
-`claim-chapter-session` 绑定 `session_instance_id` 对应的真实 session，角色名不能
-代替会话。上一章完整 `ready` 后才运行 `advance-chapter-sequence`。交接只含硬锚、
-相关 Canon、上一章末段与 Writer Story Brief；完整 Scene Package 是 Chapter Editor 控制面。
+### Writer
 
-### 每书本地 Git
+每章使用新的真实 Writer Session。第一轮 Writer 可在同一 Session 内先完成必要规划，
+再写正文；规划只是附属产物，不是第四个角色。Writer 可做最多 5 次题材常识、事实
+边界或重名检索，不得借此探索仓库实现。
 
-每书 Git 在 `.local-book-git/<slug>.git`，不得配置 remote；`book-git-status`
-可查。自动建 `chapter: chNN draft` / `chapter: chNN ready`。删除实验书时同时清除
-工作区、外置 gitdir、外置 Guardian 和临时 Capsule。
+Writer 只读取动作签发的 Writer Capsule，正文只写：
 
-### 每章闭环
+`draft/正文.md`
 
-1. 新 Writer 先交付规划；用 `begin-chapter-sequence` 创建 1-4 章序列并立即
-   `claim-chapter-session`。后续章按 launch directive 新建 Writer。再用
-   `set-draft-mode` 固定 `formal | exploration | degraded_exploration`，并运行
-   `prepare-writer-capsule` 创建仓库外隔离工作区。
-2. 编排器核对记忆并生成有界 `chXX-handoff.md`；诊断用 `memory-status` /
-   `rebuild-memory-index` / `build-memory-context`。工具失败即停止 formal。
-3. context collector 只交付一页最小写作包：目标/阻力/选择/代价、相关
-   Canon 与人物认知、最多三条承诺、上一章末段、必要规则和一个短 exemplar。
-   不加载全书 Canon、旧审稿全文、模板或无关章节；引用既有 exemplar。
-4. 一页式 `scene-package-chXX.md` 包含人物摩擦、替代解释、beat 因果、责任归属、
-   常识反证和余波；重复字段只引用。关键对白意图与专业判断不得留空。
-   ch02+ 的 `0b. 章际交接` 绑定上一章路径、SHA-256、末段短引及时间/地点/动作；
-   还要写明上一章末明确决定、本章是否推翻该决定；若推翻，必须引用本章前 40%
-   出现的触发事件原文，不能用事后解释替代桥接。
-    本章开头短引在 `scene_packaged` 可写 `deferred_until_drafted`；完成后推进
-    `scene_packaged`，起草后回填真实短引，formal gate 前不得保留 deferred 标记。
-    Orchestrator 将六项输入原样注入 `0a. 用户硬锚合同`，规划不得改写。
-5. 一名 writer 只读 instructions、handoff 与 patch 时预置正文，在 capsule 内处理一章。
-   正式章不少于 5000 CJK；不要边查字数
-   边连续补写。writer 只写 `draft/正文.md`；确定性控制面先经
-   `record-capsule-runtime` 写入外置 runtime，再运行 `ingest-writer-capsule`，
-   取得干净 Guardian 回执。集中 patch 使用预置当前正文的新 capsule；第三个潜在
-   正文版本必须先经 `authorize-regeneration` 获得绑定前两版哈希的签名授权。
-   无变化 Patch 保留失败回执，不产生新 Generation。
-   writer 只接收叙事功能，不接收句长、对白率等数值风格指标；规划是后台故事义务，
-   正文允许误判、遗漏和延迟反应。
-   `正文.md` 除标题外只含叙事文本，不得出现 Markdown 粗体、提示词、Agent 身份、
-   `ch05`、`正文.md`、generation evidence/id、SHA-256、surface_checked、ready
-   等生产元数据。
-6. Guardian 导入成功后记录并绑定 generation evidence；其中
-   `prompt_template_id`/`prompt_sha256` 必须匹配签名回执。运行期间持续审计标准累计
-   快照，结束时经
-   `record-session-audit` 固化脱敏证据，再运行 `run-gates` 推进
-   `surface_checked`；任一 blocking 都短路。
-7. 默认只运行两角色：blind-reader 与 chapter-editor。blind-reader 必须在不同于
-   writer `run_id` 的会话中只读正文，并记录真实 `review_session_id`；同一写作会话
-   只能填写 `context_scope=simulated_blind` 与 `needs_revision`，不能 pass。
-   pass 还必须给出 `reader_desire=continue`、`emotional_residue` 与
-   `next_chapter_pull`，证明一个真人会自愿追读，而不是只证明画面可重建。
-   两者经 `record-review` 落盘，编排器不得代填；三角色身份须不同，不得暂停询问审核。
-    Python 封存 Review Capsule：Blind 仅正文；Editor 加场景包、硬锚、必要 Canon、
-    Blind Review 与机器诊断。Lead 只传路径；manifest 绑定正文，篡改即换新 Session。
-    审稿 completed 但完成信封缺字段时先按 `completion_template` 补交同一终态；
-    实质结果失败才换同角色 session，最多两次。四个创作阶段分别计数；Blind 成功后
-    Editor 从零开始。有效 Generation 的 `retry` 继续审稿，不重写正文。耗尽后才显示
-    A/B/C。无法创建独立审稿会话时返回
-    `review_session_required`，不得改成开放式提问。
-    Chapter Editor 额外读取独立 `story_contract`，必须先核对时间方向、金额或数量、
-    物件位置、人物知识来源、核心冲突与章末钩子；Scene Package 不能覆盖用户硬锚。
-    四硬锚须有正文证据和读者重建；缺失/冲突开 MUST，仅世界可延期；用过的 session
-    身份不得复用。
-8. 两份 finding 合并为一次 Patch，义务含位置、原文证据、读者效果和修订意图，
-   禁止解释性修补。第二版仍有 MUST 时退役 Patch Writer 并等待选择；用户明确重新
-   生成后，才为新 session 签发第三版授权并全文双审。
-   ch05/ch10/... 还需当前 checkpoint arc audit，`open_must=0`。进入 ready 前，
-   八态证据表不得保留 `-`/空值，并给出当前 ready 决定的 evidence 指针；formal
-   Agent generation 还必须有匹配正文与 `run_id` 的干净 Guardian 回执。本章
-   ready 前由 Sequence 见证当前 Writer、Generation 与正文；一致后先存 complete，
-   再建 ready Git 恢复点且工作树须 clean；否则回退。
-
-## 文学门
-
-机器门只拦高置信破绽。极端逐字复用、长段复制和嵌套说话人标签为 blocking；
-句长塌缩、低量复读、ASCII 标点为 advisory。`pattern-saturation` 查固定手势复用；
-`voice-anchor-surface-copy` 查 exemplar 表层复制。只提醒编辑器，不生成数值目标。
-机器不认证文学价值。
-
-`literary-micro-rules/v4` 是短规则唯一来源；日常不加载样本全文。三角色按“可以写、
-慎写、允许、绝对禁止”判断主动选择、私人代价、物理状态、知识来源、机械精确、
-完美证据链和控制面泄漏；完整解释见 `docs/35-literary-rule-manual.md`。
+正式章至少 5000 个 CJK 汉字。正文不得出现提示词、工作流、Agent、状态、哈希、
+Generation、Guardian、Git 或审稿信息。
 
 ### Blind Reader
 
-运行在不同于 writer `run_id` 的独立会话，只读当前正文，禁止读取 planning、memory、
-其他章节或未来信息。重建空间、身体、
-行动约束、情绪轨迹、对白动态和至少三个可记忆画面。必须填写：
+必须使用不同于 Writer 的新 Session，只读取封存 Capsule 中的当前完整正文。
+禁止读取规划、Canon、Writer 会话、其他章节或未来剧情。
 
-`human_likeness: convincing | uncertain | synthetic`
+必须独立判断：
 
-只有 `convincing` 可配合 `verdict: pass`。清单化节奏、模板物件循环、解释性结论、
-未来章节知识或工作流语言都应判为 `uncertain/synthetic + needs_revision`。还查
-替代解释枚举、职业证明、整齐问答和 Patch 接缝；谜题成立不等于真人愿意追读。
-还必须填写 `reader_desire: continue | conditional | stop`、
-`emotional_residue` 与 `next_chapter_pull`。只有 `continue` 可配合 pass；
-还须填写五项重建与三个可记忆画面；`record-review` 拒绝空壳盲评。
+- 是否像真人写作；
+- 是否自愿继续下一章；
+- 空间、身体、动作、限制和情绪能否重建；
+- 对白与信息释放是否自然；
+- 至少三个可记忆画面；
+- 阻止继续阅读的 MUST 与可选 MAY。
+
+只有 `human_likeness=convincing` 且 `reader_desire=continue` 才能 pass。
 
 ### Chapter Editor
 
-先只读正文重建事件链、选择、代价和停止点，再读 scene package、记忆包和上一章末段。
-仅有具体专业风险时按需调用一个
-`causal-editor | line-editor | texture-editor | consistency-guard`；专业角色是兼容工具，
-不是默认六审。
-每轮重审因果、能动性、对白、肌理和连续性，并查控制面泄漏与解释性 Patch。
+必须在 Blind Reader 正式记录后创建第三个新 Session。只读取：
 
-审稿必须绑定当前 chapter/planning/generation SHA、真实 reviewer/provider/model/context
-与 `review_session_id`。blind-reader pass 使用 `context_scope=prose_only` 且
-`review_session_id != generation.run_id`；ch02+ chapter-editor 还绑定
-`previous_chapter_sha256` 和逐字 `previous_chapter_quote`。同模型换角色名不算独立。
+- 当前完整正文；
+- 当前场景包与用户硬锚；
+- 必要 Canon 和上一章末段；
+- Blind Reader 结果；
+- 有界机器诊断。
 
-## Token 边界与外置 Guardian
+独立检查因果、主角主动选择、私人代价、物理连续性、人物知识来源、职业行动、
+对白、句子节奏、核心冲突与章末钩子。不得照抄 Blind Reader，也不得直接改正文。
 
-- 每章独立会话，只传短提示词与有界 handoff；不回灌 transcript、旧工具结果或验证器源码。
-- `session-audit` 只认 `novel-forge-runtime/v1`。每章上限：30 请求、2,000,000
-  cached-input tokens、单请求 120,000 context tokens；超限即停止。
-- 正文默认 standard/medium，即标准或中等推理。Max/长思考只处理具名难题，
-  结论压入 scene package；不用于整章、模板、状态、证据或默认审稿。
-- 正文一次 Write、最多一次集中 Edit；默认两角色，专业加审后建议总调用不超过 3。
-- 第三版必须等待用户明确选择；MAY/advisory 不生成。
-- generation 如实记录 `run_id`、provider/model/host、reasoning effort、
-  token/request、draft/review 计数、`tool_capabilities` 与 `tool_failures`。
-  指标只填本次增量；未知保持 null/unknown。
-- formal ready 需要匹配 `run_id` 且未超限的外部审计；一章 runtime audit 只能绑定当前 generation，
-  同一 writer `run_id` 不得跨章复用，计数缺失或超限均阻断。
-- Generation、Runtime Audit、Review History 不可重封；completion 精确绑定当前产物。
-  Agent 不得自称 human；新正文必须新建 Generation 和两份 Review。
+## 自动闭环
 
-## 事实与记忆
+1. Python 初始化项目并签发 Writer 规划动作。
+2. Lead 创建一个可写的独立 Writer Session，等待规划终态。
+3. 同一 Writer Session 复用到外置 Writer Capsule，写出本章正文。
+4. Python 导入正文，自动建立技术记录并跑机器门。
+5. Python 签发 Blind Reader 动作；Lead 创建新 Session 并等待终态。
+6. Blind 记录成功后，Python 才签发 Chapter Editor 动作；Lead 再创建新 Session。
+7. 两审都通过时，Python 核验当前正文、三会话隔离、Review、状态和本地 Git，
+   然后推进 `ready`。
+8. 有开放 MUST 时，Python 合并为一次集中 Patch，创建新的 Patch Writer Session。
+9. Patch 只处理 MUST；正文改变后 Python 新建 Generation、标记旧证据 stale，
+   再创建两份新的完整双审。
+10. 第二版仍有 MUST 时停止自动回炉并让用户选择，不无限循环。
 
-`memory/canon/**/*.md` 不得直改；新信息先作 candidate，晋升后进入 Canon。
-策略 ID：`no-deliberate-defects`、`single-winner-branch`、`model-score-not-approval`、
-`aesthetic-does-not-override-facts`、`exploration-not-ready`、
-`role-name-not-independence`、`world-not-protagonist-proof`、`expertise-must-be-executable`。
+Lead 不写正文、不审稿、不代填结论、不选择模型来源真相，也不直接操作
+Generation、Review、状态或 Git。
 
-## 证据与 Git
+## 等待与恢复
 
-只读：`project-status`、`run-gates`、`evidence-status`、`memory-status`、
-`chapter-sequence-status`、`session-audit`、`book-git-status`。变更参数查 `--help`。
+- 创建成功、accepted、progress、working、idle、available 或文件出现都不是完成。
+- 必须使用宿主官方 wait/join/result 机制等待 completed、failed 或 timed_out。
+- 角色仍在 working/progress 时继续等待，禁止因 Lead 短超时而越权代做。
+- 结果文件缺失、Session 异常或角色实质失败时废弃该 Session，创建同角色新 Session，
+  最多自动重试 2 次。
+- 失败 Receipt 保留原样，禁止改成 clean；退役 Session 的晚到产物无效。
+- Writer 已产生合规正文而交付元数据缺失时，保留正文并由 Python补记；不得重跑 Writer。
+- 审稿运输或结果丢失只重开对应审稿角色，不重写正文。
+- 两次技术重试耗尽后才向用户显示：
+  A. 保留草稿
+  B. 重新生成本章
+  C. 停止任务
 
-`sync-tools` 只迁移带版本标记的生成文件到 v5.2；手写项目宪法不动，旧专业 Agent
-仅作兼容资产。
+用户界面只显示：
 
-同章同正文 SHA-256 只能算一个 generation。`harness_exposed` 必须有真实 `run_id`、
-`agent_harness`、`metrics_source=harness_reported`、工具能力与失败。Agent 不得自称
-`user_attested`。
+- 正在写作。
+- 正在自动审稿。
+- 发现问题，正在自动修订。
+- 写作会话异常，已自动换新会话重试。
+- 第一章完成，是否继续第二章？
 
-未经用户明确要求，不得 commit、push 或执行 `git-checkpoint`。
+不得向用户展示原始 JSON、哈希、Session、Guardian、Git、Runtime 或 Traceback。
+
+## 文学短规则
+
+日常只加载 `literary-micro-rules/v4`，不加载样本全文。
+
+- 可以写：人物在具体压力下主动选择并付出私人代价；劳动、身体、物件、位置和关系
+  持续改变下一步行动。
+- 慎写：术语、精确数字、比喻、母题和完美证据链；只有改变决定、限制、风险或后果
+  时才保留。
+- 允许：误判、迟疑、沉默、反应迟半拍、不对称对白、未解释余波和不整齐节奏。
+- 绝对禁止：把规划、审稿、主题或因果清单翻译成说明段；机械三连、连续否定翻转、
+  控制面语言、职业证明循环、解释性修补和用户硬锚漂移。
+
+机器门只拦高置信破绽，不认证文学价值。MAY 和 advisory 不自动触发 Patch。
+
+## 长篇连续性
+
+Canon、开放承诺、上一章末段、Voice exemplar 与当前场景包由 Python 组成有界
+handoff。不得把全书 Canon、旧审稿全文、旧会话 transcript 或验证器源码回灌 Writer。
+
+新连续性信息先进入 candidate，再晋升 Canon。正文、记忆和审稿只属于当前书，不得
+跨书复制。
+
+## 不可变与安全
+
+- 稳定策略 ID：`no-deliberate-defects`、`single-winner-branch`、
+  `model-score-not-approval`、`aesthetic-does-not-override-facts`、
+  `exploration-not-ready`、`role-name-not-independence`、
+  `world-not-protagonist-proof`、`expertise-must-be-executable`。
+- 正文改变必须新建 Generation 和两份 Review；旧记录变 stale，不得改写旧哈希。
+- Guardian Receipt、Runtime Audit、Generation 和 Review History 创建后不可覆盖。
+- 外置 Guardian 只在 `<root>/.local-guardian/<slug>/`；禁止在书目录内创建。
+- 每书 Git 只做本地恢复，不配置 remote，不代表作者批准或发布许可。
+- `ready` 代表工作流通过，不代表用户批准。
+- 未经用户明确要求，不得 commit、push 或删除实验书。

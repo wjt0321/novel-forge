@@ -11,8 +11,13 @@
   `next-action`，等待宿主官方终态，再用 `complete-role` 回传。
 - 没有命令 Backend 时 `start` 自动进入原生会话 Relay；宿主 Roles / Teams /
   Task Agent / Session 只负责上下文隔离、角色执行、等待和回传。
-- Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写正文、审稿、
-  evidence、状态或 ready，也不从缺失结果中补造完成态。
+- 小说正文是唯一主产品；规划、审稿、Generation、Runtime、Guardian、状态和 Git
+  都是服务正文的附属记录，不得因为遥测未知或技术字段缺失要求重写有效正文。
+- Python 状态机决定下一步并自动计算哈希、stale、证据绑定和 Git；宿主只负责创建
+  独立会话、等待官方终态、让角色写动作指定的外置产物，并只回传真实 session ID。
+- 默认完成命令为 `complete-role <slug> --session-id <真实ID>`。规划和审稿角色把
+  简短 JSON 写入动作给出的 `result_file`，Writer 只写 Capsule 内正文；Lead 不装配
+  Generation、Runtime、Guardian、token、请求数、哈希或 Git 字段。
 - 创作角色对项目仓库零写入：Writer 只写仓库外 capsule 的 `draft/正文.md`，
   规划和审稿只返回结构化结果。额外项目产物会被清理并换新会话。
 - ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
@@ -23,9 +28,11 @@
 - 高权限只属于无模型推理的确定性控制面，用于 Guardian、状态、证据和 Git。
   Lead 只调度；Writer、Blind Reader、Chapter Editor 只产出各自角色产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-- 保存宿主返回的 `operation_handle.kind/value`，按 kind 使用对应官方结果通道；不得
-  把 agent ID 猜成 task ID。`idle/available` 不是角色结果，completed 还必须带
-  角色绑定的 `role_result`。结果缺失时换新同角色会话自动重试，不由 Lead 代填。
+- `idle/available` 不是角色结果；必须等待官方 completed/failed/timed_out 终态。
+  working/progress 时继续等待，禁止短超时后由 Lead 越权代做。结果文件缺失时换新
+  同角色会话自动重试，不由 Lead 代填文学结论。
+- 不得创建或注册宿主专用 Agent 类型，不得写入项目或用户级 `.claude/agents`；
+  直接使用宿主提供的通用独立 Session、Teams、Task Agent 或 Role 能力。
 - 宿主无法创建或等待真实独立角色时立即停止，只向用户说明：
   “自动写作环境尚未就绪，本章未开始。”
 - 小说创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
@@ -34,5 +41,6 @@
   不得把探索稿称为完成，也不得用单会话模拟三个角色。
 - Writer 规划阶段可做最多 5 次题材常识、事实边界与书名/人名重名检索；不得借此
   阅读工作流源码。正文与两个审稿角色不得做开放式仓库探索。
-- 默认 `formal_native` 由外置 Capsule、零项目写入、全仓前后快照和 Guardian
-  构成；真实 OS 沙箱只会透明升级为 `formal_sandboxed`，不询问用户 A/B。
+- 默认 `lean_native` 由外置 Capsule、当前书作用域写入检查和 Python 自动记账构成。
+  角色不填 Runtime、哈希、token、请求数或 Git；未知遥测保持 null。只有明确传入
+  `--strict-audit` 才启用完整技术完成信封和全仓快照。

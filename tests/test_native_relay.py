@@ -1323,3 +1323,326 @@ def _review_completion(
             "payload": asdict(outcome),
         },
     }
+
+
+def test_lean_native_action_keeps_technical_records_out_of_role_contract(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    serialized = json.dumps(action, ensure_ascii=False)
+
+    assert action["role"] == "writer"
+    assert action["stage"] == "planning"
+    assert action["assurance_mode"] == "lean_native"
+    assert "completion_template" not in action
+    assert "runtime_snapshot" not in serialized
+    assert "SHA-256" not in serialized
+    assert "generation" not in serialized.lower()
+    assert "guardian" not in serialized.lower()
+    assert "git" not in serialized.lower()
+
+
+def test_lean_completion_uses_session_and_role_payload_only(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="lean-writer-01",
+        session_instance_id="lean-writer-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    result_file = Path(planning_action["result_file"])
+    result_file.write_text(
+        json.dumps({"files": planning.files}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        session_id=writer.session_id,
+    )
+    writer_action = relay.next_action("demo")
+
+    assert result.message == "正在写作。"
+    assert writer_action["role"] == "writer"
+    assert writer_action["stage"] == "draft"
+    assert writer_action["session"] == {
+        "mode": "reuse",
+        "session_id": writer.session_id,
+        "session_instance_id": writer.session_instance_id,
+    }
+    assert "completion_template" not in writer_action
+
+
+def test_lean_writer_unknown_runtime_does_not_discard_valid_prose(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="lean-writer-01",
+        session_instance_id="lean-writer-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    result_file = tmp_path / "planning-result.json"
+    result_file.write_text(
+        json.dumps({"files": planning.files}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal(
+        "demo",
+        session_id=writer.session_id,
+        result_file=result_file,
+    )
+    writer_action = relay.next_action("demo")
+    prose = _prose("精简原生流程")
+    capsule = Path(writer_action["capsule"]["path"])
+    (capsule / "draft/正文.md").write_text(prose, encoding="utf-8")
+
+    result = relay.complete_minimal(
+        "demo",
+        session_id=writer.session_id,
+    )
+
+    assert result.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8") == prose
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
+    assert len(
+        list(
+            (root / "books/demo/evidence/guardian-receipts").glob(
+                "*.json"
+            )
+        )
+    ) == 1
+
+
+def test_lean_integrity_ignores_unrelated_repository_changes(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="lean-writer-01",
+        session_instance_id="lean-writer-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=action["context"],
+        instructions=action["instructions"],
+        reasoning_effort="high",
+    )
+    result_file = tmp_path / "planning-result.json"
+    result_file.write_text(
+        json.dumps({"files": planning.files}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (root / "unrelated.txt").write_text(
+        "another host changed this file",
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        session_id=writer.session_id,
+        result_file=result_file,
+    )
+
+    assert result.message == "正在写作。"
+    assert (root / "unrelated.txt").is_file()
+
+
+def test_strict_audit_keeps_full_completion_contract(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=True,
+    )
+
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+
+    assert action["role"] == "writer-planning"
+    assert "completion_template" in action
+
+
+def test_lean_native_unknown_telemetry_can_finish_double_review_and_ready(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    request = _request()
+    backend = ScriptedBackend([], [_pass_reviews()])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="lean-writer-01",
+        session_instance_id="lean-writer-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    planning_file = tmp_path / "planning.json"
+    planning_file.write_text(
+        json.dumps({"files": planning.files}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal(
+        "demo",
+        session_id=writer.session_id,
+        result_file=planning_file,
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("Lean 双审通过"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo", session_id=writer.session_id)
+
+    blind_action = relay.next_action("demo")
+    blind_session = SessionIdentity(
+        session_id="lean-blind-01",
+        session_instance_id="lean-blind-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    blind_file = tmp_path / "blind.json"
+    blind_file.write_text(
+        json.dumps(asdict(blind), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal(
+        "demo",
+        session_id=blind_session.session_id,
+        result_file=blind_file,
+    )
+
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="lean-editor-01",
+        session_instance_id="lean-editor-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
+        reasoning_effort="medium",
+    )
+    editor_file = tmp_path / "editor.json"
+    editor_file.write_text(
+        json.dumps(asdict(editor), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        session_id=editor_session.session_id,
+        result_file=editor_file,
+    )
+
+    status = book_project.project_status(root, "demo", 1)
+    assert result.user_state == "chapter_complete"
+    assert status["chapters"][0]["effective_status"] == "ready"
+    generation = next(
+        (root / "books/demo/evidence/generations").glob("*.md")
+    ).read_text(encoding="utf-8")
+    assert '"assurance_mode": "lean_native"' in generation
+    runtime = next(
+        (root / "books/demo/evidence/runtime-audits").glob("*.json")
+    )
+    payload = json.loads(runtime.read_text(encoding="utf-8"))
+    assert payload["budget"]["status"] == "unassessed"
+    assert payload["request_count"] is None

@@ -275,4 +275,4 @@ def test_init_novel_project_creates_books_layout(tmp_path: Path):
     assert (book_dir / "CLAUDE.md").exists()
     assert (book_dir / "memory/voice-bible.md").exists()
     assert (book_dir / "tools/quality_check.py").exists()
-    assert (book_dir / ".claude/agents/blind-reader.md").exists()
+    assert not (book_dir / ".claude/agents").exists()
