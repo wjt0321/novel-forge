@@ -140,7 +140,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v4.9（带类型句柄、正式角色结果与自动审稿恢复）
+- 工作流版本: v5.0（Python 确定性控制、原生角色终态与零污染工作区）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -151,6 +151,11 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 ## 自动生产唯一入口
 - 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
   调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写角色产物、
+  evidence、状态或 ready，也不从缺失结果中补造完成态。
+- 创作角色对项目仓库零写入：规划和审稿只返回结构化结果，Writer 只写仓库外
+  capsule 的 `draft/正文.md`。新增项目产物会被清理并换新会话。
+- ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - `python tools/novel-workflow.py ... start` 是可选 headless 入口；
@@ -161,7 +166,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   wait/join/result 通道。禁止把 agent ID 猜成 task ID、把角色名当作 TaskOutput ID、
   固定 sleep 或以文件出现猜测完成。每个创作角色默认至少等待 30 分钟；仍在
   working/progress 就继续等待。`idle_notification` 或 available 不是角色产物；
-  completed 还必须返回绑定该角色的 `role_result`。
+  completed 还必须返回绑定 role、session_id、session_instance_id 的 `role_result`。
 - 模型配置只是选择意图；证据只记录宿主终态返回的 `resolvedModel`。Writer 角色在
   Claude Code 模板中使用 `model: inherit`，表示继承当前父会话模型，不绑定具体厂商。
 - Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
@@ -259,7 +264,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v4.9；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v5.0；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -1524,6 +1529,8 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
 ## 自动生产唯一入口
 - 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
   调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- Python 状态机决定下一步；宿主只负责创建、等待和回传。创作角色对项目仓库零写入，
+  ACP 只用于事后取证，不参与生产控制。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - `python tools/novel-workflow.py ... start` 是可选 headless 入口；
@@ -1539,7 +1546,8 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   停止才退役角色。
 - `idle_notification`、idle 或 available 只表示角色可接收新消息，不是报告已送达。
   completed 必须同时取得 `novel-forge-role-result/v1` 的 `role_result`，且 role
-  与当前角色一致；否则废弃该 session 并新开同角色 session，最多自动重试两次。
+  与当前角色一致，并绑定 session_id、session_instance_id 和原 operation handle；
+  否则废弃该 session 并新开同角色 session，最多自动重试两次。
 - 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
   返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
 - 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。

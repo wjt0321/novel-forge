@@ -147,6 +147,9 @@ research/            # 前期调研
 - 编译 Writer Prompt：`docs/30-compiled-writer-prompt.md`
 - 自动三角色工作流：`docs/31-automatic-three-role-workflow.md`
 - 文学生产闭环与控制面隔离：`docs/32-literary-production-loop.md`
+- 异步终态、证据封存与 Harness 信任：`docs/33`、`docs/34`、`docs/36`、`docs/37`、`docs/38`
+- 文学短规则与完整解释：`docs/35-literary-rule-manual.md`
+- Python 确定性控制与零污染：`docs/39-deterministic-native-control-and-workspace-hygiene.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

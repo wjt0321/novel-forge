@@ -78,10 +78,16 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     literary_rules = (
         book_dir / "evaluation" / "literary-micro-rules.md"
     ).read_text(encoding="utf-8")
-    assert "literary-micro-rules/v3" in literary_rules
+    assert "literary-micro-rules/v4" in literary_rules
     assert "可以写：" in literary_rules
     assert "绝对禁止：" in literary_rules
     assert "用户硬锚漂移" in literary_rules
+    assert "具体私人代价" in literary_rules
+    assert "身体、物件和位置" in literary_rules
+    assert "不对称" in literary_rules
+    assert "完美证据链" in literary_rules
+    assert "解释性修补" in literary_rules
+    assert len(literary_rules) < 2200
     assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
     assert (book_dir / "evaluation" / "blind-evaluation-template.md").exists()
@@ -110,7 +116,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v4.9" in claude_md
+    assert "v5.0" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
@@ -153,7 +159,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v4.9" in readme
+    assert "默认工作流: v5.0" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -324,6 +330,11 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in claude_md
     assert "必须使用宿主官方 wait / join 等到角色终态" in claude_md
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in claude_md
+    assert "Python 状态机决定下一步" in claude_md
+    assert "宿主只负责创建、等待和回传" in claude_md
+    assert "创作角色对项目仓库零写入" in claude_md
+    assert "ACP 只用于事后取证" in claude_md
+    assert "session_instance_id" in claude_md
     assert writer_agent.startswith("---\n")
     assert "name: novel-forge-writer" in writer_agent
     assert "model: inherit" in writer_agent
@@ -574,14 +585,18 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "高权限只属于无模型推理的确定性控制面" in text
     assert "必须使用宿主官方 wait / join 等到角色终态" in text
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
+    assert "Python 状态机决定下一步" in text
+    assert "宿主只负责创建、等待和回传" in text
+    assert "创作角色对项目仓库零写入" in text
+    assert "ACP 只用于事后取证" in text
 
 
-def test_skill_documents_v49_orchestrated_artifact_workflow():
+def test_skill_documents_v50_deterministic_native_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )
 
-    assert "v4.9" in text
+    assert "v5.0" in text
     assert "自动生产唯一入口" in text
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
@@ -595,6 +610,12 @@ def test_skill_documents_v49_orchestrated_artifact_workflow():
     assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in text
     assert "必须使用宿主官方 wait / join 等到角色终态" in text
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
+    assert "Python 状态机决定下一步" in text
+    assert "宿主只负责创建、等待和回传" in text
+    assert "创作角色对项目仓库零写入" in text
+    assert "ACP 只用于事后取证" in text
+    assert "session_id、session_instance_id" in text
+    assert "typed operation handle" in text
     assert "Blind Reader 正式记录后才能启动 Chapter Editor" in text
     assert "guardian-contract" in text
     assert "prepare-writer-capsule" in text
@@ -649,7 +670,7 @@ def test_skill_documents_v49_orchestrated_artifact_workflow():
     assert "idle/available" in text
     assert "role_result" in text
     assert "capsule 内相对路径" in text
-    assert "literary-micro-rules/v3" in text
+    assert "literary-micro-rules/v4" in text
     assert "用户硬锚" in text
     assert len(text) < 9000
 

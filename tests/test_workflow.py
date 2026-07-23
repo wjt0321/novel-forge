@@ -239,6 +239,9 @@ class ScriptedBackend:
             operation_id=operation_id,
             operation_kind="test-operation",
             status=step.terminal_status,
+            role="writer",
+            session_id=session.session_id,
+            session_instance_id=session.session_instance_id,
             resolved_model=step.resolved_model,
             result_transport="artifact",
             role_result={
@@ -272,6 +275,9 @@ class ScriptedBackend:
             operation_id=run.operation_id,
             operation_kind=run.operation_kind,
             status=step.terminal_status,
+            role="writer",
+            session_id=session.session_id,
+            session_instance_id=session.session_instance_id,
             resolved_model=step.resolved_model,
             result_transport="artifact",
             role_result={
@@ -409,7 +415,13 @@ class ScriptedBackend:
                     "## 主题压力\n- 选择是否仍成立，取决于人物承担的具体后果。\n"
                 ),
                 f"planning/scene-package-ch{chapter:02d}.md": scene,
-            }
+            },
+            terminal_role="writer-planning",
+            terminal_session_id=session.session_id,
+            terminal_session_instance_id=session.session_instance_id,
+            operation_id=f"planning-operation-{session.session_id}",
+            operation_kind="test-planning-operation",
+            result_transport="inline",
         )
 
     def run_review(
@@ -446,6 +458,18 @@ class ScriptedBackend:
                 for line in context["previous_chapter_ending"].splitlines()
                 if line.strip() and not line.lstrip().startswith("#")
             )
+        updates.update(
+            {
+                "terminal_role": role,
+                "terminal_session_id": session.session_id,
+                "terminal_session_instance_id": (
+                    session.session_instance_id
+                ),
+                "operation_id": f"review-operation-{session.session_id}",
+                "operation_kind": "test-review-operation",
+                "result_transport": "inline",
+            }
+        )
         return replace(outcome, **updates)
 
 
@@ -642,11 +666,16 @@ def test_same_backend_session_instance_cannot_impersonate_three_roles(
     backend.create_session = reused_instance  # type: ignore[method-assign]
     orchestrator = _orchestrator(tmp_path, backend)
 
-    with pytest.raises(
-        workflow_module.WorkflowError,
-        match="底层会话实例",
-    ):
-        orchestrator.start("demo", _request(), chapter=1)
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "decision_required"
+    assert result.options == (
+        "A. 保留草稿",
+        "B. 重新生成本章",
+        "C. 停止任务",
+    )
+    status = project_status(orchestrator.root, "demo", 1)
+    assert status["chapters"][0]["effective_status"] != "ready"
 
     status = project_status(orchestrator.root, "demo", 1)
     assert not status["chapters"] or (
@@ -799,6 +828,51 @@ def test_missing_editor_result_retries_only_editor_session(
     ] == [
         "native-chapter-editor-01",
         "native-chapter-editor-02",
+    ]
+
+
+def test_late_review_result_from_retired_session_uses_fresh_session(
+    tmp_path: Path,
+):
+    class LateResultBackend(ScriptedBackend):
+        def __init__(self):
+            super().__init__(
+                [WriterStep(_prose("初稿"))],
+                [_pass_reviews()],
+            )
+            self._returned_late_result = False
+
+        def run_review(self, session, **kwargs):
+            outcome = super().run_review(session, **kwargs)
+            if (
+                kwargs["role"] == "blind-reader"
+                and not self._returned_late_result
+            ):
+                self._returned_late_result = True
+                self._review_index -= 1
+                return replace(
+                    outcome,
+                    terminal_session_id="native-blind-reader-retired",
+                    terminal_session_instance_id=(
+                        "instance-blind-reader-retired"
+                    ),
+                )
+            return outcome
+
+    backend = LateResultBackend()
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert [
+        item.session_id
+        for item in backend.sessions
+        if item.role == "blind-reader"
+    ] == [
+        "native-blind-reader-01",
+        "native-blind-reader-02",
     ]
 
 
@@ -1589,6 +1663,11 @@ def test_command_backend_waits_with_typed_handle_and_reads_role_result(
                 "kind": "host_team_member",
                 "value": "opaque-review-member",
             },
+            "session_binding": {
+                "role": "blind-reader",
+                "session_id": "review-session",
+                "session_instance_id": "review-instance",
+            },
             "result_transport": "mailbox",
             "resolved_model": "resolved-review-model",
             "role_result": {
@@ -1678,6 +1757,135 @@ def test_command_harness_control_plane_mutation_is_blocked(
         match="control_plane_mutation",
     ):
         backend.create_session("writer")
+
+
+def test_native_planning_role_cannot_create_project_artifacts(
+    tmp_path: Path,
+):
+    class PollutingPlanningBackend(ScriptedBackend):
+        def run_planning(self, *args, **kwargs):
+            leak = tmp_path / "repo" / "planning-notes.md"
+            leak.write_text("role-owned extra output\n", encoding="utf-8")
+            return super().run_planning(*args, **kwargs)
+
+    backend = PollutingPlanningBackend(
+        [WriterStep(_prose("不应继续"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    with pytest.raises(
+        ControlPlaneMutationError,
+        match="unexpected_project_artifact",
+    ):
+        orchestrator.start("demo", _request(), chapter=1)
+
+    assert not (orchestrator.root / "planning-notes.md").exists()
+    assert not any(item.role == "blind-reader" for item in backend.sessions)
+
+
+def test_planning_result_from_another_native_session_is_rejected(
+    tmp_path: Path,
+):
+    class StalePlanningBackend(ScriptedBackend):
+        def run_planning(self, *args, **kwargs):
+            return replace(
+                super().run_planning(*args, **kwargs),
+                terminal_session_id="retired-writer-session",
+                terminal_session_instance_id="retired-writer-instance",
+            )
+
+    backend = StalePlanningBackend(
+        [WriterStep(_prose("不应继续"))],
+        [_pass_reviews()],
+    )
+    orchestrator = _orchestrator(tmp_path, backend)
+
+    with pytest.raises(
+        WorkflowError,
+        match="规划结果没有绑定当前原生 Writer 会话终态",
+    ):
+        orchestrator.start("demo", _request(), chapter=1)
+
+    assert not any(item.role == "blind-reader" for item in backend.sessions)
+
+
+def test_writer_project_leak_is_removed_before_fresh_session_retry(
+    tmp_path: Path,
+):
+    class PollutingWriterBackend(ScriptedBackend):
+        def __init__(self):
+            super().__init__(
+                [
+                    WriterStep(_prose("污染尝试")),
+                    WriterStep(_prose("换新会话后成功")),
+                ],
+                [_pass_reviews()],
+            )
+            self._polluted = False
+
+        def run_writer(self, *args, **kwargs):
+            if not self._polluted:
+                self._polluted = True
+                leak = tmp_path / "repo" / "books/demo/附属分析.md"
+                leak.write_text("不允许的附属产物\n", encoding="utf-8")
+            return super().run_writer(*args, **kwargs)
+
+    backend = PollutingWriterBackend()
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert not (orchestrator.root / "books/demo/附属分析.md").exists()
+    assert [
+        item.session_id for item in backend.sessions if item.role == "writer"
+    ] == ["native-writer-01", "native-writer-02"]
+
+
+@pytest.mark.parametrize("polluting_role", ["blind-reader", "chapter-editor"])
+def test_reviewer_project_leak_is_removed_and_retried(
+    tmp_path: Path,
+    polluting_role: str,
+):
+    class PollutingReviewBackend(ScriptedBackend):
+        def __init__(self):
+            super().__init__(
+                [WriterStep(_prose("初稿"))],
+                [_pass_reviews()],
+            )
+            self._polluted = False
+
+        def run_review(self, session, **kwargs):
+            outcome = super().run_review(session, **kwargs)
+            if kwargs["role"] == polluting_role and not self._polluted:
+                self._polluted = True
+                self._review_index -= 1
+                leak = (
+                    tmp_path
+                    / "repo"
+                    / "books/demo"
+                    / f"{polluting_role}-scratch.md"
+                )
+                leak.write_text("不允许的审稿附属产物\n", encoding="utf-8")
+            return outcome
+
+    backend = PollutingReviewBackend()
+    orchestrator = _orchestrator(tmp_path, backend, retries=1)
+
+    result = orchestrator.start("demo", _request(), chapter=1)
+
+    assert result.user_state == "chapter_complete"
+    assert result.technical_retry_count == 1
+    assert not (
+        orchestrator.root
+        / "books/demo"
+        / f"{polluting_role}-scratch.md"
+    ).exists()
+    assert len(
+        [item for item in backend.sessions if item.role == polluting_role]
+    ) == 2
 
 
 def test_automatic_start_rejects_unmanaged_existing_draft_before_session(

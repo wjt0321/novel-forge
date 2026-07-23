@@ -870,6 +870,8 @@ def reject_writer_capsule(
         "writer_launch_failed",
         "writer_result_invalid",
         "writer_terminal_failure",
+        "unexpected_project_artifact",
+        "control_plane_mutation",
     }:
         raise GuardianError("不支持的 writer capsule 拒绝原因。")
     root = Path(root).resolve()

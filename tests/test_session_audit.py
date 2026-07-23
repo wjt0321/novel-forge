@@ -230,6 +230,9 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
             "deterministic_control_plane_only": True,
             "creative_roles_can_mutate_control_plane": False,
             "lead_can_author_role_artifacts": False,
+            "python_state_machine_owns_transitions": True,
+            "host_is_transport_only": True,
+            "creative_role_repository_write_policy": "zero_write",
         },
         "headless_command": {
             "optional": True,
@@ -256,6 +259,11 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         "idle_or_available_is_not_role_result": True,
         "terminal_state_requires_bound_role_result": True,
         "writer_returns_capsule_relative_path_only": True,
+        "terminal_session_binding_required": [
+            "role",
+            "session_id",
+            "session_instance_id",
+        ],
     }
     assert contract["role_completion_envelope"] == {
         "schema": "novel-forge-role-result/v1",
@@ -268,8 +276,14 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
             "artifact",
         ],
         "completed_requires": [
+            "session_binding",
             "result_transport",
             "role_result",
+        ],
+        "session_binding_required": [
+            "role",
+            "session_id",
+            "session_instance_id",
         ],
         "role_result_required": [
             "schema",
@@ -278,6 +292,27 @@ def test_harness_contract_is_vendor_neutral_and_machine_readable():
         ],
         "idle_notification_is_result": False,
         "host_absolute_artifact_path_from_role_forbidden": True,
+    }
+    assert contract["deterministic_control_loop"] == [
+        "python_emits_bounded_role_directive",
+        "host_creates_fresh_native_session",
+        "host_waits_exact_typed_operation_handle",
+        "host_returns_terminal_envelope_and_role_result",
+        "python_validates_and_commits_transition",
+    ]
+    assert contract["acp_policy"] == {
+        "production_control_dependency": False,
+        "role_session_launcher": False,
+        "forensics_only": True,
+    }
+    assert contract["session_completion_receipt"] == {
+        "schema": "novel-forge-session-completion/v3",
+        "immutable": True,
+        "required_operation_binding": [
+            "operation_kind",
+            "operation_id",
+            "result_transport",
+        ],
     }
     assert contract["role_model_selection"] == {
         "workflow_binds_provider_or_model": False,

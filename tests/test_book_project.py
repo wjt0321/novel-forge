@@ -10,10 +10,13 @@ import uuid
 
 import pytest
 
-from app.novel_forge import book_project, guardian as guardian_module
+from app.novel_forge import (
+    artifact_integrity,
+    book_project,
+    guardian as guardian_module,
+)
 from app.novel_forge.artifact_integrity import (
     ArtifactIntegrityError,
-    _issue_workflow_authority,
     record_session_completion,
     seal_artifact,
 )
@@ -33,6 +36,23 @@ from app.novel_forge.guardian import (
 )
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.session_audit import record_runtime_audit
+from app.novel_forge.workflow import NovelWorkflowOrchestrator
+
+
+_AUTHORITY_CONTROLLERS: list[NovelWorkflowOrchestrator] = []
+
+
+def _workflow_authority(root: Path):
+    controller = NovelWorkflowOrchestrator(
+        root,
+        object(),
+        capsule_root=(
+            root.parent
+            / f"{root.name}-authority-capsules-{uuid.uuid4().hex[:8]}"
+        ),
+    )
+    _AUTHORITY_CONTROLLERS.append(controller)
+    return controller._workflow_authority
 from app.novel_forge.skill_adapter import main as adapter_main
 from app.novel_forge.writer_prompt import FORMAL_WRITER_PROMPT_ID
 
@@ -233,11 +253,14 @@ def _review_file(
             model=model,
             agent_harness="test-harness",
             context_scope=context_scope,
+            operation_kind="test-review-operation",
+            operation_id=f"operation-{review_session_id}",
+            result_transport="inline",
             chapter=number,
             generation_id=binding["generation_id"],
             content_sha256=binding["chapter_sha256"],
             artifact=path,
-            workflow_authority=_issue_workflow_authority(),
+            workflow_authority=_workflow_authority(tmp_path),
         )
     return path
 
@@ -416,11 +439,14 @@ def _record_generation(
         model=model,
         agent_harness="test-harness",
         context_scope="writer_capsule_only",
+        operation_kind="test-writer-operation",
+        operation_id=f"operation-{run_id}",
+        result_transport="artifact",
         chapter=chapter_number,
         generation_id=generation_id,
         content_sha256=generation_data["content_sha256"],
         artifact=chapter,
-        workflow_authority=_issue_workflow_authority(),
+        workflow_authority=_workflow_authority(tmp_path),
     )
     return generation_id
 
@@ -761,11 +787,54 @@ def test_session_completion_requires_orchestrator_authority(tmp_path: Path):
             model="fabricated-model",
             agent_harness="fabricated-harness",
             context_scope="writer_capsule_only",
+            operation_kind="fabricated-operation",
+            operation_id="fabricated-operation-id",
+            result_transport="artifact",
             chapter=1,
             generation_id="generation.ch01.fabricated",
             content_sha256=hashlib.sha256(chapter.read_bytes()).hexdigest(),
             artifact=chapter,
         )
+
+
+def test_workflow_authority_has_no_standalone_issuer():
+    assert not hasattr(
+        artifact_integrity,
+        "_issue_workflow_authority",
+    )
+
+
+def test_session_completion_seals_native_operation_and_result_channel(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+
+    payload = record_session_completion(
+        tmp_path,
+        "demo",
+        session_id="native-writer-001",
+        session_instance_id="instance-native-writer-001",
+        role="writer",
+        provider="test-provider",
+        model="test-model",
+        agent_harness="test-harness",
+        context_scope="writer_capsule_only",
+        operation_kind="host_background_task",
+        operation_id="opaque-operation-001",
+        result_transport="artifact",
+        chapter=1,
+        generation_id="generation.ch01.current",
+        content_sha256=digest,
+        artifact=chapter,
+        workflow_authority=_workflow_authority(tmp_path),
+    )
+
+    assert payload["schema"] == "novel-forge-session-completion/v3"
+    assert payload["operation_kind"] == "host_background_task"
+    assert payload["operation_id"] == "opaque-operation-001"
+    assert payload["result_transport"] == "artifact"
 
 
 def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
@@ -842,7 +911,7 @@ def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
                 else f"planning/{state}.md"
             ),
         )
-    authority = _issue_workflow_authority()
+    authority = _workflow_authority(tmp_path)
     attest_chapter_ready_candidate(
         tmp_path,
         "demo",
@@ -1736,7 +1805,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
-            "- 工作流版本: v4.9（带类型句柄、正式角色结果与自动审稿恢复）",
+            "- 工作流版本: v5.0（Python 确定性控制、原生角色终态与零污染工作区）",
             "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
         ),
         encoding="utf-8",
@@ -1744,7 +1813,7 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "- 默认工作流: v4.9",
+            "- 默认工作流: v5.0",
             "- 默认工作流: v4.4",
         ),
         encoding="utf-8",
@@ -1754,8 +1823,8 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v4.9" in claude.read_text(encoding="utf-8")
-    assert "v4.9" in readme.read_text(encoding="utf-8")
+    assert "v5.0" in claude.read_text(encoding="utf-8")
+    assert "v5.0" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

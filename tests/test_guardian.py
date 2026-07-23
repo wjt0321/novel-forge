@@ -7,12 +7,12 @@ import importlib
 import importlib.util
 import json
 from pathlib import Path
+import uuid
 
 import pytest
 
 from app.novel_forge import book_project
 from app.novel_forge.artifact_integrity import (
-    _issue_workflow_authority,
     record_session_completion,
 )
 from app.novel_forge.chapter_sequence import (
@@ -28,6 +28,23 @@ from app.novel_forge.session_audit import (
     record_runtime_audit,
 )
 from app.novel_forge.skill_adapter import main as adapter_main
+from app.novel_forge.workflow import NovelWorkflowOrchestrator
+
+
+_AUTHORITY_CONTROLLERS: list[NovelWorkflowOrchestrator] = []
+
+
+def _workflow_authority(root: Path):
+    controller = NovelWorkflowOrchestrator(
+        root,
+        object(),
+        capsule_root=(
+            root.parent
+            / f"{root.name}-authority-capsules-{uuid.uuid4().hex[:8]}"
+        ),
+    )
+    _AUTHORITY_CONTROLLERS.append(controller)
+    return controller._workflow_authority
 
 
 def _guardian():
@@ -1002,11 +1019,14 @@ def test_runtime_ready_integrity_accepts_matching_capsule_receipt(
         model=generation["model"],
         agent_harness=generation["agent_harness"],
         context_scope="writer_capsule_only",
+        operation_kind="test-writer-operation",
+        operation_id="operation-native-writer-001",
+        result_transport="artifact",
         chapter=1,
         generation_id=generation["id"],
         content_sha256=generation["content_sha256"],
         artifact=chapter,
-        workflow_authority=_issue_workflow_authority(),
+        workflow_authority=_workflow_authority(root),
     )
 
     assert book_project._runtime_audit_errors(book_dir, generation) == []

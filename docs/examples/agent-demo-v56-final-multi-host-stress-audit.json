@@ -1,0 +1,87 @@
+{
+  "schema": "novel-forge-deidentified-demo-audit/v1",
+  "date": "2026-07-23",
+  "sample_count": 7,
+  "retains_prose": false,
+  "retains_session_ids": false,
+  "retains_hashes": false,
+  "retains_private_guardian_material": false,
+  "samples": [
+    {
+      "host": "Kimi Code",
+      "model_observation": "Kimi K2.7 thinking on",
+      "literary_result": "stable_but_not_best",
+      "workflow_result": "apparently_clean_runtime_untrusted",
+      "cost_result": "lower_than_k3_but_materially_underreported"
+    },
+    {
+      "host": "Claude Code",
+      "model_observation": "DeepSeek V4 Flash medium",
+      "literary_result": "balanced_when_native_roles_work",
+      "workflow_result": "native_isolation_promising_async_failures_observed",
+      "cost_result": "comparatively_economic"
+    },
+    {
+      "host": "Claude Code",
+      "model_observation": "DeepSeek V4 Pro medium",
+      "literary_result": "textured_but_overwritten",
+      "workflow_result": "formal_incomplete",
+      "cost_result": "higher_edit_cost"
+    },
+    {
+      "host": "Trae IDE",
+      "model_observation": "GPT-5.4",
+      "literary_result": "partly_natural_below_minimum",
+      "workflow_result": "degraded_exploration",
+      "cost_result": "not_comparable"
+    },
+    {
+      "host": "Qoder",
+      "model_observation": "Qwen 3.8 Max",
+      "literary_result": "best_pure_human_texture",
+      "workflow_result": "lead_authored_and_artifact_leak",
+      "cost_result": "formal_cost_untrusted"
+    },
+    {
+      "host": "Claude Code",
+      "model_observation": "MiniMax M3 medium",
+      "literary_result": "over_repaired",
+      "workflow_result": "four_review_rounds_no_convergence",
+      "cost_result": "extreme"
+    },
+    {
+      "host": "Kimi Code",
+      "model_observation": "Kimi K3 high",
+      "literary_result": "best_overall_commercial",
+      "workflow_result": "strong_native_process_but_control_plane_bypassed",
+      "cost_result": "very_high_due_to_full_regeneration"
+    }
+  ],
+  "final_rules": {
+    "positive": [
+      "active_choice_with_private_cost",
+      "embodied_work_changes_action",
+      "limited_knowledge_and_misjudgment",
+      "asymmetric_dialogue",
+      "continuous_body_object_space_state",
+      "character_consequence_drives_pull"
+    ],
+    "forbidden": [
+      "planning_as_prose",
+      "perfect_evidence_chain",
+      "mechanical_precision",
+      "uniform_sentence_patterns",
+      "explanatory_patch_seam",
+      "control_plane_language",
+      "unattested_completion"
+    ]
+  },
+  "architecture": {
+    "deterministic_python_control": true,
+    "visible_host_native_sessions": true,
+    "acp_forensics_only": true,
+    "creative_role_repository_writes": "forbidden",
+    "automatic_patch_limit": 1,
+    "provider_or_model_binding": false
+  }
+}

@@ -33,6 +33,8 @@ def test_blind_reader_task_judges_life_not_only_clarity_or_mystery():
     assert "每轮都从头完整阅读" in prompt.text
     assert "人物欲望是否进入动作、关系和代价" in prompt.text
     assert "漂亮结论替代现场余波" in prompt.text
+    assert "身体、物件和位置" in prompt.text
+    assert "解释性修补" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 
@@ -48,6 +50,8 @@ def test_chapter_editor_task_requires_complete_review_every_round():
     assert "固定台词句数" in prompt.text
     assert "用户硬锚合同优先于 Scene Package" in prompt.text
     assert "时间方向、金额或数量、物件位置、人物知识来源" in prompt.text
+    assert "完美证据链" in prompt.text
+    assert "不对称" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 

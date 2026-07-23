@@ -9,18 +9,20 @@ import os
 import re
 import secrets
 import tempfile
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
 from .models import NovelForgeError
+from .role_completion import RESULT_TRANSPORTS
 
 
 ARTIFACT_SEAL_SCHEMA = "novel-forge-artifact-seal/v1"
-SESSION_COMPLETION_SCHEMA = "novel-forge-session-completion/v2"
+SESSION_COMPLETION_SCHEMA = "novel-forge-session-completion/v3"
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
-_WORKFLOW_AUTHORITIES: set[str] = set()
+_AUTHORITY_CONSTRUCTOR_KEY = object()
 _IMMUTABLE_ARTIFACT_KINDS = frozenset(
     {
         "generation",
@@ -37,17 +39,56 @@ class ArtifactIntegrityError(NovelForgeError):
 class WorkflowAuthority:
     """Opaque in-process authority held only by the active orchestrator."""
 
-    __slots__ = ("_nonce",)
+    __slots__ = ("_nonce", "_owner_ref")
 
-    def __init__(self, nonce: str):
+    def __init__(
+        self,
+        nonce: str,
+        owner_ref: weakref.ReferenceType[object],
+        constructor_key: object,
+    ):
+        if constructor_key is not _AUTHORITY_CONSTRUCTOR_KEY:
+            raise ArtifactIntegrityError(
+                "编排器权限只能由活动控制器创建。"
+            )
         self._nonce = nonce
+        self._owner_ref = owner_ref
 
 
-def _issue_workflow_authority() -> WorkflowAuthority:
-    """Issue a non-serializable capability for one orchestrator process."""
-    nonce = secrets.token_hex(32)
-    _WORKFLOW_AUTHORITIES.add(nonce)
-    return WorkflowAuthority(nonce)
+class _WorkflowAuthorityRegistry:
+    """Bind opaque authority objects to live orchestrator instances."""
+
+    def __init__(self) -> None:
+        self._owners: dict[str, weakref.ReferenceType[object]] = {}
+
+    def issue_for(self, owner: object) -> WorkflowAuthority:
+        owner_type = type(owner)
+        if (
+            owner_type.__module__ != "app.novel_forge.workflow"
+            or owner_type.__name__ != "NovelWorkflowOrchestrator"
+        ):
+            raise ArtifactIntegrityError(
+                "编排器权限只能绑定活动 NovelWorkflowOrchestrator。"
+            )
+        nonce = secrets.token_hex(32)
+        owner_ref = weakref.ref(owner)
+        self._owners[nonce] = owner_ref
+        return WorkflowAuthority(
+            nonce,
+            owner_ref,
+            _AUTHORITY_CONSTRUCTOR_KEY,
+        )
+
+    def contains(self, authority: WorkflowAuthority) -> bool:
+        owner_ref = self._owners.get(authority._nonce)
+        return (
+            owner_ref is not None
+            and owner_ref is authority._owner_ref
+            and owner_ref() is not None
+        )
+
+
+_WORKFLOW_AUTHORITY_REGISTRY = _WorkflowAuthorityRegistry()
 
 
 def require_workflow_authority(
@@ -56,7 +97,7 @@ def require_workflow_authority(
     """Reject control-plane mutations outside an active orchestrator."""
     if (
         not isinstance(authority, WorkflowAuthority)
-        or authority._nonce not in _WORKFLOW_AUTHORITIES
+        or not _WORKFLOW_AUTHORITY_REGISTRY.contains(authority)
     ):
         raise ArtifactIntegrityError(
             "正式自动流程缺少编排器权限，不能伪造会话完成或 ready。"
@@ -261,6 +302,9 @@ def record_session_completion(
     model: str,
     agent_harness: str,
     context_scope: str,
+    operation_kind: str,
+    operation_id: str,
+    result_transport: str,
     chapter: int,
     generation_id: str,
     content_sha256: str,
@@ -290,6 +334,9 @@ def record_session_completion(
         "model": model,
         "agent_harness": agent_harness,
         "context_scope": context_scope,
+        "operation_kind": operation_kind,
+        "operation_id": operation_id,
+        "result_transport": result_transport,
         "chapter": chapter,
         "generation_id": generation_id,
         "content_sha256": content_sha256,
@@ -298,6 +345,8 @@ def record_session_completion(
     }
     if any(not str(value).strip() for value in values.values()):
         raise ArtifactIntegrityError("会话完成凭证缺少必要字段。")
+    if result_transport not in RESULT_TRANSPORTS:
+        raise ArtifactIntegrityError("会话完成凭证结果通道无效。")
     directory = _ledger_dir(root, slug) / "session-completions"
     if directory.is_dir():
         for path in directory.glob("*.json"):

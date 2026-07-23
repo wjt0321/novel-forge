@@ -30,6 +30,10 @@ def test_formal_writer_prompt_is_short_complete_and_vendor_neutral():
     assert "规划是后台故事义务" in prompt.text
     assert "不得在正文中逐条证明" in prompt.text
     assert "允许人物误判、遗漏、自欺" in prompt.text
+    assert "具体私人代价" in prompt.text
+    assert "身体、物件和位置" in prompt.text
+    assert "完美证据链" in prompt.text
+    assert "解释性修补" in prompt.text
     assert "整齐问答记录" in prompt.text
     assert "机械插入动作" in prompt.text
     assert len(prompt.text) <= MAX_FORMAL_WRITER_PROMPT_CHARS

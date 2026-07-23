@@ -50,6 +50,9 @@ class SessionRunState:
     operation_id: str
     status: str
     operation_kind: str = "opaque_host_operation"
+    role: str | None = None
+    session_id: str | None = None
+    session_instance_id: str | None = None
     resolved_model: str | None = None
     result_transport: str | None = None
     role_result: dict[str, Any] | None = field(
@@ -102,12 +105,30 @@ def parse_role_run_state(payload: dict[str, Any]) -> SessionRunState:
     resolved_model = payload.get("resolved_model")
     if resolved_model is None:
         resolved_model = payload.get("resolvedModel")
+    session_binding = payload.get("session_binding")
+    if not isinstance(session_binding, dict):
+        session_binding = payload
+    role = str(session_binding.get("role") or "").strip() or None
+    session_id = (
+        str(session_binding.get("session_id") or "").strip() or None
+    )
+    session_instance_id = (
+        str(
+            session_binding.get("session_instance_id")
+            or session_binding.get("sessionInstanceId")
+            or ""
+        ).strip()
+        or None
+    )
     result_transport = payload.get("result_transport")
     role_result = payload.get("role_result")
     return SessionRunState(
         operation_id=operation_id,
         operation_kind=operation_kind,
         status=status,
+        role=role,
+        session_id=session_id,
+        session_instance_id=session_instance_id,
         resolved_model=(
             str(resolved_model).strip() if resolved_model else None
         ),
@@ -128,10 +149,33 @@ def require_role_result(
     state: SessionRunState,
     *,
     expected_role: str,
+    expected_session_id: str | None = None,
+    expected_session_instance_id: str | None = None,
 ) -> dict[str, Any]:
     """Return a completed result bound to the expected creative role."""
     if state.status != "completed":
         raise RoleCompletionError("角色会话尚未到达官方完成终态。")
+    if (
+        expected_session_id is not None
+        or expected_session_instance_id is not None
+    ) and (
+        not state.role
+        or not state.session_id
+        or not state.session_instance_id
+    ):
+        raise RoleCompletionError("角色完成终态缺少原生会话绑定。")
+    if state.role is not None and state.role != expected_role:
+        raise RoleCompletionError("角色完成终态与当前角色不匹配。")
+    if (
+        expected_session_id is not None
+        and state.session_id != expected_session_id
+    ):
+        raise RoleCompletionError("角色完成终态与当前原生会话不匹配。")
+    if (
+        expected_session_instance_id is not None
+        and state.session_instance_id != expected_session_instance_id
+    ):
+        raise RoleCompletionError("角色完成终态与当前会话实例不匹配。")
     result = state.role_result
     if not isinstance(result, dict):
         raise RoleCompletionError("角色完成后没有返回可验证的角色产物。")

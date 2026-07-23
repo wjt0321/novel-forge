@@ -8,6 +8,11 @@
 
 - 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session，Lead 按 Skill
   调度、等待并回收产物；原生角色可用时不得因命令 Backend 缺失而停止。
+- Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写正文、审稿、
+  evidence、状态或 ready，也不从缺失结果中补造完成态。
+- 创作角色对项目仓库零写入：Writer 只写仓库外 capsule 的 `draft/正文.md`，
+  规划和审稿只返回结构化结果。额外项目产物会被清理并换新会话。
+- ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - `python tools/novel-workflow.py ... start` 是可选 headless 命令入口；

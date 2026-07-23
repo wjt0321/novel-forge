@@ -19,7 +19,7 @@ from typing import Any, Callable, Protocol
 
 from . import book_project
 from .artifact_integrity import (
-    _issue_workflow_authority,
+    _WORKFLOW_AUTHORITY_REGISTRY,
     record_session_completion,
 )
 from .book_evidence import (
@@ -59,6 +59,11 @@ from .session_audit import (
     audit_session_log,
     evaluate_session_budget,
     record_runtime_audit,
+)
+from .workspace_integrity import (
+    WorkspaceDelta,
+    guarded_role_call,
+    snapshot_workspace,
 )
 
 
@@ -185,6 +190,12 @@ class ReviewOutcome:
     evidence_quote: str = ""
     previous_chapter_quote: str = "not_applicable"
     resolved_model: str | None = None
+    terminal_role: str | None = None
+    terminal_session_id: str | None = None
+    terminal_session_instance_id: str | None = None
+    operation_id: str | None = None
+    operation_kind: str | None = None
+    result_transport: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +204,12 @@ class PlanningOutcome:
 
     files: dict[str, str]
     resolved_model: str | None = None
+    terminal_role: str | None = None
+    terminal_session_id: str | None = None
+    terminal_session_instance_id: str | None = None
+    operation_id: str | None = None
+    operation_kind: str | None = None
+    result_transport: str | None = None
 
 
 @dataclass(frozen=True)
@@ -260,30 +277,6 @@ class SessionBackend(Protocol):
 class CommandSessionBackend:
     """Run a configured external Harness through a small JSON file protocol."""
 
-    _MUTABLE_ROOT_NAMES = frozenset(
-        {
-            ".git",
-            ".local-book-git",
-            ".local-guardian",
-            ".novel-forge",
-            ".pytest_cache",
-            ".tmp-capsule",
-            "__pycache__",
-            "books",
-            "data",
-            "experiments",
-            "library",
-            "work",
-        }
-    )
-    _IGNORED_DIRECTORY_NAMES = frozenset(
-        {
-            ".mypy_cache",
-            ".pytest_cache",
-            ".ruff_cache",
-            "__pycache__",
-        }
-    )
     _SCRIPT_SUFFIXES = frozenset(
         {".bat", ".cmd", ".exe", ".js", ".mjs", ".ps1", ".py", ".sh"}
     )
@@ -384,26 +377,7 @@ class CommandSessionBackend:
                 )
 
     def _control_plane_snapshot(self) -> dict[str, str]:
-        if not self.root.is_dir():
-            return {}
-        snapshot: dict[str, str] = {}
-        for path in self.root.rglob("*"):
-            relative = path.relative_to(self.root)
-            if not relative.parts:
-                continue
-            if relative.parts[0] in self._MUTABLE_ROOT_NAMES:
-                continue
-            if any(
-                part in self._IGNORED_DIRECTORY_NAMES
-                for part in relative.parts
-            ):
-                continue
-            key = relative.as_posix()
-            if path.is_symlink():
-                snapshot[key] = f"symlink:{os.readlink(path)}"
-            elif path.is_file():
-                snapshot[key] = self._file_sha256(path)
-        return snapshot
+        return snapshot_workspace(self.root)
 
     @staticmethod
     def _changed_snapshot_paths(
@@ -495,6 +469,8 @@ class CommandSessionBackend:
             result = require_role_result(
                 completion,
                 expected_role=expected_role,
+                expected_session_id=session.session_id,
+                expected_session_instance_id=session.session_instance_id,
             )
         except RoleCompletionError as exc:
             raise WorkflowError(str(exc)) from exc
@@ -651,6 +627,12 @@ class CommandSessionBackend:
         return PlanningOutcome(
             files=dict(files),
             resolved_model=completion.resolved_model,
+            terminal_role=completion.role,
+            terminal_session_id=completion.session_id,
+            terminal_session_instance_id=completion.session_instance_id,
+            operation_id=completion.operation_id,
+            operation_kind=completion.operation_kind,
+            result_transport=completion.result_transport,
         )
 
     def run_review(
@@ -731,6 +713,12 @@ class CommandSessionBackend:
                 or "not_applicable"
             ),
             resolved_model=completion.resolved_model,
+            terminal_role=completion.role,
+            terminal_session_id=completion.session_id,
+            terminal_session_instance_id=completion.session_instance_id,
+            operation_id=completion.operation_id,
+            operation_kind=completion.operation_kind,
+            result_transport=completion.result_transport,
         )
 
 
@@ -868,9 +856,29 @@ class NovelWorkflowOrchestrator:
             writer_completion_timeout_seconds
         )
         self.on_status = on_status or (lambda _: None)
-        self._workflow_authority = _issue_workflow_authority()
+        self._workflow_authority = (
+            _WORKFLOW_AUTHORITY_REGISTRY.issue_for(self)
+        )
         self._seen_sessions: set[str] = set()
         self._seen_session_instances: set[str] = set()
+
+    @staticmethod
+    def _workspace_error(delta: WorkspaceDelta) -> Exception:
+        if delta.modified or delta.deleted:
+            code = "control_plane_mutation"
+        else:
+            code = "unexpected_project_artifact"
+        preview = ", ".join(delta.changed[:3])
+        return ControlPlaneMutationError(
+            f"{code}: 创作角色改动了项目工作区：{preview}"
+        )
+
+    def _role_call(self, callback: Callable[[], Any]) -> Any:
+        return guarded_role_call(
+            self.root,
+            callback,
+            error_factory=self._workspace_error,
+        )
 
     def _control_path(self, slug: str) -> Path:
         return self.root / "books" / slug / "planning/workflow/active.json"
@@ -913,9 +921,11 @@ class NovelWorkflowOrchestrator:
 
     def _new_session(self, role: str) -> SessionIdentity:
         preference = self.role_preferences.get(role)
-        session = self.backend.create_session(
-            role,
-            preference=preference,
+        session = self._role_call(
+            lambda: self.backend.create_session(
+                role,
+                preference=preference,
+            )
         )
         if not session.session_id.strip():
             raise WorkflowError("自动写作引擎没有创建有效会话。")
@@ -1163,14 +1173,28 @@ class NovelWorkflowOrchestrator:
         writer_session = self._new_session("writer")
         self.on_status("正在写作。")
         book_dir = self._prepare_project(slug, request, chapter)
-        planning = self.backend.run_planning(
-            writer_session,
-            request=request,
-            chapter=chapter,
-            context=self._planning_context(book_dir, chapter),
-            instructions=render_planning_instructions().text,
-            reasoning_effort="high",
+        planning = self._role_call(
+            lambda: self.backend.run_planning(
+                writer_session,
+                request=request,
+                chapter=chapter,
+                context=self._planning_context(book_dir, chapter),
+                instructions=render_planning_instructions().text,
+                reasoning_effort="high",
+            )
         )
+        if (
+            planning.terminal_role != "writer-planning"
+            or planning.terminal_session_id != writer_session.session_id
+            or planning.terminal_session_instance_id
+            != writer_session.session_instance_id
+            or not planning.operation_id
+            or not planning.operation_kind
+            or not planning.result_transport
+        ):
+            raise WorkflowError(
+                "规划结果没有绑定当前原生 Writer 会话终态。"
+            )
         if planning.resolved_model:
             writer_session = replace(
                 writer_session,
@@ -1274,14 +1298,56 @@ class NovelWorkflowOrchestrator:
                 regeneration_authorization_id=authorization_id,
                 patch_directive=directive or None,
             )
-            try:
-                run = self.backend.run_writer(
+
+            def run_writer_role() -> tuple[
+                SessionRunState,
+                SessionRunState,
+            ]:
+                launched = self.backend.run_writer(
                     session,
                     capsule_dir=capsule,
                     capsule_id=prepared["capsule_id"],
                     runtime_path=runtime_path,
                     must_findings=must_findings,
                 )
+                terminal = launched
+                if launched.status == "launched":
+                    try:
+                        terminal = self.backend.wait_for_completion(
+                            session,
+                            run=launched,
+                            timeout_seconds=(
+                                self.writer_completion_timeout_seconds
+                            ),
+                        )
+                    except Exception:
+                        terminal = SessionRunState(
+                            operation_id=launched.operation_id,
+                            operation_kind=launched.operation_kind,
+                            status="failed",
+                        )
+                return launched, terminal
+
+            try:
+                run, completion = self._role_call(run_writer_role)
+            except ControlPlaneMutationError as exc:
+                reason = (
+                    "control_plane_mutation"
+                    if str(exc).startswith("control_plane_mutation:")
+                    else "unexpected_project_artifact"
+                )
+                reject_writer_capsule(
+                    self.root,
+                    slug,
+                    prepared["capsule_id"],
+                    reason=reason,
+                )
+                if attempt < self.max_technical_retries:
+                    self.on_status(
+                        "写作会话异常，已自动换新会话重试。"
+                    )
+                    continue
+                return None
             except Exception:
                 reject_writer_capsule(
                     self.root,
@@ -1295,22 +1361,6 @@ class NovelWorkflowOrchestrator:
                     )
                     continue
                 return None
-            completion = run
-            if run.status == "launched":
-                try:
-                    completion = self.backend.wait_for_completion(
-                        session,
-                        run=run,
-                        timeout_seconds=(
-                            self.writer_completion_timeout_seconds
-                        ),
-                    )
-                except Exception:
-                    completion = SessionRunState(
-                        operation_id=run.operation_id,
-                        operation_kind=run.operation_kind,
-                        status="failed",
-                    )
             if (
                 completion.operation_id != run.operation_id
                 or completion.operation_kind != run.operation_kind
@@ -1342,6 +1392,8 @@ class NovelWorkflowOrchestrator:
                 writer_result = require_role_result(
                     completion,
                     expected_role="writer",
+                    expected_session_id=session.session_id,
+                    expected_session_instance_id=session.session_instance_id,
                 )
                 artifact_relative_path = str(
                     writer_result["payload"].get(
@@ -1420,6 +1472,9 @@ class NovelWorkflowOrchestrator:
                 model=session.model,
                 agent_harness=session.agent_harness,
                 context_scope="writer_capsule_only",
+                operation_kind=completion.operation_kind,
+                operation_id=completion.operation_id,
+                result_transport=str(completion.result_transport),
                 chapter=chapter,
                 generation_id=generation_id,
                 content_sha256=imported["body_sha256"],
@@ -1672,6 +1727,9 @@ class NovelWorkflowOrchestrator:
             model=blind_session.model,
             agent_harness=blind_session.agent_harness,
             context_scope="prose_only",
+            operation_kind=str(blind.operation_kind),
+            operation_id=str(blind.operation_id),
+            result_transport=str(blind.result_transport),
             chapter=chapter,
             generation_id=blind_binding["generation_id"],
             content_sha256=blind_binding["chapter_sha256"],
@@ -1734,6 +1792,9 @@ class NovelWorkflowOrchestrator:
             model=editor_session.model,
             agent_harness=editor_session.agent_harness,
             context_scope="full_review_context",
+            operation_kind=str(editor.operation_kind),
+            operation_id=str(editor.operation_id),
+            result_transport=str(editor.result_transport),
             chapter=chapter,
             generation_id=editor_binding["generation_id"],
             content_sha256=editor_binding["chapter_sha256"],
@@ -1761,19 +1822,33 @@ class NovelWorkflowOrchestrator:
     ) -> tuple[SessionIdentity, ReviewOutcome, str, int]:
         """Run one reviewer in fresh sessions until a valid result arrives."""
         for attempt in range(self.max_technical_retries + 1):
-            session = self._new_session(role)
             try:
-                outcome = self.backend.run_review(
-                    session,
-                    role=role,
-                    context=context,
-                    instructions=render_review_instructions(role).text,
-                    reasoning_effort="medium",
+                session = self._new_session(role)
+                outcome = self._role_call(
+                    lambda: self.backend.run_review(
+                        session,
+                        role=role,
+                        context=context,
+                        instructions=render_review_instructions(role).text,
+                        reasoning_effort="medium",
+                    )
                 )
                 if outcome.resolved_model:
                     session = replace(
                         session,
                         model=outcome.resolved_model,
+                    )
+                if (
+                    outcome.terminal_role != role
+                    or outcome.terminal_session_id != session.session_id
+                    or outcome.terminal_session_instance_id
+                    != session.session_instance_id
+                    or not outcome.operation_id
+                    or not outcome.operation_kind
+                    or not outcome.result_transport
+                ):
+                    raise WorkflowError(
+                        "审稿结果没有绑定当前原生角色会话终态。"
                     )
                 text = self._render_review(
                     slug,

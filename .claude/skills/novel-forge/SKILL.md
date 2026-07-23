@@ -10,26 +10,29 @@ Novel Forge 是可审计的中文长篇生产链；文学目标是：**这篇小
 ## 选择入口
 
 - **自动生产唯一入口**：默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；
-  Lead 按本 Skill 调度、等待、回收产物，原生角色可用时不得因命令 Backend 缺失而停止。
-- 控制面写入只经 adapter；不得自行创建正文、规划、审稿或 ready Git 恢复点。
-  新书先由确定性控制面通过 `init-novel-project` 初始化，再创建 Writer 规划会话。
-  `tools/novel-workflow.py start` 是可选 headless 入口；
+  Lead 按本 Skill 调度；原生角色可用时不得因命令 Backend 缺失而停止。
+- Python 状态机决定下一步；宿主只负责创建、等待和回传，不写证据、状态或 ready。
+  控制环固定为：Python 给短指令 → 宿主建新会话 → 按 typed operation handle
+  等官方终态 → 回传终态与 `role_result` → Python 校验并提交迁移。
+- completed 必须绑定 role、session_id、session_instance_id、原 operation handle
+  和结果通道。必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
+  `idle/available` 与晚到旧结果无效。
+- 创作角色对项目仓库零写入：规划和审稿只回传结构化结果；Writer 只写仓库外
+  capsule 的 `draft/正文.md`。项目内新增产物按 `unexpected_project_artifact`
+  清理并换新会话；修改或删除既有文件按 `control_plane_mutation` 中止。
+- ACP 只用于事后取证、统计和根因调查，不创建生产会话，不参与 ready、Guardian
+  或 Git。`tools/novel-workflow.py start` 是可选 headless 入口；
   `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
-- 高权限只属于无模型推理的确定性控制面；Lead 只调度，三个创作角色只交付各自产物。
-  必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-  保存宿主返回的真实 `operation_handle.kind/value`；句柄类型决定官方 wait/join
-  通道，禁止把 agent ID 猜成 task ID、用角色名查询、固定 sleep 或文件轮询。
-  每角色默认等待 30 分钟，working/progress 时不得提前 stop；`idle/available`
-  不是完成产物，completed 还必须带绑定角色的 `role_result`。
-  Blind Reader 正式记录后才能启动 Chapter Editor；退役 session 的晚到结果无效。
-  无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
+- 高权限只属于无模型推理的确定性控制面；写入只经 adapter；不得自行创建正文、规划、审稿或 ready Git 恢复点。
+  新书先由确定性控制面通过 `init-novel-project` 初始化。Blind Reader 正式记录后才能启动 Chapter Editor；
+  无法创建、隔离或等待真实角色时只说明“本章未开始”。
   `degraded_exploration` 只有用户明确要求探索稿时才允许。
 - 模型偏好可按角色配置或继承父会话，但不绑定厂商；证据只认终态 `resolvedModel`。
 - 创作 Lead/角色不得创建、修改、修复、包装、安装或配置 Harness / SessionBackend；
   不得自行设置命令桥，不得向用户提供部署或配置 Harness 的选项。
 Adapter 从仓库根运行，`--root` 用绝对路径；变更操作须 `--confirm <operation>`。
 
-## Books v4.9
+## Books v5.0
 
 默认状态链只有八态：
 
@@ -65,23 +68,14 @@ Session/Capsule，晚到旧稿不得覆盖重试稿。
 
 ### 章节序列与新会话
 
-正式生产一次只做一章，执行单位是**一章一个原生 writer session**。
-sequence 返回 launch directive：
-
-1. 新 Writer 先交付本章规划；再运行 `begin-chapter-sequence --chapter-count 1`。
-2. 连续多章仍逐章换 Writer；单次序列最多 4 章，五章及以上拆分。
-3. Lead 等待原生 Writer，控制面用 `claim-chapter-session` 绑定真实 session ID；
-   后续章按 directive 新建会话。角色名或编排器 ID 不能代替原生 session ID；
-   Backend 还须返回唯一 `session_instance_id`。随后创建 capsule。
-4. Writer 只写本章正文，输出后停止角色工作；证据、审稿、状态、ready 与 Git 由
-   控制面和独立角色处理，Lead 不得代做。上一章完整 `ready` 后再运行
-   `advance-chapter-sequence`，只有返回 `launch_next_session=true` 时才顺序创建
-   下一章的新 session。
-5. session 不得跨章或跨书；generation `run_id` 必须等于 claim ID。三角色完成凭证
-   绑定当前章、Generation、正文和角色产物，只由 Orchestrator 写；缺一不能 ready。
-
-交接包只含硬锚、相关 Canon/承诺、上一章末段、Voice exemplar 和 Writer Story Brief；
-不续传旧会话。完整 Scene Package 是 Chapter Editor 控制面，决策审计不进 Writer。
+正式一次只做一章，一章一个新 writer session。先交付规划，再运行
+`begin-chapter-sequence --chapter-count 1`；连续任务单次最多 4 章。控制面用
+`claim-chapter-session` 绑定真实 session ID，Backend 同时返回唯一
+`session_instance_id`；角色名不能代替会话。Writer 只写正文，其他产物归控制面。
+上一章完整 `ready` 后才运行 `advance-chapter-sequence`，并仅在
+`launch_next_session=true` 时新建下一章会话。session 不得跨书/章，generation
+`run_id` 必须等于 claim ID。交接只含硬锚、相关 Canon/承诺、上一章末段、Voice
+exemplar 和 Writer Story Brief；完整 Scene Package 是 Chapter Editor 控制面。
 
 ### 每书本地 Git
 
@@ -154,7 +148,7 @@ sequence 返回 launch directive：
 `voice-anchor-surface-copy` 查 exemplar 表层复制。只提醒编辑器，不生成数值目标。
 机器不认证文学价值。
 
-`literary-micro-rules/v3` 是短规则唯一来源；日常不加载样本全文。三角色按“可以写、
+`literary-micro-rules/v4` 是短规则唯一来源；日常不加载样本全文。三角色按“可以写、
 慎写、允许、绝对禁止”判断主动选择、私人代价、物理状态、知识来源、机械精确、
 完美证据链和控制面泄漏；完整解释见 `docs/35-literary-rule-manual.md`。
 
@@ -215,7 +209,7 @@ sequence 返回 launch directive：
 只读：`project-status`、`run-gates`、`evidence-status`、`memory-status`、
 `chapter-sequence-status`、`session-audit`、`book-git-status`。变更参数查 `--help`。
 
-`sync-tools` 只迁移带版本标记的生成文件到 v4.9；手写项目宪法不动，旧专业 Agent
+`sync-tools` 只迁移带版本标记的生成文件到 v5.0；手写项目宪法不动，旧专业 Agent
 仅作兼容资产。
 
 同章同正文 SHA-256 只能算一个 generation。`harness_exposed` 必须有真实 `run_id`、
