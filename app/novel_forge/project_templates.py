@@ -140,7 +140,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v5.0（Python 确定性控制、原生角色终态与零污染工作区）
+- 工作流版本: v5.1（Python 原生会话 Relay、双保证模式与零污染工作区）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -149,8 +149,9 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - `evidence/` 证明过程，不代表作者批准；`ready` 也不代表发布许可。
 
 ## 自动生产唯一入口
-- 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
-  调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- 创作任务禁止先探索仓库实现。首个写操作必须是
+  `python tools/novel-workflow.py ... start`；没有命令 Backend 时自动进入原生会话
+  Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
 - Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写角色产物、
   evidence、状态或 ready，也不从缺失结果中补造完成态。
 - 创作角色对项目仓库零写入：规划和审稿只返回结构化结果，Writer 只写仓库外
@@ -158,8 +159,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- `python tools/novel-workflow.py ... start` 是可选 headless 入口；
-  `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
+- `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
 - 创建后保存宿主返回的真实 `operation_handle.kind/value`；句柄 kind 决定宿主的
@@ -172,11 +172,14 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
   `novel-forge-blind-reader`、`novel-forge-chapter-editor`，不得退回
   general-purpose 后仍宣称使用了项目角色。
-- 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
+- 无法创建或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
   / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
+- Writer 规划阶段可做最多 5 次题材、事实边界和重名检索；不得借此阅读工作流源码。
+- 默认 `formal_native` 使用外置 Capsule、零项目写入、全仓快照和 Guardian；
+  宿主有真实 OS 沙箱时透明升级为 `formal_sandboxed`，不询问用户 A/B。
 
 ## 本地版本历史
 - 本书使用独立本地 Git；工作区内 `.git` 只指向主仓库忽略的
@@ -200,9 +203,10 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
    `claim-chapter-session` 绑定真实 session id。不得把编排器 session、角色名或
    上一章 session 冒充新会话。
 3. Orchestrator 运行 `prepare-writer-capsule`，把当前章有界 handoff 放进仓库外
-   capsule。启动 writer 时必须把文件系统限制在 capsule；writer 只能读取
-   `instructions.md` 与 `handoff.md`，只能输出 `draft/正文.md`，看不到本书控制面、
-   evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
+   capsule。默认 `formal_native` 只向 writer 交付 Capsule 输入并用全仓前后快照
+   验证零项目写入；宿主有真实沙箱时透明升级为 `formal_sandboxed` capsule-only。
+   writer 只能读取 `instructions.md` 与 `handoff.md`，只能输出 `draft/正文.md`，
+   不得接收本书控制面、evidence、sequence、校验器源码或其他章节。`instructions.md` 由 Guardian 按
    `{FORMAL_WRITER_PROMPT_ID}` 编译，不回灌完整 Skill。handoff 中只放过滤后的
    Writer Story Brief；完整 Scene Package 的决策问题、替代解释、可证伪假设、因果
    归属和专业判断审计只供 Chapter Editor 使用。确定性控制面或可选 headless Harness 在 capsule 外生成标准
@@ -264,7 +268,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v5.0；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v5.1；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -1527,14 +1531,14 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
 `{_STATE_CHAIN}`
 
 ## 自动生产唯一入口
-- 默认使用当前宿主原生的独立 Roles / Teams / Task Agent / Session；Lead 按 Skill
-  调度和等待，原生角色可用时不得因命令 Backend 缺失而停止。
+- 创作任务禁止先探索仓库实现。首个写操作必须是
+  `python tools/novel-workflow.py ... start`；没有命令 Backend 时自动进入原生会话
+  Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
 - Python 状态机决定下一步；宿主只负责创建、等待和回传。创作角色对项目仓库零写入，
   ACP 只用于事后取证，不参与生产控制。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- `python tools/novel-workflow.py ... start` 是可选 headless 入口；
-  `NOVEL_FORGE_HARNESS_COMMAND` 只用于可选 headless。
+- `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
 - 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
 - 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
 - 创建角色后立即保存宿主返回的真实 `operation_handle.kind/value`。句柄 kind
@@ -1550,11 +1554,14 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   否则废弃该 session 并新开同角色 session，最多自动重试两次。
 - 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
   返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
-- 无法创建、隔离或等待真实独立角色时停止，只说明“本章未开始”。
+- 无法创建或等待真实独立角色时停止，只说明“本章未开始”。
 - 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
   / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
+- Writer 规划阶段可做最多 5 次题材、事实边界和重名检索；不得借此阅读工作流源码。
+- 默认 `formal_native` 使用外置 Capsule、零项目写入、全仓快照和 Guardian；
+  宿主有真实 OS 沙箱时透明升级为 `formal_sandboxed`，不询问用户 A/B。
 
 ## 默认闭环
 1. 启动时读取 `evaluation/harness-contract.json` 与
@@ -1566,7 +1573,8 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
 3. 每次 launch directive 只允许当前一章。Lead 创建并等待新的原生 writer session，
    Claude Code 使用 `novel-forge-writer`；其他宿主使用语义等价的 Writer role。
    控制面立即 `claim-chapter-session`，再运行 `prepare-writer-capsule`，
-   把仓库外目录作为该 writer session 唯一可见、可写的文件系统范围。
+   默认只交付仓库外 Capsule 并用全仓快照验证零项目写入；宿主有真实文件系统沙箱时
+   透明升级为 capsule-only。
 4. Guardian 按 `{FORMAL_WRITER_PROMPT_ID}` 编译短小的 `instructions.md`。Writer 只读
    capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；确定性控制面
    在 capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置

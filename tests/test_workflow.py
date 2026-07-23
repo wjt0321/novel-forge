@@ -1490,7 +1490,7 @@ def test_unavailable_backend_does_not_create_partial_book(tmp_path: Path):
     assert not (root / "books/demo").exists()
 
 
-def test_missing_command_backend_reports_chapter_not_started(
+def test_missing_command_backend_starts_native_relay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1518,14 +1518,16 @@ def test_missing_command_backend_reports_chapter_not_started(
         ]
     )
 
-    assert code == 2
-    assert capsys.readouterr().out.strip() == (
-        "自动写作环境尚未就绪，本章没有开始。"
-    )
-    assert not (tmp_path / "books/demo").exists()
+    assert code == 0
+    assert capsys.readouterr().out.strip() == "正在写作。"
+    assert (tmp_path / "books/demo").is_dir()
+    assert (
+        tmp_path
+        / ".local-guardian/demo/native-relay/next-action.json"
+    ).is_file()
 
 
-def test_command_workflow_help_marks_entry_as_optional_headless(
+def test_command_workflow_help_marks_native_relay_as_default(
     capsys: pytest.CaptureFixture[str],
 ):
     with pytest.raises(SystemExit) as raised:
@@ -1533,8 +1535,8 @@ def test_command_workflow_help_marks_entry_as_optional_headless(
 
     assert raised.value.code == 0
     output = capsys.readouterr().out
-    assert "可选 headless" in output
-    assert "Skill 原生 Roles" in output
+    assert "原生会话接力" in output
+    assert "可选命令 Backend" in output
 
 
 def test_repository_local_command_harness_is_rejected(tmp_path: Path):

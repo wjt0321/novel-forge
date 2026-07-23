@@ -216,6 +216,9 @@ def test_guardian_contract_is_vendor_neutral_and_token_bounded():
 
     assert contract["schema"] == "novel-forge-guardian-contract/v1"
     assert contract["workspace"]["mode"] == "isolated_writer_capsule"
+    assert contract["workspace"]["default_assurance_mode"] == "formal_native"
+    assert contract["workspace"]["filesystem_sandbox_required"] is False
+    assert contract["workspace"]["filesystem_sandbox_optional"] is True
     assert contract["workspace"]["book_control_plane_visible"] is False
     assert contract["workspace"]["validator_source_visible"] is False
     assert "instructions.md" in contract["inputs"]["allowed"]
@@ -236,6 +239,53 @@ def test_guardian_contract_is_vendor_neutral_and_token_bounded():
     serialized = json.dumps(contract, ensure_ascii=False).lower()
     for vendor in ("claude", "deepseek", "minimax", "openai", "anthropic"):
         assert vendor not in serialized
+
+
+def test_guardian_accepts_guarded_native_isolation_attestation(
+    tmp_path: Path,
+):
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    _book(root)
+    capsule = tmp_path / "capsules" / "writer-native"
+    prepared = guardian.prepare_writer_capsule(
+        root,
+        "demo",
+        "seq-guardian",
+        "native-writer-001",
+        capsule,
+        "chapters/e01/ch-01/正文.md",
+    )
+    runtime = _runtime_snapshot(
+        "native-writer-001",
+        capsule_id=prepared["capsule_id"],
+    )
+    runtime["guardian"] = {
+        "capsule_id": prepared["capsule_id"],
+        "workspace_mode": "isolated_writer_capsule",
+        "assurance_mode": "formal_native",
+        "filesystem_scope": "guarded_native",
+        "write_scope": "post_execution_verified",
+        "repository_snapshot_enforced": True,
+        "book_control_plane_visible": False,
+        "validator_source_visible": False,
+        "reported_by": "native_host",
+    }
+    runtime_path = tmp_path / "runtime" / "native.json"
+    runtime_path.parent.mkdir(parents=True)
+    runtime_path.write_text(
+        json.dumps(runtime, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    recorded = guardian.record_capsule_runtime(
+        root,
+        "demo",
+        prepared["capsule_id"],
+        runtime_path.resolve(),
+    )
+
+    assert recorded["isolation_mode"] == "formal_native"
 
 
 def test_prepare_capsule_exposes_only_bounded_inputs(tmp_path: Path):

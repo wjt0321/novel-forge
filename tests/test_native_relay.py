@@ -1,0 +1,756 @@
+"""Tests for the persistent native-host workflow relay."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+from pathlib import Path
+
+from app.novel_forge import book_project
+from app.novel_forge.native_relay import NativeWorkflowRelay
+from app.novel_forge.workflow import SessionIdentity, WorkflowRequest
+from tests.test_workflow import (
+    ScriptedBackend,
+    _must_reviews,
+    _pass_reviews,
+    _prose,
+    _runtime,
+)
+
+
+def _request() -> WorkflowRequest:
+    return WorkflowRequest(
+        title="测试书",
+        genre="民俗悬疑",
+        protagonist="林舟",
+        world="旧城的建筑会保存死者留下的声音。",
+        conflict="林舟必须在封锁前打开戏楼暗门。",
+        ending_hook="暗门后传来失踪者的敲击声。",
+    )
+
+
+def test_native_start_prepares_writer_planning_action_without_harness(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+
+    result = relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+
+    assert result.user_state == "running"
+    assert result.message == "正在写作。"
+    assert action["schema"] == "novel-forge-native-action/v1"
+    assert action["kind"] == "run_role"
+    assert action["role"] == "writer-planning"
+    assert action["session"]["mode"] == "new"
+    assert action["reasoning_effort"] == "high"
+    assert action["result"]["schema"] == "novel-forge-role-result/v1"
+    assert (root / "books/demo").is_dir()
+    serialized = json.dumps(action, ensure_ascii=False)
+    assert "app/novel_forge" not in serialized
+    assert "tests/" not in serialized
+    assert "docs/" not in serialized
+    assert "NOVEL_FORGE_HARNESS_COMMAND" not in serialized
+
+
+def test_native_action_is_stored_outside_the_book_project(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+
+    relay.start("demo", _request(), chapter=1)
+
+    assert not (
+        root / "books/demo/planning/workflow/next-action.json"
+    ).exists()
+    assert (
+        root / ".local-guardian/demo/native-relay/next-action.json"
+    ).is_file()
+
+
+def test_native_stop_retires_pending_action(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    relay.start("demo", _request(), chapter=1)
+
+    result = relay.stop("demo")
+
+    assert result.user_state == "stopped"
+    assert not (
+        root / ".local-guardian/demo/native-relay/next-action.json"
+    ).exists()
+    assert relay.status("demo").user_state == "stopped"
+
+
+def test_planning_completion_prepares_reused_writer_capsule(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    session = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="test-provider",
+        model="test-writer",
+        agent_harness="test-native-host",
+        role="writer",
+    )
+    planning = ScriptedBackend([], []).run_planning(
+        session,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    completion = {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": planning_action["action_id"],
+        "status": "completed",
+        "session": {
+            "session_id": session.session_id,
+            "session_instance_id": session.session_instance_id,
+            "provider": session.provider,
+            "model": session.model,
+            "agent_harness": session.agent_harness,
+        },
+        "operation_handle": {
+            "kind": planning.operation_kind,
+            "value": planning.operation_id,
+        },
+        "result_transport": planning.result_transport,
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "writer-planning",
+            "payload": {"files": planning.files},
+        },
+    }
+
+    result = relay.complete_role("demo", completion)
+    writer_action = relay.next_action("demo")
+
+    assert result.user_state == "running"
+    assert writer_action["kind"] == "run_role"
+    assert writer_action["role"] == "writer"
+    assert writer_action["session"] == {
+        "mode": "reuse",
+        "session_id": "native-writer-01",
+        "session_instance_id": "writer-instance-01",
+    }
+    capsule = Path(writer_action["capsule"]["path"])
+    assert capsule.is_dir()
+    assert not capsule.is_relative_to(root.resolve())
+    assert (capsule / "instructions.md").is_file()
+    assert (capsule / "handoff.md").is_file()
+    assert writer_action["runtime"]["assurance_mode"] == "formal_native"
+
+
+def test_writer_completion_imports_generation_and_requests_blind_review(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    session = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="test-provider",
+        model="test-writer",
+        agent_harness="test-native-host",
+        role="writer",
+    )
+    planning = ScriptedBackend([], []).run_planning(
+        session,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        {
+            "schema": "novel-forge-native-completion/v1",
+            "action_id": planning_action["action_id"],
+            "status": "completed",
+            "session": {
+                "session_id": session.session_id,
+                "session_instance_id": session.session_instance_id,
+                "provider": session.provider,
+                "model": session.model,
+                "agent_harness": session.agent_harness,
+            },
+            "operation_handle": {
+                "kind": planning.operation_kind,
+                "value": planning.operation_id,
+            },
+            "result_transport": planning.result_transport,
+            "role_result": {
+                "schema": "novel-forge-role-result/v1",
+                "role": "writer-planning",
+                "payload": {"files": planning.files},
+            },
+        },
+    )
+    writer_action = relay.next_action("demo")
+    capsule = Path(writer_action["capsule"]["path"])
+    (capsule / "draft/正文.md").write_text(
+        _prose("原生接力"),
+        encoding="utf-8",
+    )
+    runtime = _runtime(session.session_id, writer_action["capsule"]["id"])
+    runtime["guardian"].update(
+        {
+            "assurance_mode": "formal_native",
+            "filesystem_scope": "guarded_native",
+            "write_scope": "post_execution_verified",
+            "repository_snapshot_enforced": True,
+            "reported_by": "native_host",
+        }
+    )
+
+    result = relay.complete_role(
+        "demo",
+        {
+            "schema": "novel-forge-native-completion/v1",
+            "action_id": writer_action["action_id"],
+            "status": "completed",
+            "session": {
+                "session_id": session.session_id,
+                "session_instance_id": session.session_instance_id,
+                "provider": session.provider,
+                "model": session.model,
+                "agent_harness": session.agent_harness,
+            },
+            "operation_handle": {
+                "kind": "native-task",
+                "value": "writer-operation-01",
+            },
+            "result_transport": "artifact",
+            "role_result": {
+                "schema": "novel-forge-role-result/v1",
+                "role": "writer",
+                "payload": {
+                    "artifact_relative_path": "draft/正文.md",
+                },
+            },
+            "runtime_snapshot": runtime,
+        },
+    )
+    blind_action = relay.next_action("demo")
+
+    assert result.message == "正在自动审稿。"
+    assert blind_action["role"] == "blind-reader"
+    assert blind_action["session"]["mode"] == "new"
+    assert set(blind_action["context"]) == {"prose"}
+    assert (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8") == _prose("原生接力")
+    generations = list(
+        (root / "books/demo/evidence/generations").glob("*.md")
+    )
+    receipts = list(
+        (root / "books/demo/evidence/guardian-receipts").glob("*.json")
+    )
+    audits = list(
+        (root / "books/demo/evidence/runtime-audits").glob("*.json")
+    )
+    assert len(generations) == 1
+    assert len(receipts) == 1
+    assert len(audits) == 1
+
+
+def test_native_relay_completes_independent_double_review_and_ready(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    backend = ScriptedBackend([], [_pass_reviews()])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("双审通过"),
+        encoding="utf-8",
+    )
+    relay.complete_role(
+        "demo",
+        _writer_completion(writer_action, writer),
+    )
+    blind_action = relay.next_action("demo")
+    blind_session = SessionIdentity(
+        session_id="native-blind-01",
+        session_instance_id="blind-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=blind_action["context"],
+        instructions=blind_action["instructions"],
+        reasoning_effort="medium",
+    )
+
+    blind_result = relay.complete_role(
+        "demo",
+        _review_completion(blind_action, blind_session, blind),
+    )
+    editor_action = relay.next_action("demo")
+
+    assert blind_result.message == "正在自动审稿。"
+    assert editor_action["role"] == "chapter-editor"
+    assert set(editor_action["context"]) == {
+        "prose",
+        "scene_package",
+        "story_contract",
+        "canon",
+        "blind_review",
+        "machine_diagnostics",
+    }
+    editor_session = SessionIdentity(
+        session_id="native-editor-01",
+        session_instance_id="editor-instance-01",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=editor_action["context"],
+        instructions=editor_action["instructions"],
+        reasoning_effort="medium",
+    )
+    result = relay.complete_role(
+        "demo",
+        _review_completion(editor_action, editor_session, editor),
+    )
+
+    status = book_project.project_status(root, "demo", 1)
+    assert result.user_state == "chapter_complete"
+    assert "第一章完成" in result.message
+    assert status["chapters"][0]["status"] == "ready"
+    assert len(
+        list((root / "books/demo/reviews").glob("ch01-*.md"))
+    ) == 2
+
+
+def test_must_findings_create_a_fresh_patch_writer_session(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    backend = ScriptedBackend([], [_must_reviews()])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("需要修订"),
+        encoding="utf-8",
+    )
+    relay.complete_role("demo", _writer_completion(writer_action, writer))
+    blind_action = relay.next_action("demo")
+    blind_session = SessionIdentity(
+        session_id="native-blind-01",
+        session_instance_id="blind-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=blind_action["context"],
+        instructions=blind_action["instructions"],
+        reasoning_effort="medium",
+    )
+    relay.complete_role(
+        "demo",
+        _review_completion(blind_action, blind_session, blind),
+    )
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="native-editor-01",
+        session_instance_id="editor-instance-01",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=editor_action["context"],
+        instructions=editor_action["instructions"],
+        reasoning_effort="medium",
+    )
+
+    result = relay.complete_role(
+        "demo",
+        _review_completion(editor_action, editor_session, editor),
+    )
+    create_action = relay.next_action("demo")
+
+    assert result.message == "发现问题，正在自动修订。"
+    assert create_action["kind"] == "create_session"
+    assert create_action["role"] == "writer"
+    patch_session = SessionIdentity(
+        session_id="native-patch-01",
+        session_instance_id="patch-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    relay.complete_role(
+        "demo",
+        {
+            "schema": "novel-forge-native-completion/v1",
+            "action_id": create_action["action_id"],
+            "status": "completed",
+            "session": asdict(patch_session),
+            "operation_handle": {
+                "kind": "native-session-create",
+                "value": "create-patch-session-01",
+            },
+            "result_transport": "inline",
+            "role_result": {
+                "schema": "novel-forge-role-result/v1",
+                "role": "writer-session",
+                "payload": {},
+            },
+        },
+    )
+    patch_action = relay.next_action("demo")
+
+    assert patch_action["role"] == "writer"
+    assert patch_action["session"]["session_id"] == "native-patch-01"
+    assert patch_action["capsule"]["operation"] == "patch"
+    assert "阻力出现得太晚" in (
+        Path(patch_action["capsule"]["path"]) / "instructions.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_invalid_writer_runtime_keeps_receipt_and_rotates_session(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("错误运行证明"),
+        encoding="utf-8",
+    )
+    invalid = _writer_completion(writer_action, writer)
+    invalid["runtime_snapshot"]["guardian"]["capsule_id"] = "wrong-capsule"
+
+    result = relay.complete_role("demo", invalid)
+    retry_action = relay.next_action("demo")
+    receipts = list(
+        (root / "books/demo/evidence/guardian-receipts").glob("*.json")
+    )
+
+    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert result.technical_retry_count == 1
+    assert retry_action["kind"] == "create_session"
+    assert retry_action["role"] == "writer"
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["status"] == "compromised"
+
+
+def test_native_writer_only_prompts_after_two_automatic_retries(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        max_technical_retries=2,
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    sessions = [
+        writer,
+        SessionIdentity(
+            session_id="native-writer-02",
+            session_instance_id="writer-instance-02",
+            provider="writer-provider",
+            model="writer-model",
+            agent_harness="native-host",
+            role="writer",
+        ),
+        SessionIdentity(
+            session_id="native-writer-03",
+            session_instance_id="writer-instance-03",
+            provider="writer-provider",
+            model="writer-model",
+            agent_harness="native-host",
+            role="writer",
+        ),
+    ]
+
+    for index, session in enumerate(sessions):
+        capsule = Path(writer_action["capsule"]["path"])
+        (capsule / "draft/正文.md").write_text(
+            _prose(f"失败{index + 1}"),
+            encoding="utf-8",
+        )
+        invalid = _writer_completion(writer_action, session)
+        invalid["runtime_snapshot"]["guardian"][
+            "capsule_id"
+        ] = "wrong-capsule"
+        result = relay.complete_role("demo", invalid)
+        if index < 2:
+            assert result.user_state == "running"
+            create_action = relay.next_action("demo")
+            next_session = sessions[index + 1]
+            relay.complete_role(
+                "demo",
+                {
+                    "schema": "novel-forge-native-completion/v1",
+                    "action_id": create_action["action_id"],
+                    "status": "completed",
+                    "session": asdict(next_session),
+                    "operation_handle": {
+                        "kind": "native-session-create",
+                        "value": (
+                            f"create-{next_session.session_id}"
+                        ),
+                    },
+                    "result_transport": "inline",
+                    "role_result": {
+                        "schema": "novel-forge-role-result/v1",
+                        "role": "writer-session",
+                        "payload": {},
+                    },
+                },
+            )
+            writer_action = relay.next_action("demo")
+
+    assert result.user_state == "decision_required"
+    assert result.message == "自动重试仍未完成，请选择下一步。"
+    assert result.options == (
+        "A. 保留草稿",
+        "B. 重新生成本章",
+        "C. 停止任务",
+    )
+    visible = "\n".join((result.message, *result.options))
+    for forbidden in (
+        "session",
+        "guardian",
+        "sha-256",
+        "traceback",
+        "json",
+    ):
+        assert forbidden not in visible.lower()
+    assert len(
+        list(
+            (
+                root
+                / "books/demo/evidence/guardian-receipts"
+            ).glob("*.json")
+        )
+    ) == 3
+
+
+def _planning_completion(
+    action: dict,
+    session: SessionIdentity,
+    planning,
+) -> dict:
+    return {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": action["action_id"],
+        "status": "completed",
+        "session": asdict(session),
+        "operation_handle": {
+            "kind": planning.operation_kind,
+            "value": planning.operation_id,
+        },
+        "result_transport": planning.result_transport,
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "writer-planning",
+            "payload": {"files": planning.files},
+        },
+    }
+
+
+def _writer_completion(
+    action: dict,
+    session: SessionIdentity,
+) -> dict:
+    runtime = _runtime(session.session_id, action["capsule"]["id"])
+    runtime["guardian"].update(
+        {
+            "assurance_mode": "formal_native",
+            "filesystem_scope": "guarded_native",
+            "write_scope": "post_execution_verified",
+            "repository_snapshot_enforced": True,
+            "reported_by": "native_host",
+        }
+    )
+    return {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": action["action_id"],
+        "status": "completed",
+        "session": asdict(session),
+        "operation_handle": {
+            "kind": "native-task",
+            "value": f"writer-operation-{session.session_id}",
+        },
+        "result_transport": "artifact",
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "writer",
+            "payload": {"artifact_relative_path": "draft/正文.md"},
+        },
+        "runtime_snapshot": runtime,
+    }
+
+
+def _review_completion(
+    action: dict,
+    session: SessionIdentity,
+    outcome,
+) -> dict:
+    return {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": action["action_id"],
+        "status": "completed",
+        "session": asdict(session),
+        "operation_handle": {
+            "kind": outcome.operation_kind,
+            "value": outcome.operation_id,
+        },
+        "result_transport": outcome.result_transport,
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": action["role"],
+            "payload": asdict(outcome),
+        },
+    }

@@ -25,7 +25,13 @@ def guardian_contract() -> dict[str, Any]:
         "workspace": {
             "mode": "isolated_writer_capsule",
             "must_be_outside_repository": True,
-            "filesystem_sandbox_required": True,
+            "default_assurance_mode": "formal_native",
+            "supported_assurance_modes": [
+                "formal_native",
+                "formal_sandboxed",
+            ],
+            "filesystem_sandbox_required": False,
+            "filesystem_sandbox_optional": True,
             "book_control_plane_visible": False,
             "validator_source_visible": False,
             "other_chapters_visible": False,
@@ -70,10 +76,17 @@ def guardian_contract() -> dict[str, Any]:
             "prompt_or_prose_in_snapshot_forbidden": True,
             "complete_budget_observation_required": True,
             "isolation_attestation": {
-                "reported_by": {"const": "external_harness"},
+                "reported_by": {
+                    "enum": ["native_host", "external_harness"],
+                },
                 "capsule_id": "must_match_prepared_capsule",
                 "workspace_mode": {"const": "isolated_writer_capsule"},
-                "filesystem_scope": {"const": "capsule_only"},
+                "assurance_mode": {
+                    "enum": ["formal_native", "formal_sandboxed"],
+                },
+                "filesystem_scope": {
+                    "enum": ["guarded_native", "capsule_only"],
+                },
                 "book_control_plane_visible": {"const": False},
                 "validator_source_visible": {"const": False},
             },

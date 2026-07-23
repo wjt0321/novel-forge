@@ -2509,8 +2509,8 @@ def _print_result(result: WorkflowResult) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Novel Forge 可选 headless 命令工作流；交互式 Agent 默认使用 "
-            "Skill 原生 Roles"
+            "Novel Forge 原生会话接力工作流；无命令桥时由 Skill 驱动宿主 "
+            "Roles，可选命令 Backend 仅用于 headless"
         )
     )
     parser.add_argument(
@@ -2529,11 +2529,59 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--world", required=True)
     start.add_argument("--conflict", required=True)
     start.add_argument("--hook", required=True)
-    for name in ("status", "retry", "stop"):
+    for name in ("status", "retry", "stop", "next-action"):
         command = sub.add_parser(name)
         command.add_argument("slug")
+    complete = sub.add_parser("complete-role")
+    complete.add_argument("slug")
+    complete.add_argument("--from-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        from .native_relay import NativeWorkflowRelay
+
+        if args.operation == "next-action":
+            action = NativeWorkflowRelay(args.root).next_action(args.slug)
+            print(json.dumps(action, ensure_ascii=False, sort_keys=True))
+            return 0
+        if args.operation == "complete-role":
+            completion = json.loads(
+                args.from_file.read_text(encoding="utf-8")
+            )
+            if not isinstance(completion, dict):
+                raise WorkflowError("原生角色终态必须是 JSON 对象。")
+            result = NativeWorkflowRelay(args.root).complete_role(
+                args.slug,
+                completion,
+            )
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        command_backend = bool(
+            os.environ.get("NOVEL_FORGE_HARNESS_COMMAND", "").strip()
+        )
+        relay = NativeWorkflowRelay(args.root)
+        if args.operation == "start" and not command_backend:
+            result = relay.start(
+                args.slug,
+                WorkflowRequest(
+                    title=args.title,
+                    genre=args.genre,
+                    protagonist=args.protagonist,
+                    world=args.world,
+                    conflict=args.conflict,
+                    ending_hook=args.hook,
+                ),
+                chapter=args.chapter,
+            )
+            _print_result(result)
+            return 0
+        if args.operation == "retry" and not command_backend:
+            result = relay.retry(args.slug)
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        if args.operation == "stop":
+            result = relay.stop(args.slug)
+            _print_result(result)
+            return 0
         backend: SessionBackend
         if args.operation in {"start", "retry"}:
             backend = CommandSessionBackend.from_environment(args.root)

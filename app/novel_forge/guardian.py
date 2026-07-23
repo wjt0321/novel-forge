@@ -499,7 +499,12 @@ def prepare_writer_capsule(
         "draft_output": "draft/正文.md",
         "runtime_record_operation": "record-capsule-runtime",
         "isolation_attested": False,
-        "requires_external_sandbox": True,
+        "default_assurance_mode": "formal_native",
+        "supported_assurance_modes": [
+            "formal_native",
+            "formal_sandboxed",
+        ],
+        "requires_external_sandbox": False,
         "control_plane_exposed": False,
         "author_approval": False,
         "publication_eligibility": False,
@@ -757,29 +762,51 @@ def authorize_regeneration(
     }
 
 
+def _isolation_attestation_mode(
+    runtime_path: Path,
+    capsule_id: str,
+) -> str | None:
+    try:
+        payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    attestation = payload.get("guardian")
+    common = {
+        "capsule_id": capsule_id,
+        "workspace_mode": "isolated_writer_capsule",
+        "book_control_plane_visible": False,
+        "validator_source_visible": False,
+    }
+    if not isinstance(attestation, dict) or not all(
+        attestation.get(key) == value for key, value in common.items()
+    ):
+        return None
+    if (
+        attestation.get("filesystem_scope") == "capsule_only"
+        and attestation.get("reported_by") == "external_harness"
+        and attestation.get("assurance_mode")
+        in {None, "formal_sandboxed"}
+    ):
+        return "formal_sandboxed"
+    guarded = {
+        "assurance_mode": "formal_native",
+        "filesystem_scope": "guarded_native",
+        "write_scope": "post_execution_verified",
+        "repository_snapshot_enforced": True,
+        "reported_by": "native_host",
+    }
+    if all(attestation.get(key) == value for key, value in guarded.items()):
+        return "formal_native"
+    return None
+
+
 def _has_valid_isolation_attestation(
     runtime_path: Path,
     capsule_id: str,
 ) -> bool:
-    try:
-        payload = json.loads(runtime_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
-    attestation = payload.get("guardian")
-    required = {
-        "capsule_id": capsule_id,
-        "workspace_mode": "isolated_writer_capsule",
-        "filesystem_scope": "capsule_only",
-        "book_control_plane_visible": False,
-        "validator_source_visible": False,
-        "reported_by": "external_harness",
-    }
-    return isinstance(attestation, dict) and all(
-        attestation.get(key) == value
-        for key, value in required.items()
-    )
+    return _isolation_attestation_mode(runtime_path, capsule_id) is not None
 
 
 def _record_compromised(
@@ -921,8 +948,9 @@ def record_capsule_runtime(
     source = _outside_repository(root, Path(runtime_file))
     if not source.is_file():
         raise GuardianError(f"runtime_file 不存在：{source}")
-    if not _has_valid_isolation_attestation(source, capsule_id):
-        raise GuardianError("runtime 缺少匹配的外部 Harness 隔离证明。")
+    isolation_mode = _isolation_attestation_mode(source, capsule_id)
+    if isolation_mode is None:
+        raise GuardianError("runtime 缺少匹配的宿主隔离证明。")
     report = audit_session_log(source)
     if report.get("source_format") != "novel-forge-runtime-v1":
         raise GuardianError("runtime 必须是 novel-forge-runtime/v1。")
@@ -939,6 +967,7 @@ def record_capsule_runtime(
     control["runtime_sidecar_path"] = str(sidecar)
     control["runtime_snapshot_sha256"] = hashlib.sha256(payload).hexdigest()
     control["runtime_source_log_sha256"] = report["source_log_sha256"]
+    control["isolation_mode"] = isolation_mode
     control["updated_at"] = _now()
     _atomic_json(control_path, control)
     return {
@@ -948,6 +977,7 @@ def record_capsule_runtime(
         "runtime_source_log_sha256": report["source_log_sha256"],
         "budget": budget,
         "isolation_attested": True,
+        "isolation_mode": isolation_mode,
         "author_approval": False,
         "publication_eligibility": False,
     }
@@ -1167,6 +1197,10 @@ def ingest_writer_capsule(
         ),
         "status": "clean",
         "isolation_attested": True,
+        "isolation_mode": control.get(
+            "isolation_mode",
+            "formal_sandboxed",
+        ),
         "control_plane_exposed": False,
         "unexpected_files": [],
         "reasons": [],
