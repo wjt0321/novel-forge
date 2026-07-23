@@ -559,6 +559,63 @@ def test_invalid_writer_runtime_keeps_receipt_and_rotates_session(
     assert receipt["status"] == "compromised"
 
 
+def test_control_plane_mutation_is_restored_before_writer_retry(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    protected = root / "operator-notes.md"
+    protected.write_text("用户原始内容\n", encoding="utf-8")
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+    )
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("控制面恢复"),
+        encoding="utf-8",
+    )
+    protected.write_text("角色越权修改\n", encoding="utf-8")
+
+    result = relay.complete_role(
+        "demo",
+        _writer_completion(writer_action, writer),
+    )
+    receipt_path = next(
+        (root / "books/demo/evidence/guardian-receipts").glob("*.json")
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert protected.read_text(encoding="utf-8") == "用户原始内容\n"
+    assert "control_plane_mutation" in receipt["reasons"]
+    assert relay.next_action("demo")["kind"] == "create_session"
+
+
 def test_native_writer_only_prompts_after_two_automatic_retries(
     tmp_path: Path,
 ):

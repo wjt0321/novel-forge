@@ -31,7 +31,9 @@ from .review_prompt import (
 )
 from .session_audit import audit_session_log
 from .workspace_integrity import (
+    create_workspace_backup,
     remove_created_paths,
+    restore_workspace_paths,
     snapshot_workspace,
     workspace_delta,
 )
@@ -51,6 +53,14 @@ from .workflow import (
 NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
+
+
+class NativeWorkspaceMutationError(WorkflowError):
+    """Raised after restoring one creative role's project mutation."""
+
+    def __init__(self, reason: str):
+        super().__init__("创作角色修改了项目控制面。")
+        self.reason = reason
 
 
 def _result_contract(role: str) -> dict[str, Any]:
@@ -155,6 +165,14 @@ class NativeWorkflowRelay:
             / "native-relay-snapshots"
             / slug
             / f"{action_id}.json"
+        )
+
+    def _backup_path(self, slug: str, action_id: str) -> Path:
+        return (
+            self.orchestrator.capsule_root
+            / "native-relay-snapshots"
+            / slug
+            / f"{action_id}.zip"
         )
 
     def _load_state(self, slug: str) -> dict[str, Any]:
@@ -270,6 +288,10 @@ class NativeWorkflowRelay:
             self._snapshot_path(slug, action["action_id"]),
             snapshot_workspace(self.root),
         )
+        create_workspace_backup(
+            self.root,
+            self._backup_path(slug, action["action_id"]),
+        )
 
     def _verify_workspace(self, slug: str, action_id: str) -> None:
         snapshot_path = self._snapshot_path(slug, action_id)
@@ -282,13 +304,31 @@ class NativeWorkflowRelay:
         if not isinstance(before, dict):
             raise WorkflowError("原生角色仓库快照格式无效。")
         delta = workspace_delta(before, snapshot_workspace(self.root))
+        backup_path = self._backup_path(slug, action_id)
         if delta.changed:
             remove_created_paths(self.root, delta.created)
-            changed = "、".join(delta.changed[:8])
-            raise WorkflowError(
-                "创作角色修改了项目控制面，当前会话已废弃："
-                + changed
+            restore_workspace_paths(
+                self.root,
+                backup_path,
+                before,
+                delta.modified + delta.deleted,
             )
+            restored = workspace_delta(
+                before,
+                snapshot_workspace(self.root),
+            )
+            if restored.changed:
+                raise WorkflowError("项目控制面自动恢复失败。")
+            snapshot_path.unlink(missing_ok=True)
+            backup_path.unlink(missing_ok=True)
+            reason = (
+                "control_plane_mutation"
+                if delta.modified or delta.deleted
+                else "unexpected_project_artifact"
+            )
+            raise NativeWorkspaceMutationError(reason)
+        snapshot_path.unlink(missing_ok=True)
+        backup_path.unlink(missing_ok=True)
 
     def start(
         self,
@@ -508,6 +548,12 @@ class NativeWorkflowRelay:
             if phase != "awaiting_writer_planning":
                 raise WorkflowError("当前没有等待中的可回传角色。")
             return self._complete_planning(slug, state, completion)
+        except NativeWorkspaceMutationError as exc:
+            return self._recover_technical_failure(
+                slug,
+                state,
+                failure_reason=exc.reason,
+            )
         except (GuardianError, WorkflowError, OSError, ValueError):
             return self._recover_technical_failure(slug, state)
 
@@ -659,6 +705,8 @@ class NativeWorkflowRelay:
         self,
         slug: str,
         state: dict[str, Any],
+        *,
+        failure_reason: str = "writer_result_invalid",
     ) -> WorkflowResult:
         retries = int(state.get("technical_retry_count") or 0) + 1
         state["technical_retry_count"] = retries
@@ -725,7 +773,7 @@ class NativeWorkflowRelay:
                         self.root,
                         slug,
                         capsule_id,
-                        reason="writer_result_invalid",
+                        reason=failure_reason,
                     )
                 except GuardianError:
                     pass

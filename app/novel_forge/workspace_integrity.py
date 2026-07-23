@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TypeVar
@@ -108,6 +109,104 @@ def remove_created_paths(root: Path, paths: tuple[str, ...]) -> None:
             target.unlink(missing_ok=True)
         elif target.is_dir():
             shutil.rmtree(target)
+
+
+def create_workspace_backup(root: Path, archive_path: Path) -> None:
+    """Store restorable project bytes outside the protected workspace."""
+    root = Path(root).resolve()
+    archive_path = Path(archive_path).resolve()
+    if archive_path == root or archive_path.is_relative_to(root):
+        raise ValueError("workspace backup 必须位于项目仓库外。")
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = archive_path.with_name(
+        f".{archive_path.name}.{os.getpid()}.tmp"
+    )
+    temporary.unlink(missing_ok=True)
+    try:
+        with zipfile.ZipFile(
+            temporary,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=6,
+        ) as archive:
+            for current, directories, files in os.walk(
+                root,
+                topdown=True,
+            ):
+                directories[:] = sorted(
+                    name
+                    for name in directories
+                    if name not in _IGNORED_DIRECTORY_NAMES
+                )
+                current_path = Path(current)
+                for name in directories:
+                    path = current_path / name
+                    if path.is_symlink():
+                        continue
+                    relative = path.relative_to(root).as_posix()
+                    archive.writestr(f"{relative}/", b"")
+                for name in sorted(files):
+                    path = current_path / name
+                    if path.is_symlink():
+                        continue
+                    archive.write(
+                        path,
+                        arcname=path.relative_to(root).as_posix(),
+                    )
+        os.replace(temporary, archive_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _remove_existing_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def restore_workspace_paths(
+    root: Path,
+    archive_path: Path,
+    before: dict[str, str],
+    paths: tuple[str, ...],
+) -> None:
+    """Restore modified or deleted paths to their action-start bytes."""
+    root = Path(root).resolve()
+    archive_path = Path(archive_path).resolve()
+    if not archive_path.is_file():
+        raise FileNotFoundError("workspace backup 不存在。")
+    with zipfile.ZipFile(archive_path, mode="r") as archive:
+        members = set(archive.namelist())
+        for relative in sorted(
+            set(paths),
+            key=lambda value: (value.count("/"), value),
+        ):
+            marker = before.get(relative)
+            if marker is None:
+                continue
+            relative_path = Path(relative)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                raise ValueError("workspace restore 路径越界。")
+            target = root.joinpath(*relative_path.parts)
+            if marker == "directory":
+                if target.exists() and not target.is_dir():
+                    _remove_existing_path(target)
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if marker.startswith("symlink:"):
+                _remove_existing_path(target)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(marker.removeprefix("symlink:"), target)
+                continue
+            if not marker.startswith("file:") or relative not in members:
+                raise ValueError(
+                    f"workspace backup 缺少受保护路径：{relative}"
+                )
+            if target.exists() or target.is_symlink():
+                _remove_existing_path(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(relative))
 
 
 def guarded_role_call(
