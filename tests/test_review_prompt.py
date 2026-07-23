@@ -49,6 +49,9 @@ def test_chapter_editor_task_requires_complete_review_every_round():
     assert "集中解释段" in prompt.text
     assert "固定台词句数" in prompt.text
     assert "用户硬锚合同优先于 Scene Package" in prompt.text
+    assert "hard_anchor_coverage" in prompt.text
+    assert "reader_reconstruction" in prompt.text
+    assert "missing/conflicted 必须同时形成开放 MUST" in prompt.text
     assert "时间方向、金额或数量、物件位置、人物知识来源" in prompt.text
     assert "完美证据链" in prompt.text
     assert "不对称" in prompt.text

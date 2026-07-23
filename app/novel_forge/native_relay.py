@@ -111,6 +111,7 @@ def _result_contract(role: str) -> dict[str, Any]:
                 "verdict",
                 "findings",
                 "analysis",
+                "hard_anchor_coverage",
                 "evidence_quote",
             ]
         },
@@ -157,6 +158,28 @@ def _completion_payload_template(role: str) -> dict[str, Any]:
             "verdict": "<ready_for_editor_decision-or-revision_required>",
             "findings": [],
             "analysis": {},
+            "hard_anchor_coverage": {
+                "protagonist": {
+                    "status": "<covered-implicit_but_unambiguous-missing-conflicted>",
+                    "evidence": "<exact-current-prose-quote-or-empty>",
+                    "reader_reconstruction": "<ordinary-reader-reconstruction>",
+                },
+                "world": {
+                    "status": "<covered-implicit_but_unambiguous-missing-conflicted-or-deferred_by_scene_boundary>",
+                    "evidence": "<exact-current-prose-quote-or-empty>",
+                    "reader_reconstruction": "<ordinary-reader-reconstruction>",
+                },
+                "conflict": {
+                    "status": "<covered-implicit_but_unambiguous-missing-conflicted>",
+                    "evidence": "<exact-current-prose-quote-or-empty>",
+                    "reader_reconstruction": "<ordinary-reader-reconstruction>",
+                },
+                "ending_hook": {
+                    "status": "<covered-implicit_but_unambiguous-missing-conflicted>",
+                    "evidence": "<exact-current-prose-quote-or-empty>",
+                    "reader_reconstruction": "<ordinary-reader-reconstruction>",
+                },
+            },
             "evidence_quote": "<exact-current-prose-quote>",
             "previous_chapter_quote": "<exact-quote-or-not_applicable>",
         }
@@ -348,6 +371,138 @@ class NativeWorkflowRelay:
         if any(not value for value in values.values()):
             raise NativeCompletionRepairError("incomplete_session")
         return SessionIdentity(role=role, **values)
+
+    @staticmethod
+    def _completion_identity(
+        completion: dict[str, Any],
+    ) -> dict[str, str] | None:
+        session = completion.get("session")
+        if not isinstance(session, dict):
+            return None
+        session_id = str(session.get("session_id") or "").strip()
+        session_instance_id = str(
+            session.get("session_instance_id") or ""
+        ).strip()
+        if not session_id or not session_instance_id:
+            return None
+        return {
+            "session_id": session_id,
+            "session_instance_id": session_instance_id,
+        }
+
+    @staticmethod
+    def _remember_session(
+        state: dict[str, Any],
+        session: dict[str, Any] | SessionIdentity,
+        *,
+        role: str,
+        status: str,
+    ) -> None:
+        if isinstance(session, SessionIdentity):
+            session_id = session.session_id
+            session_instance_id = session.session_instance_id
+        else:
+            session_id = str(session.get("session_id") or "").strip()
+            session_instance_id = str(
+                session.get("session_instance_id") or ""
+            ).strip()
+        if not session_id or not session_instance_id:
+            return
+        history = state.setdefault("role_session_history", [])
+        if not isinstance(history, list):
+            history = []
+            state["role_session_history"] = history
+        record = {
+            "session_id": session_id,
+            "session_instance_id": session_instance_id,
+            "role": role,
+            "status": status,
+        }
+        if not any(
+            isinstance(item, dict)
+            and item.get("session_id") == session_id
+            and item.get("session_instance_id") == session_instance_id
+            and item.get("role") == role
+            and item.get("status") == status
+            for item in history
+        ):
+            history.append(record)
+
+    def _remember_failed_completion_session(
+        self,
+        state: dict[str, Any],
+        completion: dict[str, Any],
+    ) -> None:
+        identity = self._completion_identity(completion)
+        if identity is None:
+            return
+        self._remember_session(
+            state,
+            identity,
+            role=self._retry_bucket(state),
+            status="failed",
+        )
+
+    def _used_session_identity_values(
+        self,
+        slug: str,
+        state: dict[str, Any],
+    ) -> set[str]:
+        values: set[str] = set()
+        for key in ("writer_session",):
+            item = state.get(key)
+            if isinstance(item, dict):
+                values.update(
+                    str(item.get(name) or "").strip()
+                    for name in ("session_id", "session_instance_id")
+                )
+        for key in ("role_session_history",):
+            items = state.get(key)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        values.update(
+                            str(item.get(name) or "").strip()
+                            for name in (
+                                "session_id",
+                                "session_instance_id",
+                            )
+                        )
+        for key in ("review_session_ids", "review_session_instance_ids"):
+            items = state.get(key)
+            if isinstance(items, list):
+                values.update(str(item).strip() for item in items)
+        sequence_id = str(state.get("sequence_id") or "").strip()
+        if sequence_id:
+            try:
+                sequence = chapter_sequence_status(
+                    self.root,
+                    slug,
+                    sequence_id,
+                )
+            except Exception:
+                sequence = {}
+            values.update(
+                str(item).strip()
+                for item in sequence.get("used_session_ids", [])
+            )
+        return {value for value in values if value}
+
+    def _assert_fresh_session(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        session: SessionIdentity,
+    ) -> None:
+        incoming = {
+            session.session_id.strip(),
+            session.session_instance_id.strip(),
+        }
+        overlap = incoming & self._used_session_identity_values(slug, state)
+        if overlap:
+            raise WorkflowError(
+                "原生角色会话身份已经使用或废弃，必须创建新会话。"
+            )
 
     def _validate_completion(
         self,
@@ -727,12 +882,14 @@ class NativeWorkflowRelay:
                 reason=exc.reason,
             )
         except NativeWorkspaceMutationError as exc:
+            self._remember_failed_completion_session(state, completion)
             return self._recover_technical_failure(
                 slug,
                 state,
                 failure_reason=exc.reason,
             )
         except (GuardianError, WorkflowError, OSError, ValueError):
+            self._remember_failed_completion_session(state, completion)
             return self._recover_technical_failure(slug, state)
 
     @staticmethod
@@ -948,6 +1105,7 @@ class NativeWorkflowRelay:
             completion,
             role="writer-planning",
         )
+        self._assert_fresh_session(slug, state, session)
         payload = role_result.get("payload")
         files = payload.get("files") if isinstance(payload, dict) else None
         if not isinstance(files, dict) or not all(
@@ -1316,7 +1474,14 @@ class NativeWorkflowRelay:
                 "generation_id": generation_id,
                 "body_sha256": imported["body_sha256"],
                 "review_session_ids": [],
+                "review_session_instance_ids": [],
             }
+        )
+        self._remember_session(
+            state,
+            session,
+            role="writer",
+            status="completed",
         )
         self._reset_active_retry(state, "blind-reader")
         state.pop("blind_outcome", None)
@@ -1377,6 +1542,26 @@ class NativeWorkflowRelay:
             for name, value in analysis.items()
         ):
             raise WorkflowError(f"{role} analysis 格式无效。")
+        coverage_payload = payload.get("hard_anchor_coverage", {})
+        if coverage_payload is None:
+            coverage_payload = {}
+        if not isinstance(coverage_payload, dict):
+            raise WorkflowError(f"{role} hard_anchor_coverage 格式无效。")
+        hard_anchor_coverage: dict[str, dict[str, str]] = {}
+        for name, item in coverage_payload.items():
+            if not isinstance(name, str) or not isinstance(item, dict):
+                raise WorkflowError(
+                    f"{role} hard_anchor_coverage 字段无效。"
+                )
+            if not all(
+                isinstance(field_name, str)
+                and isinstance(field_value, str)
+                for field_name, field_value in item.items()
+            ):
+                raise WorkflowError(
+                    f"{role} hard_anchor_coverage 字段无效。"
+                )
+            hard_anchor_coverage[name] = dict(item)
         return ReviewOutcome(
             verdict=str(payload.get("verdict") or ""),
             findings=tuple(findings),
@@ -1393,6 +1578,7 @@ class NativeWorkflowRelay:
                 payload.get("next_chapter_pull") or "not_applicable"
             ),
             analysis=dict(analysis),
+            hard_anchor_coverage=hard_anchor_coverage,
             evidence_quote=str(payload.get("evidence_quote") or ""),
             previous_chapter_quote=str(
                 payload.get("previous_chapter_quote")
@@ -1488,18 +1674,7 @@ class NativeWorkflowRelay:
             completion,
             role=role,
         )
-        used_sessions = {
-            str(
-                (state.get("writer_session") or {}).get("session_id")
-                or ""
-            ),
-            *(
-                str(item)
-                for item in state.get("review_session_ids", [])
-            ),
-        }
-        if session.session_id in used_sessions:
-            raise WorkflowError("三个创作角色必须使用不同的真实会话。")
+        self._assert_fresh_session(slug, state, session)
         payload = role_result.get("payload")
         if not isinstance(payload, dict):
             raise WorkflowError(f"{role} 结果 payload 无效。")
@@ -1518,6 +1693,15 @@ class NativeWorkflowRelay:
         )
         state.setdefault("review_session_ids", []).append(
             session.session_id
+        )
+        state.setdefault("review_session_instance_ids", []).append(
+            session.session_instance_id
+        )
+        self._remember_session(
+            state,
+            session,
+            role=role,
+            status="completed",
         )
         chapter = int(state["chapter"])
         sequence_id = str(state["sequence_id"])
@@ -1700,6 +1884,7 @@ class NativeWorkflowRelay:
             completion,
             role="writer-session",
         )
+        self._assert_fresh_session(slug, state, session)
         session = SessionIdentity(
             session_id=session.session_id,
             session_instance_id=session.session_instance_id,

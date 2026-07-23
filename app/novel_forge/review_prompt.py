@@ -98,9 +98,16 @@ def render_review_instructions(role: str) -> RolePrompt:
 修复是否制造新问题。
 
 Scene Package 只能用于比较，不能证明正文已经交付。Blind Reader 的 pass 不能替代
-独立判断。每轮一次列全当前 MUST，避免第一次只抓因果、复审才发现对白。MUST 只用于
-不处理就不能认定本章成立的问题；风格偏好和可提升项保持 MAY。通过宿主正式结果通道
-返回结构化判断，不直接写 reviews、状态或证据；idle/available 不等于报告已送达。
+独立判断。用户硬锚合同优先于 Scene Package。必须逐项返回 protagonist、world、
+conflict、ending_hook 的 hard_anchor_coverage，填写 status、正文原句 evidence 和
+普通读者实际能重建出的 reader_reconstruction。身份、亲缘、方向、数量、物件归属或
+行动目标与合同不一致时必须标 conflicted；正文没有交付时标 missing；含蓄但普通读者
+仍只能重建出另一种关系，不能标 implicit_but_unambiguous。只有 world 中明确留给后续
+章节的部分可标 deferred_by_scene_boundary。missing/conflicted 必须同时形成开放 MUST。
+
+每轮一次列全当前 MUST，避免第一次只抓因果、复审才发现对白。MUST 只用于不处理就不能
+认定本章成立的问题；风格偏好和可提升项保持 MAY。通过宿主正式结果通道返回结构化判断，
+不直接写 reviews、状态或证据；idle/available 不等于报告已送达。
 """,
         )
     raise ReviewPromptError(f"unknown review role: {role}")

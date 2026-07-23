@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from app.novel_forge import book_project
+from app.novel_forge.book_git import book_git_status
 from app.novel_forge.native_relay import NativeWorkflowRelay
 from app.novel_forge.workflow import SessionIdentity, WorkflowRequest
 from tests.test_workflow import (
@@ -387,6 +388,195 @@ def test_native_relay_completes_independent_double_review_and_ready(
     assert len(
         list((root / "books/demo/reviews").glob("ch01-*.md"))
     ) == 2
+    assert book_git_status(root, "demo")["dirty"] is False
+
+
+def test_editor_missing_hard_anchor_requires_a_must_finding(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    backend = ScriptedBackend([], [_pass_reviews()])
+    blind_session = SessionIdentity(
+        session_id="native-blind-01",
+        session_instance_id="blind-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    relay.complete_role(
+        "demo",
+        _review_completion(blind_action, blind_session, blind),
+    )
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="native-editor-01",
+        session_instance_id="editor-instance-01",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
+        reasoning_effort="medium",
+    )
+    completion = _review_completion(
+        editor_action,
+        editor_session,
+        editor,
+    )
+    completion["role_result"]["payload"]["hard_anchor_coverage"] = {
+        "protagonist": {
+            "status": "covered",
+            "evidence": "林舟握住门把",
+            "reader_reconstruction": "林舟是不愿求助的修锁匠。",
+        },
+        "world": {
+            "status": "covered",
+            "evidence": "林舟握住门把",
+            "reader_reconstruction": "断电旧城里的门禁已经失灵。",
+        },
+        "conflict": {
+            "status": "covered",
+            "evidence": "林舟握住门把",
+            "reader_reconstruction": "开门会暴露被藏起来的人。",
+        },
+        "ending_hook": {
+            "status": "missing",
+            "evidence": "",
+            "reader_reconstruction": "读者无法重建门内人叫出追兵名字。",
+        },
+    }
+
+    result = relay.complete_role("demo", completion)
+
+    assert result.user_state == "running"
+    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert not (
+        root / "books/demo/reviews/ch01-chapter-editor.md"
+    ).exists()
+
+
+def test_review_session_cannot_reuse_any_writer_sequence_identity(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    state = relay._load_state("demo")
+    sequence_path = next(
+        (root / "books/demo/planning/chapter-sequences").glob("*.json")
+    )
+    sequence = json.loads(sequence_path.read_text(encoding="utf-8"))
+    sequence["used_session_ids"].append("retired-writer-01")
+    sequence.setdefault("invalidated_sessions", []).append(
+        {
+            "session_id": "retired-writer-01",
+            "chapter": 1,
+            "reason": "writer_result_invalid",
+            "invalidated_at": "2026-07-23T00:00:00+00:00",
+        }
+    )
+    sequence_path.write_text(
+        json.dumps(sequence, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    relay._write_action("demo", state, blind_action)
+    backend = ScriptedBackend([], [_pass_reviews()])
+    reused = SessionIdentity(
+        session_id="retired-writer-01",
+        session_instance_id="fresh-looking-instance",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        reused,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+
+    result = relay.complete_role(
+        "demo",
+        _review_completion(blind_action, reused, blind),
+    )
+
+    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert list((root / "books/demo/reviews").glob("ch01-*.md")) == []
+
+
+def test_failed_review_session_cannot_retry_with_same_identity(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    reused = SessionIdentity(
+        session_id="native-blind-failed-01",
+        session_instance_id="blind-failed-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    invalid = {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": blind_action["action_id"],
+        "status": "completed",
+        "session": asdict(reused),
+        "operation_handle": {
+            "kind": "native-task",
+            "value": "blind-failed-operation-01",
+        },
+        "result_transport": "inline",
+        "review_capsule_id": blind_action["review_capsule"]["id"],
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "blind-reader",
+            "payload": {},
+        },
+    }
+    first = relay.complete_role("demo", invalid)
+    retry_action = relay.next_action("demo")
+    backend = ScriptedBackend([], [_pass_reviews()])
+    blind = backend.run_review(
+        reused,
+        role="blind-reader",
+        context=_review_capsule_context(retry_action),
+        instructions=_review_capsule_instructions(retry_action),
+        reasoning_effort="medium",
+    )
+
+    second = relay.complete_role(
+        "demo",
+        _review_completion(retry_action, reused, blind),
+    )
+
+    assert first.message == "审稿会话异常，已自动换新会话重试。"
+    assert second.message == "审稿会话异常，已自动换新会话重试。"
+    assert list((root / "books/demo/reviews").glob("ch01-*.md")) == []
 
 
 def test_must_findings_create_a_fresh_patch_writer_session(

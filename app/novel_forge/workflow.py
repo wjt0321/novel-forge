@@ -26,7 +26,7 @@ from .book_evidence import (
     record_evidence,
     render_evidence_markdown,
 )
-from .book_git import checkpoint_book
+from .book_git import book_git_status, checkpoint_book
 from .chapter_sequence import (
     advance_chapter_sequence,
     attest_chapter_ready_candidate,
@@ -92,6 +92,19 @@ REVIEW_ANALYSIS_FIELDS = {
         "editorial_texture",
         "editorial_continuity",
     ),
+}
+HARD_ANCHOR_FIELDS = (
+    "protagonist",
+    "world",
+    "conflict",
+    "ending_hook",
+)
+HARD_ANCHOR_STATUSES = {
+    "covered",
+    "implicit_but_unambiguous",
+    "missing",
+    "conflicted",
+    "deferred_by_scene_boundary",
 }
 
 
@@ -187,6 +200,9 @@ class ReviewOutcome:
     emotional_residue: str = "not_applicable"
     next_chapter_pull: str = "not_applicable"
     analysis: dict[str, str] = field(default_factory=dict)
+    hard_anchor_coverage: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )
     evidence_quote: str = ""
     previous_chapter_quote: str = "not_applicable"
     resolved_model: str | None = None
@@ -704,6 +720,23 @@ class CommandSessionBackend:
                 if isinstance(name, str) and isinstance(value, str)
             }
             if isinstance(result_payload.get("analysis"), dict)
+            else {},
+            hard_anchor_coverage={
+                str(name): {
+                    str(field_name): str(field_value)
+                    for field_name, field_value in item.items()
+                    if isinstance(field_name, str)
+                    and isinstance(field_value, str)
+                }
+                for name, item in (
+                    result_payload.get("hard_anchor_coverage") or {}
+                ).items()
+                if isinstance(name, str) and isinstance(item, dict)
+            }
+            if isinstance(
+                result_payload.get("hard_anchor_coverage"),
+                dict,
+            )
             else {},
             evidence_quote=str(
                 result_payload.get("evidence_quote") or ""
@@ -1607,6 +1640,74 @@ class NovelWorkflowOrchestrator:
                 f"{role} 缺少实质审稿字段："
                 + "、".join(missing_analysis)
             )
+        anchor_section = ""
+        if role == "chapter-editor":
+            coverage = outcome.hard_anchor_coverage
+            missing_anchors = [
+                name for name in HARD_ANCHOR_FIELDS if name not in coverage
+            ]
+            if missing_anchors:
+                raise WorkflowError(
+                    "chapter-editor 缺少用户硬锚核验："
+                    + "、".join(missing_anchors)
+                )
+            anchor_lines: list[str] = []
+            blocking_anchor_status = False
+            for name in HARD_ANCHOR_FIELDS:
+                item = coverage.get(name)
+                if not isinstance(item, dict):
+                    raise WorkflowError(
+                        f"chapter-editor 硬锚 {name} 格式无效。"
+                    )
+                status = str(item.get("status") or "").strip()
+                evidence = str(item.get("evidence") or "").strip()
+                reconstruction = str(
+                    item.get("reader_reconstruction") or ""
+                ).strip()
+                if status not in HARD_ANCHOR_STATUSES:
+                    raise WorkflowError(
+                        f"chapter-editor 硬锚 {name} 状态无效。"
+                    )
+                if (
+                    status == "deferred_by_scene_boundary"
+                    and name != "world"
+                ):
+                    raise WorkflowError(
+                        f"chapter-editor 硬锚 {name} 不得延期。"
+                    )
+                if not reconstruction:
+                    raise WorkflowError(
+                        f"chapter-editor 硬锚 {name} 缺少读者重建。"
+                    )
+                if status in {
+                    "covered",
+                    "implicit_but_unambiguous",
+                    "conflicted",
+                } and (not evidence or evidence not in prose):
+                    raise WorkflowError(
+                        f"chapter-editor 硬锚 {name} 缺少当前正文证据。"
+                    )
+                if status in {"missing", "conflicted"}:
+                    blocking_anchor_status = True
+                anchor_lines.append(
+                    f"- {name}: status={status}; "
+                    f"evidence={evidence or 'not_found'}; "
+                    f"reader_reconstruction={reconstruction}"
+                )
+            open_must = any(
+                finding.severity.upper() == "MUST"
+                and finding.status.lower() == "open"
+                for finding in outcome.findings
+            )
+            if blocking_anchor_status and not open_must:
+                raise WorkflowError(
+                    "chapter-editor 发现用户硬锚缺失或冲突，"
+                    "但没有返回开放 MUST。"
+                )
+            anchor_section = (
+                "\n\n## Hard Anchor Coverage\n"
+                + "\n".join(anchor_lines)
+            )
         binding = book_project.review_binding(
             self.root,
             slug,
@@ -1655,7 +1756,11 @@ class NovelWorkflowOrchestrator:
             reader_desire = "not_applicable"
             emotional_residue = "not_applicable"
             next_pull = "not_applicable"
-            section = "## Editorial Dimensions\n" + details
+            section = (
+                "## Editorial Dimensions\n"
+                + details
+                + anchor_section
+            )
             context_scope = "full_review_context"
         return (
             f"# Review - ch{chapter:02d} / {role}\n\n"
@@ -2041,6 +2146,14 @@ class NovelWorkflowOrchestrator:
                 retries=retries,
                 decision_kind="sequence_inconsistent",
             )
+        self._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="complete",
+            retries=retries,
+        )
         checkpoint = checkpoint_book(
             self.root,
             slug,
@@ -2054,6 +2167,7 @@ class NovelWorkflowOrchestrator:
         git_ok = (
             checkpoint.get("commit_hash") is not None
             and checkpoint.get("remote_count") == 0
+            and book_git_status(self.root, slug).get("dirty") is False
         )
         if not git_ok:
             book_project.advance_state(
@@ -2072,14 +2186,6 @@ class NovelWorkflowOrchestrator:
                 retries=retries,
                 decision_kind="git_checkpoint_failed",
             )
-        self._save_control(
-            slug,
-            request=request,
-            chapter=chapter,
-            sequence_id=sequence_id,
-            phase="complete",
-            retries=retries,
-        )
         return _user_result(
             "chapter_complete",
             f"第{_chapter_label(chapter)}章完成，"

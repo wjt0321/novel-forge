@@ -84,8 +84,10 @@ def _prose(label: str) -> str:
 
 def _second_prose() -> str:
     paragraph = (
-        "沈砚沿着积水的台阶往下走，坏掉的应急灯在身后忽明忽暗。"
-        "他数着每一次水声，直到地下室里传来一声短促的金属碰撞。"
+        "林舟握住门把，沿着积水的台阶往下走，坏掉的应急灯在身后忽明忽暗。"
+        "旧城断电后门禁仍未恢复，他必须赶在追兵前打开地下室的门，"
+        "可门一开，被他藏起的人就会暴露。门锁刚转动，"
+        "门内的人先叫出了追兵的名字。"
     ) * 240
     return f"# 第二章 地下室\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n"
 
@@ -496,6 +498,7 @@ def _pass_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
         ReviewOutcome(
             verdict="ready_for_editor_decision",
             evidence_quote="林舟握住门把",
+            hard_anchor_coverage=_covered_hard_anchors(),
             analysis={
                 "editorial_causality": "脚步逼近迫使林舟开锁，开锁直接触发门内点名。",
                 "editorial_agency": "林舟主动转动门锁并承担暴露藏匿者的后果。",
@@ -539,6 +542,7 @@ def _must_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
             verdict="needs_revision",
             findings=(finding,),
             evidence_quote="林舟握住门把",
+            hard_anchor_coverage=_covered_hard_anchors(),
             analysis={
                 "editorial_causality": "追兵压力进入过晚，开锁决定缺少充分触发。",
                 "editorial_agency": "林舟作出选择，但此前替代行动没有落到动作。",
@@ -548,6 +552,27 @@ def _must_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
             },
         ),
     )
+
+
+def _covered_hard_anchors() -> dict[str, dict[str, str]]:
+    return {
+        name: {
+            "status": "covered",
+            "evidence": "林舟握住门把",
+            "reader_reconstruction": {
+                "protagonist": "林舟是不愿求助的修锁匠。",
+                "world": "旧城断电后门禁失灵。",
+                "conflict": "开门会暴露被林舟藏起的人。",
+                "ending_hook": "门内的人先叫出追兵的名字。",
+            }[name],
+        }
+        for name in (
+            "protagonist",
+            "world",
+            "conflict",
+            "ending_hook",
+        )
+    }
 
 
 def _request() -> WorkflowRequest:
