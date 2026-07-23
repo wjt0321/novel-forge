@@ -262,7 +262,12 @@ def test_writer_completion_imports_generation_and_requests_blind_review(
     assert result.message == "正在自动审稿。"
     assert blind_action["role"] == "blind-reader"
     assert blind_action["session"]["mode"] == "new"
-    assert set(blind_action["context"]) == {"prose"}
+    assert "context" not in blind_action
+    assert _review_capsule_context(blind_action).keys() == {"prose"}
+    review_capsule = Path(blind_action["review_capsule"]["path"])
+    assert review_capsule.is_dir()
+    assert not review_capsule.is_relative_to(root.resolve())
+    assert (review_capsule / "manifest.json").is_file()
     assert (
         root / "books/demo/chapters/e01/ch-01/正文.md"
     ).read_text(encoding="utf-8") == _prose("原生接力")
@@ -333,8 +338,8 @@ def test_native_relay_completes_independent_double_review_and_ready(
     blind = backend.run_review(
         blind_session,
         role="blind-reader",
-        context=blind_action["context"],
-        instructions=blind_action["instructions"],
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
         reasoning_effort="medium",
     )
 
@@ -346,7 +351,8 @@ def test_native_relay_completes_independent_double_review_and_ready(
 
     assert blind_result.message == "正在自动审稿。"
     assert editor_action["role"] == "chapter-editor"
-    assert set(editor_action["context"]) == {
+    assert "context" not in editor_action
+    assert set(_review_capsule_context(editor_action)) == {
         "prose",
         "scene_package",
         "story_contract",
@@ -365,8 +371,8 @@ def test_native_relay_completes_independent_double_review_and_ready(
     editor = backend.run_review(
         editor_session,
         role="chapter-editor",
-        context=editor_action["context"],
-        instructions=editor_action["instructions"],
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
         reasoning_effort="medium",
     )
     result = relay.complete_role(
@@ -433,8 +439,8 @@ def test_must_findings_create_a_fresh_patch_writer_session(
     blind = backend.run_review(
         blind_session,
         role="blind-reader",
-        context=blind_action["context"],
-        instructions=blind_action["instructions"],
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
         reasoning_effort="medium",
     )
     relay.complete_role(
@@ -453,8 +459,8 @@ def test_must_findings_create_a_fresh_patch_writer_session(
     editor = backend.run_review(
         editor_session,
         role="chapter-editor",
-        context=editor_action["context"],
-        instructions=editor_action["instructions"],
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
         reasoning_effort="medium",
     )
 
@@ -504,7 +510,7 @@ def test_must_findings_create_a_fresh_patch_writer_session(
     ).read_text(encoding="utf-8")
 
 
-def test_invalid_writer_runtime_keeps_receipt_and_rotates_session(
+def test_writer_completion_envelope_is_repaired_without_rewriting(
     tmp_path: Path,
 ):
     root = tmp_path / "repo"
@@ -538,25 +544,269 @@ def test_invalid_writer_runtime_keeps_receipt_and_rotates_session(
     )
     writer_action = relay.next_action("demo")
     (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
-        _prose("错误运行证明"),
+        _prose("补交运行证明"),
         encoding="utf-8",
     )
-    invalid = _writer_completion(writer_action, writer)
-    invalid["runtime_snapshot"]["guardian"]["capsule_id"] = "wrong-capsule"
+    malformed = _writer_completion(writer_action, writer)
+    runtime_snapshot = malformed.pop("runtime_snapshot")
+    malformed["runtime"] = runtime_snapshot
 
-    result = relay.complete_role("demo", invalid)
-    retry_action = relay.next_action("demo")
+    result = relay.complete_role("demo", malformed)
+    repair_action = relay.next_action("demo")
     receipts = list(
         (root / "books/demo/evidence/guardian-receipts").glob("*.json")
     )
 
-    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert result.message == "正在确认角色结果。"
+    assert result.technical_retry_count == 0
+    assert repair_action["action_id"] == writer_action["action_id"]
+    assert repair_action["role"] == "writer"
+    assert repair_action["session"] == writer_action["session"]
+    assert repair_action["capsule"] == writer_action["capsule"]
+    assert repair_action["completion_repair"]["attempt"] == 1
+    assert "runtime_snapshot" in repair_action["completion_template"]
+    assert repair_action["completion_template"]["role_result"][
+        "payload"
+    ] == {"artifact_relative_path": "draft/正文.md"}
+    assert receipts == []
+    assert (
+        Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    ).is_file()
+
+    corrected = _writer_completion(writer_action, writer)
+    completed = relay.complete_role("demo", corrected)
+
+    assert completed.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
+    assert len(
+        list(
+            (root / "books/demo/evidence/guardian-receipts").glob(
+                "*.json"
+            )
+        )
+    ) == 1
+
+
+def test_blind_review_retry_budget_is_independent_from_writer_history(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    state_path = (
+        root / ".local-guardian/demo/native-relay/state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["technical_retry_count"] = 2
+    relay._write_action("demo", state, blind_action)
+    blind_session = SessionIdentity(
+        session_id="native-blind-invalid-01",
+        session_instance_id="blind-invalid-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    invalid = {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": blind_action["action_id"],
+        "status": "completed",
+        "session": asdict(blind_session),
+        "operation_handle": {
+            "kind": "native-task",
+            "value": "blind-invalid-operation-01",
+        },
+        "result_transport": "inline",
+        "review_capsule_id": blind_action["review_capsule"]["id"],
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "blind-reader",
+            "payload": {},
+        },
+    }
+
+    result = relay.complete_role("demo", invalid)
+    retry_action = relay.next_action("demo")
+
+    assert result.user_state == "running"
+    assert result.message == "审稿会话异常，已自动换新会话重试。"
     assert result.technical_retry_count == 1
-    assert retry_action["kind"] == "create_session"
-    assert retry_action["role"] == "writer"
-    assert len(receipts) == 1
-    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
-    assert receipt["status"] == "compromised"
+    assert retry_action["role"] == "blind-reader"
+    assert retry_action["session"]["mode"] == "new"
+    assert retry_action["action_id"] != blind_action["action_id"]
+
+
+def test_mutated_review_capsule_is_replaced_before_review_retry(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    old_capsule = Path(blind_action["review_capsule"]["path"])
+    (old_capsule / "prose.md").write_text(
+        _prose("被替换的旧稿"),
+        encoding="utf-8",
+    )
+    blind_session = SessionIdentity(
+        session_id="native-blind-mutated-01",
+        session_instance_id="blind-mutated-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    completion = {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": blind_action["action_id"],
+        "status": "completed",
+        "session": asdict(blind_session),
+        "operation_handle": {
+            "kind": "native-task",
+            "value": "blind-mutated-operation-01",
+        },
+        "result_transport": "inline",
+        "review_capsule_id": blind_action["review_capsule"]["id"],
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "blind-reader",
+            "payload": asdict(_pass_reviews()[0]),
+        },
+    }
+
+    result = relay.complete_role("demo", completion)
+    retry_action = relay.next_action("demo")
+    new_capsule = Path(retry_action["review_capsule"]["path"])
+    current_prose = (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).read_text(encoding="utf-8")
+
+    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert retry_action["review_capsule"]["id"] != (
+        blind_action["review_capsule"]["id"]
+    )
+    assert new_capsule != old_capsule
+    assert (new_capsule / "prose.md").read_text(
+        encoding="utf-8"
+    ) == current_prose
+    assert list((root / "books/demo/reviews").glob("ch01-*.md")) == []
+
+
+def test_editor_retry_budget_starts_after_blind_reader_success(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    state = relay._load_state("demo")
+    state["technical_retry_counts"] = {"blind-reader": 2}
+    state["technical_retry_count"] = 2
+    relay._write_action("demo", state, blind_action)
+    backend = ScriptedBackend([], [_pass_reviews()])
+    blind_session = SessionIdentity(
+        session_id="native-blind-success-01",
+        session_instance_id="blind-success-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    relay.complete_role(
+        "demo",
+        _review_completion(blind_action, blind_session, blind),
+    )
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="native-editor-invalid-01",
+        session_instance_id="editor-invalid-instance-01",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    invalid = {
+        "schema": "novel-forge-native-completion/v1",
+        "action_id": editor_action["action_id"],
+        "status": "completed",
+        "session": asdict(editor_session),
+        "operation_handle": {
+            "kind": "native-task",
+            "value": "editor-invalid-operation-01",
+        },
+        "result_transport": "inline",
+        "review_capsule_id": editor_action["review_capsule"]["id"],
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": "chapter-editor",
+            "payload": {},
+        },
+    }
+
+    result = relay.complete_role("demo", invalid)
+    retry_action = relay.next_action("demo")
+
+    assert result.user_state == "running"
+    assert result.technical_retry_count == 1
+    assert retry_action["role"] == "chapter-editor"
+    assert retry_action["session"]["mode"] == "new"
+
+
+def test_retry_after_review_transport_exhaustion_preserves_generation(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay, blind_action = _prepare_blind_action(
+        root,
+        tmp_path / "capsules",
+    )
+    state_path = (
+        root / ".local-guardian/demo/native-relay/state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    generation_id = state["generation_id"]
+    body_sha256 = state["body_sha256"]
+    writer_session = state["writer_session"]["session_id"]
+    state.update(
+        {
+            "phase": "decision_required",
+            "technical_retry_count": 3,
+            "decision_kind": "native_role_failed",
+            "failed_phase": "awaiting_blind_reader",
+        }
+    )
+    relay._write_action("demo", state, blind_action)
+    relay._action_path("demo").unlink()
+
+    result = relay.retry("demo")
+    resumed = relay.next_action("demo")
+    resumed_state = json.loads(
+        state_path.read_text(encoding="utf-8")
+    )
+
+    assert result.message == "正在自动审稿。"
+    assert resumed["role"] == "blind-reader"
+    assert resumed["session"]["mode"] == "new"
+    assert resumed_state["generation_id"] == generation_id
+    assert resumed_state["body_sha256"] == body_sha256
+    assert resumed_state["writer_session"]["session_id"] == writer_session
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
 
 
 def test_control_plane_mutation_is_restored_before_writer_retry(
@@ -676,10 +926,11 @@ def test_native_writer_only_prompts_after_two_automatic_retries(
             _prose(f"失败{index + 1}"),
             encoding="utf-8",
         )
+        (capsule / "runtime.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
         invalid = _writer_completion(writer_action, session)
-        invalid["runtime_snapshot"]["guardian"][
-            "capsule_id"
-        ] = "wrong-capsule"
         result = relay.complete_role("demo", invalid)
         if index < 2:
             assert result.user_state == "running"
@@ -732,6 +983,76 @@ def test_native_writer_only_prompts_after_two_automatic_retries(
             ).glob("*.json")
         )
     ) == 3
+
+
+def _review_capsule_manifest(action: dict) -> tuple[Path, dict]:
+    capsule = Path(action["review_capsule"]["path"])
+    manifest = json.loads(
+        (capsule / "manifest.json").read_text(encoding="utf-8")
+    )
+    return capsule, manifest
+
+
+def _review_capsule_context(action: dict) -> dict[str, str]:
+    capsule, manifest = _review_capsule_manifest(action)
+    return {
+        item["logical_name"]: (capsule / item["path"]).read_text(
+            encoding="utf-8"
+        )
+        for item in manifest["files"]
+        if item["logical_name"] != "instructions"
+    }
+
+
+def _review_capsule_instructions(action: dict) -> str:
+    capsule, manifest = _review_capsule_manifest(action)
+    item = next(
+        entry
+        for entry in manifest["files"]
+        if entry["logical_name"] == "instructions"
+    )
+    return (capsule / item["path"]).read_text(encoding="utf-8")
+
+
+def _prepare_blind_action(
+    root: Path,
+    capsule_root: Path,
+) -> tuple[NativeWorkflowRelay, dict]:
+    relay = NativeWorkflowRelay(root, capsule_root=capsule_root)
+    request = _request()
+    backend = ScriptedBackend([], [])
+    relay.start("demo", request, chapter=1)
+    planning_action = relay.next_action("demo")
+    writer = SessionIdentity(
+        session_id="native-writer-01",
+        session_instance_id="writer-instance-01",
+        provider="writer-provider",
+        model="writer-model",
+        agent_harness="native-host",
+        role="writer",
+    )
+    planning = backend.run_planning(
+        writer,
+        request=request,
+        chapter=1,
+        context=planning_action["context"],
+        instructions=planning_action["instructions"],
+        reasoning_effort="high",
+    )
+    relay.complete_role(
+        "demo",
+        _planning_completion(planning_action, writer, planning),
+    )
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("封存审稿输入"),
+        encoding="utf-8",
+    )
+    relay.complete_role(
+        "demo",
+        _writer_completion(writer_action, writer),
+    )
+    return relay, relay.next_action("demo")
 
 
 def _planning_completion(
@@ -805,6 +1126,7 @@ def _review_completion(
             "value": outcome.operation_id,
         },
         "result_transport": outcome.result_transport,
+        "review_capsule_id": action["review_capsule"]["id"],
         "role_result": {
             "schema": "novel-forge-role-result/v1",
             "role": action["role"],

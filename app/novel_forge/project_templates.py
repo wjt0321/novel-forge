@@ -140,7 +140,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 标题: 《{title}》
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 工作流版本: v5.1（Python 原生会话 Relay、双保证模式与零污染工作区）
+- 工作流版本: v5.2（完成信封补交、封存 Review Capsule 与按角色恢复）
 
 ## 唯一正文与事实源
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
@@ -154,6 +154,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
 - Python 状态机决定下一步；宿主只负责创建、等待和回传。Lead 不写角色产物、
   evidence、状态或 ready，也不从缺失结果中补造完成态。
+- Lead 使用动作的 `completion_template`；格式错只补交同一终态，不重跑角色。
+- Writer 只接收 Writer Capsule；审稿只接收 `review_capsule.path`，Lead 不搬正文。
 - 创作角色对项目仓库零写入：规划和审稿只返回结构化结果，Writer 只写仓库外
   capsule 的 `draft/正文.md`。新增项目产物会被清理并换新会话。
 - ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
@@ -167,6 +169,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   固定 sleep 或以文件出现猜测完成。每个创作角色默认至少等待 30 分钟；仍在
   working/progress 就继续等待。`idle_notification` 或 available 不是角色产物；
   completed 还必须返回绑定 role、session_id、session_instance_id 的 `role_result`。
+- Writer、Blind Reader、Chapter Editor 与 Patch Writer 分别计算技术重试次数；
+  有效 Generation 后的审稿运输故障只从未完成的审稿角色恢复，不重新生成正文。
 - 模型配置只是选择意图；证据只记录宿主终态返回的 `resolvedModel`。Writer 角色在
   Claude Code 模板中使用 `model: inherit`，表示继承当前父会话模型，不绑定具体厂商。
 - Claude Code 创建角色时必须使用项目已定义的 `novel-forge-writer`、
@@ -268,7 +272,7 @@ def _readme_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 - 类型: {genre}
 - 创建时间: {timestamp}
-- 默认工作流: v5.1；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
+- 默认工作流: v5.2；完整编排说明见 `.agents/skills/novel-forge/SKILL.md`。
 
 ## 如何阅读
 打开最新正文：
@@ -1536,6 +1540,9 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
 - Python 状态机决定下一步；宿主只负责创建、等待和回传。创作角色对项目仓库零写入，
   ACP 只用于事后取证，不参与生产控制。
+- Lead 必须从动作的 `completion_template` 填写真实终态；格式错误只补交同一终态，
+  不得重跑角色。Writer 只接收 Writer Capsule，审稿角色只接收
+  `review_capsule.path`，Lead 不搬运正文。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
@@ -1551,7 +1558,9 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
 - `idle_notification`、idle 或 available 只表示角色可接收新消息，不是报告已送达。
   completed 必须同时取得 `novel-forge-role-result/v1` 的 `role_result`，且 role
   与当前角色一致，并绑定 session_id、session_instance_id 和原 operation handle；
-  否则废弃该 session 并新开同角色 session，最多自动重试两次。
+  完成信封错误先原地补交；实质结果无效时才废弃该 session 并新开同角色 session。
+  Writer、Blind Reader、Chapter Editor 与 Patch Writer 各自最多自动重试两次，
+  互不占用预算。
 - 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
   返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
 - 无法创建或等待真实独立角色时停止，只说明“本章未开始”。
@@ -1596,6 +1605,9 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
 8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；Claude Code 分别使用
    `novel-forge-blind-reader` 与 `novel-forge-chapter-editor`。Blind Reader 正式记录后才能启动 Chapter Editor。
    不得暂停询问是否开始审核。
+   Python 为两角色分别封存仓库外 Review Capsule；动作不携带正文全文，Lead 只传
+   Capsule 路径。Capsule 绑定当前正文及全部允许输入，篡改后自动换新审稿会话并
+   从当前正式正文重新封存。
    无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
    “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
    修补接缝；chapter-editor 每轮完整重审五项文学维度。两者只通过宿主正式结果通道

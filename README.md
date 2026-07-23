@@ -40,6 +40,8 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 没有命令 Backend 时，`start` 会签发宿主原生会话动作；Lead 只循环
 `next-action → 创建/运行角色 → 等官方终态 → complete-role`。Agent 不得先探索
 工作流源码、自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。
+每个动作自带完整 `completion_template`；格式错误只补交同一终态，不重跑角色。
+审稿输入由 Python 封存在仓库外 Review Capsule，Lead 只传路径，不复制正文。
 命令桥仍是可选 headless 接入；协议不绑定宿主、供应商或模型。
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
@@ -151,6 +153,8 @@ research/            # 前期调研
 - 异步终态、证据封存与 Harness 信任：`docs/33`、`docs/34`、`docs/36`、`docs/37`、`docs/38`
 - 文学短规则与完整解释：`docs/35-literary-rule-manual.md`
 - Python 确定性控制与零污染：`docs/39-deterministic-native-control-and-workspace-hygiene.md`
+- 原生 Relay 双保证模式：`docs/40-native-relay-and-assurance-modes.md`
+- 完成补交与封存 Review Capsule：`docs/41-completion-repair-and-sealed-review-capsules.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
 - 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 

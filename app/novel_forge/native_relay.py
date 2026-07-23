@@ -29,6 +29,11 @@ from .review_prompt import (
     render_planning_instructions,
     render_review_instructions,
 )
+from .review_capsule import (
+    ReviewCapsuleError,
+    prepare_review_capsule,
+    verify_review_capsule,
+)
 from .session_audit import audit_session_log
 from .workspace_integrity import (
     create_workspace_backup,
@@ -60,6 +65,14 @@ class NativeWorkspaceMutationError(WorkflowError):
 
     def __init__(self, reason: str):
         super().__init__("创作角色修改了项目控制面。")
+        self.reason = reason
+
+
+class NativeCompletionRepairError(WorkflowError):
+    """Raised when an official terminal only needs envelope repair."""
+
+    def __init__(self, reason: str):
+        super().__init__("原生角色完成信息需要补交。")
         self.reason = reason
 
 
@@ -118,6 +131,119 @@ def _result_contract(role: str) -> dict[str, Any]:
         ],
         "payload": payloads[role],
     }
+
+
+def _completion_payload_template(role: str) -> dict[str, Any]:
+    """Return a fillable payload, distinct from the validation contract."""
+    if role == "writer-planning":
+        return {"files": {}}
+    if role == "writer-session":
+        return {}
+    if role == "writer":
+        return {"artifact_relative_path": "draft/正文.md"}
+    if role == "blind-reader":
+        return {
+            "verdict": "<pass-or-needs_revision>",
+            "findings": [],
+            "human_likeness": "<convincing-uncertain-or-synthetic>",
+            "reader_desire": "<continue-conditional-or-stop>",
+            "emotional_residue": "<specific-reader-residue>",
+            "next_chapter_pull": "<specific-reason-to-continue>",
+            "analysis": {},
+            "evidence_quote": "<exact-current-prose-quote>",
+        }
+    if role == "chapter-editor":
+        return {
+            "verdict": "<ready_for_editor_decision-or-revision_required>",
+            "findings": [],
+            "analysis": {},
+            "evidence_quote": "<exact-current-prose-quote>",
+            "previous_chapter_quote": "<exact-quote-or-not_applicable>",
+        }
+    raise WorkflowError(f"未知原生角色：{role}")
+
+
+def _completion_template(action: dict[str, Any]) -> dict[str, Any]:
+    """Compile an exact host completion envelope for the current action."""
+    role = str(action["role"])
+    session_action = action.get("session")
+    session = {
+        "session_id": "<official-session-id>",
+        "session_instance_id": "<official-session-instance-id>",
+        "provider": "<resolved-provider>",
+        "model": "<resolved-model>",
+        "agent_harness": "<native-host>",
+    }
+    if (
+        isinstance(session_action, dict)
+        and session_action.get("mode") == "reuse"
+    ):
+        session["session_id"] = str(session_action["session_id"])
+        session["session_instance_id"] = str(
+            session_action["session_instance_id"]
+        )
+    template: dict[str, Any] = {
+        "schema": NATIVE_COMPLETION_SCHEMA,
+        "action_id": action["action_id"],
+        "status": "completed",
+        "session": session,
+        "operation_handle": {
+            "kind": "<official-handle-kind>",
+            "value": "<official-handle-value>",
+        },
+        "result_transport": "<official-result-transport>",
+        "role_result": {
+            "schema": "novel-forge-role-result/v1",
+            "role": role,
+            "payload": _completion_payload_template(role),
+        },
+    }
+    review_capsule = action.get("review_capsule")
+    if isinstance(review_capsule, dict):
+        template["review_capsule_id"] = review_capsule["id"]
+    capsule = action.get("capsule")
+    if role == "writer" and isinstance(capsule, dict):
+        template["runtime_snapshot"] = {
+            "schema": "novel-forge-runtime/v1",
+            "session_id": session["session_id"],
+            "scope": {"chapter_count": 1},
+            "harness": {
+                "name": "<native-host>",
+                "version": "<version-or-unknown>",
+            },
+            "model": {
+                "provider": session["provider"],
+                "name": session["model"],
+                "reasoning_effort": "<actual-or-null>",
+            },
+            "timing": {"elapsed_seconds": None},
+            "usage": {
+                "request_count": None,
+                "input_tokens": None,
+                "output_tokens": None,
+                "cached_input_tokens": None,
+                "total_tokens": None,
+                "max_request_context_tokens": None,
+                "context_reset_count": None,
+            },
+            "tools": {
+                "call_count": None,
+                "failure_count": None,
+                "by_name": {},
+            },
+            "guardian": {
+                "capsule_id": capsule["id"],
+                "workspace_mode": "isolated_writer_capsule",
+                "assurance_mode": "formal_native",
+                "filesystem_scope": "guarded_native",
+                "write_scope": "post_execution_verified",
+                "repository_snapshot_enforced": True,
+                "book_control_plane_visible": False,
+                "validator_source_visible": False,
+                "reported_by": "native_host",
+            },
+        }
+    return template
 
 
 class _RelayOnlyBackend:
@@ -207,7 +333,7 @@ class NativeWorkflowRelay:
     ) -> SessionIdentity:
         session = completion.get("session")
         if not isinstance(session, dict):
-            raise WorkflowError("原生角色终态缺少真实会话信息。")
+            raise NativeCompletionRepairError("missing_session")
         required = (
             "session_id",
             "session_instance_id",
@@ -220,7 +346,7 @@ class NativeWorkflowRelay:
             for name in required
         }
         if any(not value for value in values.values()):
-            raise WorkflowError("原生角色终态的会话信息不完整。")
+            raise NativeCompletionRepairError("incomplete_session")
         return SessionIdentity(role=role, **values)
 
     def _validate_completion(
@@ -231,32 +357,32 @@ class NativeWorkflowRelay:
         role: str,
     ) -> tuple[SessionIdentity, dict[str, Any], dict[str, str]]:
         if completion.get("schema") != NATIVE_COMPLETION_SCHEMA:
-            raise WorkflowError("原生角色终态格式无效。")
+            raise NativeCompletionRepairError("invalid_completion_schema")
         if completion.get("action_id") != state.get("action_id"):
-            raise WorkflowError("原生角色终态不属于当前等待动作。")
+            raise NativeCompletionRepairError("action_id_mismatch")
         if completion.get("status") != "completed":
-            raise WorkflowError("原生角色尚未返回宿主官方完成终态。")
+            raise NativeCompletionRepairError("terminal_not_completed")
         operation = completion.get("operation_handle")
         if not isinstance(operation, dict):
-            raise WorkflowError("原生角色终态缺少带类型 operation handle。")
+            raise NativeCompletionRepairError("missing_operation_handle")
         operation_handle = {
             "kind": str(operation.get("kind") or "").strip(),
             "value": str(operation.get("value") or "").strip(),
         }
         if not all(operation_handle.values()):
-            raise WorkflowError("原生角色 operation handle 无效。")
+            raise NativeCompletionRepairError("invalid_operation_handle")
         result_transport = str(
             completion.get("result_transport") or ""
         ).strip()
         if not result_transport:
-            raise WorkflowError("原生角色终态缺少正式结果通道。")
+            raise NativeCompletionRepairError("missing_result_transport")
         role_result = completion.get("role_result")
         if (
             not isinstance(role_result, dict)
             or role_result.get("schema") != "novel-forge-role-result/v1"
             or role_result.get("role") != role
         ):
-            raise WorkflowError("原生角色结果没有绑定当前角色。")
+            raise NativeCompletionRepairError("invalid_role_result_binding")
         session = self._completion_session(completion, role=role)
         action = self.next_action(str(state["slug"]))
         expected_session = action.get("session")
@@ -269,7 +395,7 @@ class NativeWorkflowRelay:
                 != expected_session.get("session_instance_id")
             )
         ):
-            raise WorkflowError("原生角色终态与当前绑定会话不一致。")
+            raise NativeCompletionRepairError("session_binding_mismatch")
         return session, role_result, {
             **operation_handle,
             "result_transport": result_transport,
@@ -281,6 +407,7 @@ class NativeWorkflowRelay:
         state: dict[str, Any],
         action: dict[str, Any],
     ) -> None:
+        action["completion_template"] = _completion_template(action)
         state["action_id"] = action["action_id"]
         _atomic_json(self._state_path(slug), state)
         _atomic_json(self._action_path(slug), action)
@@ -369,6 +496,8 @@ class NativeWorkflowRelay:
             "phase": "awaiting_writer_planning",
             "action_id": action_id,
             "technical_retry_count": 0,
+            "technical_retry_counts": {},
+            "delivery_repair_counts": {},
             "author_approval": False,
             "publication_eligibility": False,
         }
@@ -419,6 +548,49 @@ class NativeWorkflowRelay:
         request = self._request_from_state(state)
         chapter = int(state["chapter"])
         sequence_id = str(state.get("sequence_id") or "")
+        decision_kind = str(state.get("decision_kind") or "")
+        if (
+            sequence_id
+            and state.get("generation_id")
+            and state.get("body_sha256")
+            and not state.get("must_findings")
+            and decision_kind in {"", "native_role_failed"}
+        ):
+            failed_phase = str(state.get("failed_phase") or "")
+            role = (
+                "chapter-editor"
+                if (
+                    failed_phase == "awaiting_chapter_editor"
+                    or isinstance(state.get("blind_outcome"), dict)
+                )
+                else "blind-reader"
+            )
+            bucket = role
+            counts = state.get("technical_retry_counts")
+            if not isinstance(counts, dict):
+                counts = {}
+                state["technical_retry_counts"] = counts
+            counts[bucket] = 0
+            state["technical_retry_count"] = 0
+            state["phase"] = f"awaiting_{role.replace('-', '_')}"
+            state.pop("decision_kind", None)
+            state.pop("failed_phase", None)
+            state.pop("retry_reason", None)
+            action = self._review_action(slug, state, role)
+            self.orchestrator._save_control(
+                slug,
+                request=request,
+                chapter=chapter,
+                sequence_id=sequence_id,
+                phase="reviewing",
+                retries=0,
+            )
+            self._write_action(slug, state, action)
+            return WorkflowResult(
+                user_state="running",
+                message="正在自动审稿。",
+                sequence_id=sequence_id,
+            )
         if not sequence_id:
             book_dir = self.root / "books" / slug
             action = {
@@ -548,6 +720,12 @@ class NativeWorkflowRelay:
             if phase != "awaiting_writer_planning":
                 raise WorkflowError("当前没有等待中的可回传角色。")
             return self._complete_planning(slug, state, completion)
+        except NativeCompletionRepairError as exc:
+            return self._request_completion_repair(
+                slug,
+                state,
+                reason=exc.reason,
+            )
         except NativeWorkspaceMutationError as exc:
             return self._recover_technical_failure(
                 slug,
@@ -556,6 +734,208 @@ class NativeWorkflowRelay:
             )
         except (GuardianError, WorkflowError, OSError, ValueError):
             return self._recover_technical_failure(slug, state)
+
+    @staticmethod
+    def _retry_bucket(state: dict[str, Any]) -> str:
+        phase = str(state.get("phase") or "")
+        if phase == "awaiting_writer_planning":
+            return "writer-planning"
+        if phase == "awaiting_blind_reader":
+            return "blind-reader"
+        if phase == "awaiting_chapter_editor":
+            return "chapter-editor"
+        if phase == "awaiting_patch_writer_session":
+            return "patch-writer"
+        if phase == "awaiting_writer" and state.get("must_findings"):
+            return "patch-writer"
+        return "writer"
+
+    def _next_retry_count(self, state: dict[str, Any]) -> tuple[str, int]:
+        bucket = self._retry_bucket(state)
+        counts = state.get("technical_retry_counts")
+        if not isinstance(counts, dict):
+            counts = {}
+            state["technical_retry_counts"] = counts
+        current = int(counts.get(bucket) or 0)
+        retries = current + 1
+        counts[bucket] = retries
+        state["technical_retry_count"] = retries
+        return bucket, retries
+
+    @staticmethod
+    def _reset_active_retry(
+        state: dict[str, Any],
+        bucket: str,
+    ) -> None:
+        counts = state.get("technical_retry_counts")
+        if not isinstance(counts, dict):
+            counts = {}
+            state["technical_retry_counts"] = counts
+        counts.setdefault(bucket, 0)
+        state["technical_retry_count"] = int(counts[bucket])
+
+    def _request_completion_repair(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        *,
+        reason: str,
+    ) -> WorkflowResult:
+        action_id = str(state.get("action_id") or "")
+        counts = state.get("delivery_repair_counts")
+        if not isinstance(counts, dict):
+            counts = {}
+            state["delivery_repair_counts"] = counts
+        attempt = int(counts.get(action_id) or 0) + 1
+        counts[action_id] = attempt
+        if attempt > self.orchestrator.max_technical_retries:
+            return self._recover_technical_failure(
+                slug,
+                state,
+                failure_reason="writer_terminal_failure",
+            )
+        action = self.next_action(slug)
+        action["completion_repair"] = {
+            "attempt": attempt,
+            "reason": reason,
+            "instruction": (
+                "Do not rerun the role. Resubmit the same official terminal "
+                "using completion_template."
+            ),
+        }
+        self._write_action(slug, state, action)
+        return WorkflowResult(
+            user_state="running",
+            message="正在确认角色结果。",
+            sequence_id=str(state.get("sequence_id") or ""),
+            technical_retry_count=int(
+                state.get("technical_retry_count") or 0
+            ),
+        )
+
+    def _review_inputs(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+    ) -> dict[str, str]:
+        chapter = int(state["chapter"])
+        request = self._request_from_state(state)
+        book_dir = self.root / "books" / slug
+        prose = book_project.find_chapter_file(
+            book_dir,
+            chapter,
+        ).read_text(encoding="utf-8-sig")
+        if role == "blind-reader":
+            return {"prose": prose}
+        scene = (
+            book_dir / f"planning/scene-package-ch{chapter:02d}.md"
+        ).read_text(encoding="utf-8-sig")
+        canon_dir = book_dir / "memory/canon"
+        blind_path = (
+            book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
+        )
+        if not blind_path.is_file():
+            raise WorkflowError(
+                "Chapter Editor 前缺少有效 Blind Reader 记录。"
+            )
+        inputs = {
+            "prose": prose,
+            "scene_package": scene,
+            "story_contract": self.orchestrator._story_contract(
+                request,
+                chapter,
+            ),
+            "canon": "\n".join(
+                path.read_text(encoding="utf-8-sig")
+                for path in sorted(canon_dir.rglob("*.md"))
+            )[:12000],
+            "blind_review": blind_path.read_text(encoding="utf-8-sig"),
+            "machine_diagnostics": (
+                self.orchestrator._machine_diagnostics(
+                    book_project.run_gates(
+                        self.root,
+                        slug,
+                        chapter,
+                        expected_mode="formal",
+                    )
+                )
+            ),
+        }
+        if chapter > 1:
+            previous = book_project.find_chapter_file(
+                book_dir,
+                chapter - 1,
+            ).read_text(encoding="utf-8-sig")
+            inputs["previous_chapter_ending"] = previous[
+                max(0, int(len(previous) * 0.8)) :
+            ]
+        return inputs
+
+    def _review_action(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+    ) -> dict[str, Any]:
+        prompt = render_review_instructions(role).text
+        descriptor = prepare_review_capsule(
+            self.orchestrator.capsule_root,
+            slug,
+            role,
+            instructions=prompt,
+            inputs=self._review_inputs(slug, state, role),
+            body_sha256=str(state["body_sha256"]),
+        )
+        state["review_capsule"] = descriptor
+        return {
+            "schema": NATIVE_ACTION_SCHEMA,
+            "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+            "kind": "run_role",
+            "role": role,
+            "session": {
+                "mode": "new",
+                "must_be_independent": True,
+            },
+            "reasoning_effort": "medium",
+            "review_capsule": descriptor,
+            "task": (
+                "Read only the sealed review capsule and return the "
+                "structured role result through the official terminal."
+            ),
+            "result": {
+                **_result_contract(role),
+                "review_capsule_id_required": True,
+            },
+            "repository_exploration_forbidden": True,
+            "allowed_project_writes": [],
+        }
+
+    def _verify_current_review_capsule(
+        self,
+        state: dict[str, Any],
+        completion: dict[str, Any],
+        role: str,
+    ) -> None:
+        descriptor = state.get("review_capsule")
+        if not isinstance(descriptor, dict):
+            raise NativeWorkspaceMutationError(
+                "missing_review_capsule"
+            )
+        if completion.get("review_capsule_id") != descriptor.get("id"):
+            raise NativeCompletionRepairError(
+                "review_capsule_id_mismatch"
+            )
+        try:
+            verify_review_capsule(
+                descriptor,
+                expected_role=role,
+                expected_body_sha256=str(state["body_sha256"]),
+            )
+        except ReviewCapsuleError as exc:
+            raise NativeWorkspaceMutationError(
+                "review_capsule_mutation"
+            ) from exc
 
     def _complete_planning(
         self,
@@ -708,8 +1088,7 @@ class NativeWorkflowRelay:
         *,
         failure_reason: str = "writer_result_invalid",
     ) -> WorkflowResult:
-        retries = int(state.get("technical_retry_count") or 0) + 1
-        state["technical_retry_count"] = retries
+        _, retries = self._next_retry_count(state)
         phase = str(state.get("phase") or "")
         sequence_id = str(state.get("sequence_id") or "")
         request = self._request_from_state(state)
@@ -726,6 +1105,8 @@ class NativeWorkflowRelay:
                 parent_generation_id=state.get("generation_id"),
             )
             state["phase"] = "decision_required"
+            state["decision_kind"] = "native_role_failed"
+            state["failed_phase"] = phase
             _atomic_json(self._state_path(slug), state)
             self._action_path(slug).unlink(missing_ok=True)
             return result
@@ -749,14 +1130,12 @@ class NativeWorkflowRelay:
             "awaiting_blind_reader",
             "awaiting_chapter_editor",
         }:
-            action = self.next_action(slug)
-            action["action_id"] = (
-                f"native-action-{uuid.uuid4().hex[:16]}"
+            role = (
+                "blind-reader"
+                if phase == "awaiting_blind_reader"
+                else "chapter-editor"
             )
-            action["session"] = {
-                "mode": "new",
-                "must_be_independent": True,
-            }
+            action = self._review_action(slug, state, role)
             self._write_action(slug, state, action)
             return WorkflowResult(
                 user_state="running",
@@ -843,10 +1222,14 @@ class NativeWorkflowRelay:
             else ""
         )
         if artifact != "draft/正文.md":
-            raise WorkflowError("Writer 没有返回唯一允许的正文产物。")
+            raise NativeCompletionRepairError(
+                "writer_artifact_path_invalid"
+            )
         runtime_snapshot = completion.get("runtime_snapshot")
         if not isinstance(runtime_snapshot, dict):
-            raise WorkflowError("Writer 终态缺少原生运行快照。")
+            raise NativeCompletionRepairError(
+                "missing_runtime_snapshot"
+            )
         prepared = state.get("capsule")
         if not isinstance(prepared, dict):
             raise WorkflowError("Writer 动作缺少 Capsule 绑定。")
@@ -865,23 +1248,16 @@ class NativeWorkflowRelay:
                 capsule_id,
                 runtime_path,
             )
-            imported = ingest_writer_capsule(
-                self.root,
-                slug,
-                capsule_id,
-            )
-            report = audit_session_log(runtime_path)
-        except Exception:
-            try:
-                reject_writer_capsule(
-                    self.root,
-                    slug,
-                    capsule_id,
-                    reason="writer_result_invalid",
-                )
-            except Exception:
-                pass
-            raise
+        except GuardianError as exc:
+            raise NativeCompletionRepairError(
+                "invalid_runtime_snapshot"
+            ) from exc
+        imported = ingest_writer_capsule(
+            self.root,
+            slug,
+            capsule_id,
+        )
+        report = audit_session_log(runtime_path)
         chapter = int(state["chapter"])
         sequence_id = str(state["sequence_id"])
         generation_id = (
@@ -933,29 +1309,6 @@ class NativeWorkflowRelay:
             "surface_checked",
             evidence="run-gates/current",
         )
-        prose = book_project.find_chapter_file(
-            book_dir,
-            chapter,
-        ).read_text(encoding="utf-8-sig")
-        action_id = f"native-action-{uuid.uuid4().hex[:16]}"
-        action = {
-            "schema": NATIVE_ACTION_SCHEMA,
-            "action_id": action_id,
-            "kind": "run_role",
-            "role": "blind-reader",
-            "session": {
-                "mode": "new",
-                "must_be_independent": True,
-            },
-            "reasoning_effort": "medium",
-            "instructions": render_review_instructions(
-                "blind-reader"
-            ).text,
-            "context": {"prose": prose},
-            "result": _result_contract("blind-reader"),
-            "repository_exploration_forbidden": True,
-            "allowed_project_writes": [],
-        }
         state.update(
             {
                 "phase": "awaiting_blind_reader",
@@ -965,7 +1318,9 @@ class NativeWorkflowRelay:
                 "review_session_ids": [],
             }
         )
+        self._reset_active_retry(state, "blind-reader")
         state.pop("blind_outcome", None)
+        action = self._review_action(slug, state, "blind-reader")
         request = self._request_from_state(state)
         self.orchestrator._save_control(
             slug,
@@ -973,7 +1328,7 @@ class NativeWorkflowRelay:
             chapter=chapter,
             sequence_id=sequence_id,
             phase="reviewing",
-            retries=int(state.get("technical_retry_count") or 0),
+            retries=0,
         )
         self._write_action(slug, state, action)
         return WorkflowResult(
@@ -1123,6 +1478,11 @@ class NativeWorkflowRelay:
             if phase == "awaiting_blind_reader"
             else "chapter-editor"
         )
+        self._verify_current_review_capsule(
+            state,
+            completion,
+            role,
+        )
         session, role_result, terminal = self._validate_completion(
             state,
             completion,
@@ -1149,7 +1509,7 @@ class NativeWorkflowRelay:
             session=session,
             terminal=terminal,
         )
-        review_text, _ = self._record_native_review(
+        self._record_native_review(
             slug,
             state,
             role,
@@ -1162,73 +1522,18 @@ class NativeWorkflowRelay:
         chapter = int(state["chapter"])
         sequence_id = str(state["sequence_id"])
         request = self._request_from_state(state)
-        book_dir = self.root / "books" / slug
         if role == "blind-reader":
-            prose = book_project.find_chapter_file(
-                book_dir,
-                chapter,
-            ).read_text(encoding="utf-8-sig")
-            scene = (
-                book_dir / f"planning/scene-package-ch{chapter:02d}.md"
-            ).read_text(encoding="utf-8-sig")
-            canon_dir = book_dir / "memory/canon"
-            canon = "\n".join(
-                path.read_text(encoding="utf-8-sig")
-                for path in sorted(canon_dir.rglob("*.md"))
-            )[:12000]
-            context = {
-                "prose": prose,
-                "scene_package": scene,
-                "story_contract": self.orchestrator._story_contract(
-                    request,
-                    chapter,
-                ),
-                "canon": canon,
-                "blind_review": review_text,
-                "machine_diagnostics": (
-                    self.orchestrator._machine_diagnostics(
-                        book_project.run_gates(
-                            self.root,
-                            slug,
-                            chapter,
-                            expected_mode="formal",
-                        )
-                    )
-                ),
-            }
-            if chapter > 1:
-                previous = book_project.find_chapter_file(
-                    book_dir,
-                    chapter - 1,
-                ).read_text(encoding="utf-8-sig")
-                context["previous_chapter_ending"] = previous[
-                    max(0, int(len(previous) * 0.8)) :
-                ]
-            action = {
-                "schema": NATIVE_ACTION_SCHEMA,
-                "action_id": (
-                    f"native-action-{uuid.uuid4().hex[:16]}"
-                ),
-                "kind": "run_role",
-                "role": "chapter-editor",
-                "session": {
-                    "mode": "new",
-                    "must_be_independent": True,
-                },
-                "reasoning_effort": "medium",
-                "instructions": render_review_instructions(
-                    "chapter-editor"
-                ).text,
-                "context": context,
-                "result": _result_contract("chapter-editor"),
-                "repository_exploration_forbidden": True,
-                "allowed_project_writes": [],
-            }
             state.update(
                 {
                     "phase": "awaiting_chapter_editor",
                     "blind_outcome": asdict(outcome),
                 }
+            )
+            self._reset_active_retry(state, "chapter-editor")
+            action = self._review_action(
+                slug,
+                state,
+                "chapter-editor",
             )
             self._write_action(slug, state, action)
             return WorkflowResult(
@@ -1298,6 +1603,9 @@ class NativeWorkflowRelay:
                     parent_generation_id=str(state["generation_id"]),
                 )
                 state["phase"] = "decision_required"
+                state["decision_kind"] = (
+                    "literary_revision_required"
+                )
                 state["must_findings"] = list(must)
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
@@ -1335,6 +1643,7 @@ class NativeWorkflowRelay:
                     "patch_round": 1,
                 }
             )
+            self._reset_active_retry(state, "patch-writer")
             self.orchestrator._save_control(
                 slug,
                 request=request,
@@ -1359,7 +1668,17 @@ class NativeWorkflowRelay:
             chapter,
             sequence_id,
             writer_session,
-            int(state.get("technical_retry_count") or 0),
+            int(
+                (
+                    state.get("technical_retry_counts")
+                    if isinstance(
+                        state.get("technical_retry_counts"),
+                        dict,
+                    )
+                    else {}
+                ).get("chapter-editor")
+                or 0
+            ),
         )
         state["phase"] = (
             "complete"

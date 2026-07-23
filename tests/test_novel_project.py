@@ -116,7 +116,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v5.1" in claude_md
+    assert "v5.2" in claude_md
     assert "book-git-status" in claude_md
     assert "draft" in claude_md
     assert "ready" in claude_md
@@ -159,7 +159,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v5.1" in readme
+    assert "默认工作流: v5.2" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -605,7 +605,7 @@ def test_skill_documents_v51_native_relay_workflow():
         encoding="utf-8"
     )
 
-    assert "v5.1" in text
+    assert "v5.2" in text
     assert "自动生产唯一入口" in text
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
