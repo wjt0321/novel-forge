@@ -83,13 +83,22 @@ The daily production loop is deliberately small:
 
 Lean checks blocking surface rules against the staged body. A failure returns
 the same capsule and file to Writer as `stage=patch`, so it creates no
-Generation, Git checkpoint, or technical retry. After surface checks, Python
-freezes the first draft but still does not write `chapters/`. Both reviewers
-read the staged body. When reviews produce MUST findings, the control plane
-issues Writer `stage=patch` against that same file and prefers reusing the
-current host Writer session. Both reviewers then read the complete revised
-body again. Only a double pass causes Python to promote the body, record the
-technical evidence, advance `ready`, and checkpoint the per-book Git history.
+Generation, Git checkpoint, or technical retry. If a mechanical cleanup leaves
+a small number of blockers, Lean keeps issuing the same-file patch action for
+up to three consolidated rounds instead of dropping into a state with no next
+action. After surface checks, Python freezes the first draft but still does not
+write `chapters/`. Both reviewers read the staged body. When reviews produce
+MUST findings, the control plane issues Writer `stage=patch` against that same
+file and prefers reusing the current host Writer session. Both reviewers then
+read the complete revised body again. Only a double pass causes Python to
+promote the body, record the technical evidence, advance `ready`, and
+checkpoint the per-book Git history.
+
+Lean review transport is deliberately compact. Chapter Editor returns only a
+generic `pass` or `needs_revision`, one complete MUST list, a short summary,
+and one prose quote. Python accepts `pass` as the internal editor-ready verdict
+and derives supporting record fields itself. Analysis matrices and hard-anchor
+coverage tables remain strict-audit evidence, not daily creative work.
 
 Writer planning remains available inside the Writer's writing process because
 research and story architecture can materially improve prose. It is a

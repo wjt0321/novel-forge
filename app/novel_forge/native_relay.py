@@ -63,6 +63,7 @@ from .workflow import (
 NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
+MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
 
 
 class NativeWorkspaceMutationError(WorkflowError):
@@ -290,7 +291,20 @@ def _lean_result_contract(role: str) -> dict[str, Any]:
             "output": "draft/正文.md",
             "purpose": "本章正文",
         }
-    required = _result_contract(role)["payload"]["required"]
+    required = (
+        [
+            "verdict",
+            "must",
+            "human_likeness",
+            "reader_desire",
+            "emotional_residue",
+            "next_chapter_pull",
+            "summary",
+            "evidence_quote",
+        ]
+        if role == "blind-reader"
+        else ["verdict", "must", "summary", "evidence_quote"]
+    )
     return {
         "format": "json",
         "required": required,
@@ -1694,7 +1708,10 @@ class NativeWorkflowRelay:
         state: dict[str, Any],
         role: str,
     ) -> dict[str, Any]:
-        prompt = render_review_instructions(role).text
+        prompt = render_review_instructions(
+            role,
+            lean=not self.strict_audit,
+        ).text
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
         review_dir = self._diff_dir(
             slug, int(state["chapter"])
@@ -2096,7 +2113,7 @@ class NativeWorkflowRelay:
         sequence_id = str(state["sequence_id"])
         request = self._request_from_state(state)
         round_number = int(state.get("surface_patch_round") or 0)
-        if round_number >= 1:
+        if round_number >= MAX_LEAN_SURFACE_PATCH_ROUNDS:
             state.update(
                 {
                     "phase": "decision_required",
@@ -2587,8 +2604,11 @@ class NativeWorkflowRelay:
                     f"{role} hard_anchor_coverage 字段无效。"
                 )
             hard_anchor_coverage[name] = dict(item)
+        verdict = str(payload.get("verdict") or "").strip()
+        if role == "chapter-editor" and verdict == "pass":
+            verdict = "ready_for_editor_decision"
         return ReviewOutcome(
-            verdict=str(payload.get("verdict") or ""),
+            verdict=verdict,
             findings=findings,
             human_likeness=str(
                 payload.get("human_likeness") or "not_applicable"

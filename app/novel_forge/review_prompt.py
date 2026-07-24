@@ -49,7 +49,11 @@ def render_planning_instructions() -> RolePrompt:
     )
 
 
-def render_review_instructions(role: str) -> RolePrompt:
+def render_review_instructions(
+    role: str,
+    *,
+    lean: bool = False,
+) -> RolePrompt:
     """Compile one complete literary review task."""
     if role == "blind-reader":
         micro_rules = render_literary_micro_rules(role)
@@ -79,6 +83,23 @@ def render_review_instructions(role: str) -> RolePrompt:
         )
     if role == "chapter-editor":
         micro_rules = render_literary_micro_rules(role)
+        if lean:
+            return _prompt(
+                role,
+                f"""
+你是独立 Chapter Editor。完整阅读当前暂存正文、Blind Reader 结论、当前场景包与必要
+Canon，只判断本章是否成立。检查因果、主角选择与私人代价、对白信息流、句子肌理和
+连续性；不得直接修改正文，也不得把规划表翻译成审稿表。
+
+短规则：
+{micro_rules}
+
+若存在不改就会破坏人物选择、逻辑、可读性或核心钩子的问题，返回
+`verdict=needs_revision`，并在 `must` 一次列全。风格偏好不要放进 MUST。若本章成立，
+直接返回 `verdict=pass`。另写一段简短 `summary` 和一条正文原句 `evidence_quote` 即可。
+不填写 hard anchor、分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
+""",
+            )
         return _prompt(
             role,
             f"""
