@@ -286,6 +286,53 @@ def _outside_repository(root: Path, capsule_dir: Path) -> Path:
     return resolved
 
 
+def _writer_capsule_path(
+    root: Path,
+    slug: str,
+    capsule_dir: Path,
+) -> Path:
+    root_resolved = Path(root).resolve()
+    capsule = Path(capsule_dir)
+    if not capsule.is_absolute():
+        raise GuardianError("capsule_dir 必须是绝对路径。")
+    resolved = capsule.resolve()
+    lean_root = (
+        root_resolved / "books" / slug / ".novel-forge" / "diff"
+    )
+    if resolved.is_relative_to(lean_root):
+        parts = resolved.relative_to(lean_root).parts
+        if (
+            len(parts) == 2
+            and re.fullmatch(r"ch\d+", parts[0])
+            and parts[1] == "writer"
+        ):
+            return resolved
+        raise GuardianError("Lean writer capsule 路径不符合当前书隔离布局。")
+    return _outside_repository(root_resolved, resolved)
+
+
+def _runtime_source_path(
+    root: Path,
+    slug: str,
+    runtime_file: Path,
+) -> Path:
+    root_resolved = Path(root).resolve()
+    source = Path(runtime_file)
+    if not source.is_absolute():
+        raise GuardianError("runtime_file 必须是绝对路径。")
+    resolved = source.resolve()
+    lean_runtime_root = (
+        root_resolved
+        / ".local-guardian"
+        / slug
+        / "native-relay"
+        / "runtime"
+    )
+    if resolved.is_relative_to(lean_runtime_root):
+        return resolved
+    return _outside_repository(root_resolved, resolved)
+
+
 def _target_path(value: str, chapter: int) -> str:
     pure = PurePosixPath(value)
     if pure.is_absolute() or ".." in pure.parts:
@@ -332,7 +379,7 @@ def prepare_writer_capsule(
     regeneration_authorization_id: str | None = None,
     patch_directive: str | None = None,
 ) -> dict[str, Any]:
-    """Create a repository-external capsule for one claimed writer session."""
+    """Create one guarded writer capsule for a claimed session."""
     root = Path(root).resolve()
     book_dir = _book_dir(root, slug)
     _guardian_key(root, slug, create=True)
@@ -383,7 +430,7 @@ def prepare_writer_capsule(
         if authorization is not None
         else ""
     )
-    capsule = _outside_repository(root, Path(capsule_dir))
+    capsule = _writer_capsule_path(root, slug, Path(capsule_dir))
     if capsule.exists():
         if not capsule.is_dir():
             raise GuardianError(f"capsule_dir 不是目录：{capsule}")
@@ -917,7 +964,9 @@ def reject_writer_capsule(
         raise GuardianError(
             f"writer capsule 状态 {control.get('status')} 不能拒绝。"
         )
-    capsule = _outside_repository(root, Path(control["capsule_dir"]))
+    capsule = _writer_capsule_path(
+        root, slug, Path(control["capsule_dir"])
+    )
     unexpected: list[str] = []
     reasons = [reason]
     if capsule.is_dir():
@@ -956,7 +1005,7 @@ def record_capsule_runtime(
         raise GuardianError(
             f"writer capsule 状态 {control.get('status')} 不能记录 runtime。"
         )
-    source = _outside_repository(root, Path(runtime_file))
+    source = _runtime_source_path(root, slug, Path(runtime_file))
     if not source.is_file():
         raise GuardianError(f"runtime_file 不存在：{source}")
     isolation_mode = _isolation_attestation_mode(source, capsule_id)
@@ -1013,7 +1062,9 @@ def ingest_writer_capsule(
         raise GuardianError(
             f"writer capsule 状态 {control.get('status')} 不能再次导入。"
         )
-    capsule = _outside_repository(root, Path(control["capsule_dir"]))
+    capsule = _writer_capsule_path(
+        root, slug, Path(control["capsule_dir"])
+    )
     if not capsule.is_dir():
         raise GuardianError(f"writer capsule 不存在：{capsule}")
 

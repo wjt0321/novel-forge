@@ -16,7 +16,7 @@ evidence, runtime records, state, and Git are supporting records.
 
 ## Decision
 
-Novel Forge v5.3 uses `lean_native` as the default interactive workflow.
+Novel Forge v5.4 uses `lean_native` as the default interactive workflow.
 Existing strict audit behavior remains available through `--strict-audit`.
 This is one state machine with two assurance levels, not a parallel workflow.
 
@@ -30,19 +30,22 @@ The host performs only four duties:
 4. Run `complete-role <slug>`.
 
 The first Lean Writer action is `stage=draft`: Writer writes only
-`draft/正文.md`. Python creates the minimum continuity and scene materials in
-its control plane, so Writer may think through planning without returning a
-separate planning result. Blind Reader and Chapter Editor write their small
-JSON payload to the external `result_file` named by their actions. The Lead
-does not construct Generation, Runtime, Guardian, hash, token, request-count,
-state, Git fields, or a session-ID envelope.
+`books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`. Python creates the
+minimum continuity and scene materials in its control plane, so Writer may
+think through planning without returning a separate planning result. Blind
+Reader and Chapter Editor read the staged body and write their small JSON
+payloads to the same chapter's diff workspace. The Lead does not construct
+Generation, Runtime, Guardian, hash, token, request-count, state, Git fields,
+or a session-ID envelope.
 
 ### Python-owned records
 
 The deterministic control plane now owns:
 
 - content and planning hashes;
-- Generation creation and stale transitions;
+- freezing the accepted first draft as `初稿.md` and rendering `修订.diff`;
+- promotion from the staged body to `chapters/` after both reviews pass;
+- Generation creation and stale transitions after promotion;
 - Review binding and stale transitions;
 - Guardian inventory verification and immutable receipts;
 - truthful null runtime telemetry when the host exposes no counters;
@@ -56,8 +59,10 @@ to invented values and not used to discard otherwise valid prose.
 
 Daily Lean actions snapshot and restore only the current book. A concurrent
 change elsewhere in the repository no longer invalidates a valid role result.
-Writer and reviewer outputs still live outside the repository, and unexpected
-changes inside the current book remain a technical failure.
+Writer and reviewer outputs live in the current book's ignored
+`.novel-forge/diff/chNN/` workspace. The action names the exact writable file;
+unexpected changes elsewhere inside the current book remain a technical
+failure.
 
 Strict audit retains the repository-wide snapshot and the complete native
 terminal envelope for forensic or benchmark runs.
@@ -74,18 +79,22 @@ automatically because they may contain user edits.
 
 The daily production loop is deliberately small:
 
-`Lead dispatches Writer -> Writer drafts -> Blind Reader + Chapter Editor review -> MUST returns to Writer patch -> both reviewers re-review -> ready`
+`Lead dispatches Writer -> Writer stages draft -> Blind Reader + Chapter Editor review -> MUST returns to the same staged body -> both reviewers re-review -> Python promotes -> ready`
 
-Before import, Lean checks blocking surface rules against the capsule draft. A
-failure returns the same capsule to Writer as `stage=patch`, so it creates no
-Generation, Git checkpoint, or technical retry. Writer planning remains available
-inside the Writer's writing process because
+Lean checks blocking surface rules against the staged body. A failure returns
+the same capsule and file to Writer as `stage=patch`, so it creates no
+Generation, Git checkpoint, or technical retry. After surface checks, Python
+freezes the first draft but still does not write `chapters/`. Both reviewers
+read the staged body. When reviews produce MUST findings, the control plane
+issues Writer `stage=patch` against that same file and prefers reusing the
+current host Writer session. Both reviewers then read the complete revised
+body again. Only a double pass causes Python to promote the body, record the
+technical evidence, advance `ready`, and checkpoint the per-book Git history.
+
+Writer planning remains available inside the Writer's writing process because
 research and story architecture can materially improve prose. It is a
 supporting activity, not a fourth role, not a separate action, and not a
-reason to reject a completed chapter. When reviews produce MUST findings, the
-control plane issues Writer `stage=patch` directly and prefers reusing the
-current host Writer session; a new isolated Writer session is only the
-fallback when reuse is unavailable.
+reason to reject a completed chapter.
 
 ## Compatibility
 
@@ -93,7 +102,8 @@ fallback when reuse is unavailable.
   envelope for existing integrations.
 - CLI `start` defaults to Lean; add global `--strict-audit` before the
   subcommand to request the old assurance level.
-- Review result files and legacy full JSON completion remain accepted through
+- Lean review result files remain inside the per-book diff workspace. Legacy
+  full JSON completion remains accepted through
   `complete-role --from-file`; Lean itself does not require it for Writer
   completion.
 - No existing book, sample, framework, or user data is deleted.

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
+import shutil
 import tempfile
 import uuid
 from dataclasses import asdict
@@ -46,6 +49,7 @@ from .workspace_integrity import (
 from .workflow import (
     NovelWorkflowOrchestrator,
     PlanningOutcome,
+    REVIEW_ANALYSIS_FIELDS,
     ReviewFinding,
     ReviewOutcome,
     SessionIdentity,
@@ -339,6 +343,59 @@ class NativeWorkflowRelay:
             return self.root
         return self.root / "books" / slug
 
+    def _diff_dir(self, slug: str, chapter: int) -> Path:
+        return (
+            self.root
+            / "books"
+            / slug
+            / ".novel-forge"
+            / "diff"
+            / f"ch{chapter:02d}"
+        )
+
+    def _staged_body_path(self, state: dict[str, Any]) -> Path:
+        prepared = state.get("capsule")
+        if not isinstance(prepared, dict):
+            raise WorkflowError("Writer 动作缺少临时正文绑定。")
+        return Path(str(prepared["capsule_dir"])) / str(
+            prepared.get("draft_output") or "draft/正文.md"
+        )
+
+    @staticmethod
+    def _reset_transient_dir(path: Path) -> None:
+        if path.exists():
+            shutil.rmtree(path)
+
+    def _freeze_initial_draft(self, state: dict[str, Any]) -> None:
+        source = self._staged_body_path(state)
+        initial = self._diff_dir(
+            str(state["slug"]), int(state["chapter"])
+        ) / "初稿.md"
+        if not initial.exists():
+            initial.write_bytes(source.read_bytes())
+
+    def _write_staged_diff(self, state: dict[str, Any]) -> None:
+        diff_dir = self._diff_dir(
+            str(state["slug"]), int(state["chapter"])
+        )
+        initial = diff_dir / "初稿.md"
+        current = self._staged_body_path(state)
+        before = initial.read_text(encoding="utf-8-sig").splitlines(
+            keepends=True
+        )
+        after = current.read_text(encoding="utf-8-sig").splitlines(
+            keepends=True
+        )
+        patch = "".join(
+            difflib.unified_diff(
+                before,
+                after,
+                fromfile="初稿.md",
+                tofile="最终稿.md",
+            )
+        )
+        (diff_dir / "修订.diff").write_text(patch, encoding="utf-8")
+
     @staticmethod
     def _phase_role(state: dict[str, Any]) -> str:
         phase = str(state.get("phase") or "")
@@ -361,7 +418,8 @@ class NativeWorkflowRelay:
             return {}
         try:
             payload = json.loads(
-                Path(result_file).read_text(encoding="utf-8-sig")
+                Path(result_file).read_text(encoding="utf-8-sig"),
+                strict=False,
             )
         except (OSError, json.JSONDecodeError) as exc:
             raise WorkflowError("角色结果文件不存在或不是有效 JSON。") from exc
@@ -791,13 +849,24 @@ class NativeWorkflowRelay:
                 "blind-reader",
                 "chapter-editor",
             }:
-                result_path = self._result_path(
-                    slug,
-                    str(action["action_id"]),
+                result_path = (
+                    self._diff_dir(slug, int(state["chapter"]))
+                    / f"{role}.json"
+                    if role in {"blind-reader", "chapter-editor"}
+                    else self._result_path(
+                        slug,
+                        str(action["action_id"]),
+                    )
                 )
                 result_path.parent.mkdir(parents=True, exist_ok=True)
                 result_path.unlink(missing_ok=True)
                 action["result_file"] = str(result_path)
+                if role in {"blind-reader", "chapter-editor"}:
+                    action["allowed_project_writes"] = [
+                        result_path.relative_to(
+                            self._integrity_root(slug)
+                        ).as_posix()
+                    ]
                 action["delivery"] = (
                     "角色只把创作结论写入 result_file；"
                     "Lead 等待角色完成后执行 complete-role；无需填写技术表单。"
@@ -834,26 +903,53 @@ class NativeWorkflowRelay:
             raise WorkflowError("原生角色仓库快照格式无效。")
         integrity_root = self._integrity_root(slug)
         delta = workspace_delta(before, snapshot_workspace(integrity_root))
+        try:
+            action = json.loads(
+                self._action_path(slug).read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowError("原生角色动作记录损坏。") from exc
+        allowed = {
+            str(path)
+            for path in action.get("allowed_project_writes", [])
+            if isinstance(path, str)
+        }
+        unexpected_created = tuple(
+            path for path in delta.created if path not in allowed
+        )
+        unexpected_modified = tuple(
+            path for path in delta.modified if path not in allowed
+        )
+        unexpected_deleted = tuple(
+            path for path in delta.deleted if path not in allowed
+        )
         backup_path = self._backup_path(slug, action_id)
-        if delta.changed:
-            remove_created_paths(integrity_root, delta.created)
+        if unexpected_created or unexpected_modified or unexpected_deleted:
+            remove_created_paths(integrity_root, unexpected_created)
             restore_workspace_paths(
                 integrity_root,
                 backup_path,
                 before,
-                delta.modified + delta.deleted,
+                unexpected_modified + unexpected_deleted,
             )
             restored = workspace_delta(
                 before,
                 snapshot_workspace(integrity_root),
             )
-            if restored.changed:
+            restored_unexpected = (
+                tuple(path for path in restored.created if path not in allowed)
+                + tuple(
+                    path for path in restored.modified if path not in allowed
+                )
+                + tuple(path for path in restored.deleted if path not in allowed)
+            )
+            if restored_unexpected:
                 raise WorkflowError("项目控制面自动恢复失败。")
             snapshot_path.unlink(missing_ok=True)
             backup_path.unlink(missing_ok=True)
             reason = (
                 "control_plane_mutation"
-                if delta.modified or delta.deleted
+                if unexpected_modified or unexpected_deleted
                 else "unexpected_project_artifact"
             )
             raise NativeWorkspaceMutationError(reason)
@@ -913,12 +1009,8 @@ class NativeWorkflowRelay:
             sequence_id,
             session.session_id,
         )
-        capsule_dir = (
-            self.orchestrator.capsule_root
-            / slug
-            / sequence_id
-            / f"{session.session_id}-{uuid.uuid4().hex[:8]}"
-        )
+        capsule_dir = self._diff_dir(slug, chapter) / "writer"
+        self._reset_transient_dir(capsule_dir)
         authorization_id = None
         human_decision_reference = str(
             state.get("human_decision_reference") or ""
@@ -982,7 +1074,14 @@ class NativeWorkflowRelay:
                 "runtime_snapshot_required": False,
             },
             "repository_exploration_forbidden": True,
-            "allowed_project_writes": [],
+            "allowed_project_writes": [
+                (
+                    Path(prepared["capsule_dir"])
+                    / prepared["draft_output"]
+                )
+                .relative_to(self._integrity_root(slug))
+                .as_posix()
+            ],
         }
         state.update(
             {
@@ -1521,22 +1620,39 @@ class NativeWorkflowRelay:
         chapter = int(state["chapter"])
         request = self._request_from_state(state)
         book_dir = self.root / "books" / slug
-        prose = book_project.find_chapter_file(
-            book_dir,
-            chapter,
-        ).read_text(encoding="utf-8-sig")
+        if not self.strict_audit and isinstance(state.get("capsule"), dict):
+            prose = self._staged_body_path(state).read_text(
+                encoding="utf-8-sig"
+            )
+        else:
+            prose = book_project.find_chapter_file(
+                book_dir,
+                chapter,
+            ).read_text(encoding="utf-8-sig")
         if role == "blind-reader":
             return {"prose": prose}
         scene = (
             book_dir / f"planning/scene-package-ch{chapter:02d}.md"
         ).read_text(encoding="utf-8-sig")
         canon_dir = book_dir / "memory/canon"
-        blind_path = (
-            book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
-        )
-        if not blind_path.is_file():
+        blind_path = book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
+        blind_outcome = state.get("blind_outcome")
+        if self.strict_audit:
+            if not blind_path.is_file():
+                raise WorkflowError(
+                    "Chapter Editor 前缺少有效 Blind Reader 记录。"
+                )
+            blind_review = blind_path.read_text(encoding="utf-8-sig")
+        elif isinstance(blind_outcome, dict):
+            blind_review = json.dumps(
+                blind_outcome,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        else:
             raise WorkflowError(
-                "Chapter Editor 前缺少有效 Blind Reader 记录。"
+                "Chapter Editor 前缺少有效 Blind Reader 结果。"
             )
         inputs = {
             "prose": prose,
@@ -1549,8 +1665,10 @@ class NativeWorkflowRelay:
                 path.read_text(encoding="utf-8-sig")
                 for path in sorted(canon_dir.rglob("*.md"))
             )[:12000],
-            "blind_review": blind_path.read_text(encoding="utf-8-sig"),
-            "machine_diagnostics": (
+            "blind_review": blind_review,
+        }
+        if self.strict_audit:
+            inputs["machine_diagnostics"] = (
                 self.orchestrator._machine_diagnostics(
                     book_project.run_gates(
                         self.root,
@@ -1559,8 +1677,7 @@ class NativeWorkflowRelay:
                         expected_mode="formal",
                     )
                 )
-            ),
-        }
+            )
         if chapter > 1:
             previous = book_project.find_chapter_file(
                 book_dir,
@@ -1579,6 +1696,11 @@ class NativeWorkflowRelay:
     ) -> dict[str, Any]:
         prompt = render_review_instructions(role).text
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
+        review_dir = self._diff_dir(
+            slug, int(state["chapter"])
+        ) / f"{role}-input"
+        if not self.strict_audit:
+            self._reset_transient_dir(review_dir)
         descriptor = prepare_review_capsule(
             self.orchestrator.capsule_root,
             slug,
@@ -1586,6 +1708,7 @@ class NativeWorkflowRelay:
             instructions=prompt,
             inputs=self._review_inputs(slug, state, role),
             body_sha256=str(state["body_sha256"]),
+            capsule_dir=None if self.strict_audit else review_dir,
         )
         state["review_capsule"] = descriptor
         action = {
@@ -1638,6 +1761,7 @@ class NativeWorkflowRelay:
                 descriptor,
                 expected_role=role,
                 expected_body_sha256=str(state["body_sha256"]),
+                require_machine_diagnostics=self.strict_audit,
             )
         except ReviewCapsuleError as exc:
             raise NativeWorkspaceMutationError(
@@ -2070,6 +2194,53 @@ class NativeWorkflowRelay:
                     state,
                     surface_findings,
                 )
+            self._freeze_initial_draft(state)
+            staged_body = self._staged_body_path(state)
+            body_sha256 = hashlib.sha256(staged_body.read_bytes()).hexdigest()
+            if not isinstance(runtime_snapshot, dict):
+                runtime_snapshot = self._lean_runtime_snapshot(
+                    session,
+                    str(prepared.get("capsule_id") or ""),
+                )
+            state.update(
+                {
+                    "phase": "awaiting_blind_reader",
+                    "writer_session": asdict(session),
+                    "body_sha256": body_sha256,
+                    "pending_runtime_snapshot": runtime_snapshot,
+                    "pending_writer_terminal": terminal,
+                    "review_session_ids": [],
+                    "review_session_instance_ids": [],
+                }
+            )
+            self._remember_session(
+                state,
+                session,
+                role="writer",
+                status="completed",
+            )
+            self._reset_active_retry(state, "blind-reader")
+            state.pop("blind_outcome", None)
+            state.pop("blind_session", None)
+            state.pop("editor_outcome", None)
+            state.pop("editor_session", None)
+            state.pop("surface_findings", None)
+            action = self._review_action(slug, state, "blind-reader")
+            request = self._request_from_state(state)
+            self.orchestrator._save_control(
+                slug,
+                request=request,
+                chapter=int(state["chapter"]),
+                sequence_id=str(state["sequence_id"]),
+                phase="reviewing",
+                retries=0,
+            )
+            self._write_action(slug, state, action)
+            return WorkflowResult(
+                user_state="running",
+                message="正在自动审稿。",
+                sequence_id=str(state["sequence_id"]),
+            )
         state.pop("surface_findings", None)
         capsule_id = str(prepared.get("capsule_id") or "")
         runtime_path = (
@@ -2189,6 +2360,189 @@ class NativeWorkflowRelay:
             sequence_id=sequence_id,
         )
 
+    def _promote_staged_writer(
+        self,
+        slug: str,
+        state: dict[str, Any],
+    ) -> SessionIdentity:
+        prepared = state.get("capsule")
+        writer_payload = state.get("writer_session")
+        runtime_snapshot = state.get("pending_runtime_snapshot")
+        terminal = state.get("pending_writer_terminal")
+        if not isinstance(prepared, dict):
+            raise WorkflowError("当前章节缺少临时正文绑定。")
+        if not isinstance(writer_payload, dict):
+            raise WorkflowError("当前章节缺少 Writer 会话绑定。")
+        if not isinstance(runtime_snapshot, dict):
+            raise WorkflowError("当前章节缺少 Writer 运行记录。")
+        if not isinstance(terminal, dict):
+            raise WorkflowError("当前章节缺少 Writer 完成记录。")
+        session = SessionIdentity(**writer_payload)
+        capsule_id = str(prepared.get("capsule_id") or "")
+        runtime_path = (
+            self._relay_dir(slug)
+            / "runtime"
+            / f"{capsule_id}.json"
+        )
+        _atomic_json(runtime_path, runtime_snapshot)
+        try:
+            record_capsule_runtime(
+                self.root,
+                slug,
+                capsule_id,
+                runtime_path,
+                require_complete_budget=False,
+            )
+        except GuardianError as exc:
+            raise NativeCompletionRepairError(
+                "invalid_runtime_snapshot"
+            ) from exc
+        imported = ingest_writer_capsule(self.root, slug, capsule_id)
+        report = audit_session_log(runtime_path)
+        chapter = int(state["chapter"])
+        generation_id = (
+            f"generation.ch{chapter:02d}.{uuid.uuid4().hex[:16]}"
+        )
+        self.orchestrator._record_generation(
+            slug,
+            chapter,
+            session,
+            prepared,
+            imported,
+            report,
+            generation_id,
+            parent_generation_id=state.get("parent_generation_id"),
+            is_patch=bool(state.get("patch_round")),
+            assurance_mode=self.assurance_mode,
+        )
+        book_dir = self.root / "books" / slug
+        record_session_completion(
+            self.root,
+            slug,
+            session_id=session.session_id,
+            session_instance_id=session.session_instance_id,
+            role="writer",
+            provider=session.provider,
+            model=session.model,
+            agent_harness=session.agent_harness,
+            context_scope="book_diff_workspace",
+            operation_kind=str(terminal["kind"]),
+            operation_id=str(terminal["value"]),
+            result_transport=str(terminal["result_transport"]),
+            chapter=chapter,
+            generation_id=generation_id,
+            content_sha256=imported["body_sha256"],
+            artifact=book_dir / imported["target_path"],
+            workflow_authority=self.orchestrator._workflow_authority,
+        )
+        self.orchestrator._finalize_scene_handoff(slug, chapter)
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "drafted",
+            evidence=f"evidence/generations/{generation_id}.md",
+        )
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "surface_checked",
+            evidence="run-gates/current",
+        )
+        state["generation_id"] = generation_id
+        state["body_sha256"] = imported["body_sha256"]
+        state.pop("pending_runtime_snapshot", None)
+        state.pop("pending_writer_terminal", None)
+        self._write_staged_diff(state)
+        return session
+
+    @staticmethod
+    def _result_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, (list, tuple)):
+            return "\n".join(
+                text
+                for item in value
+                if (text := NativeWorkflowRelay._result_text(item))
+            )
+        if isinstance(value, dict):
+            return "\n".join(
+                f"{name}: {text}"
+                for name, item in value.items()
+                if (text := NativeWorkflowRelay._result_text(item))
+            )
+        return str(value).strip() if value is not None else ""
+
+    @staticmethod
+    def _normalized_findings(
+        payload: dict[str, Any],
+    ) -> tuple[ReviewFinding, ...]:
+        def items(value: Any) -> tuple[Any, ...]:
+            if value is None:
+                return ()
+            if isinstance(value, (list, tuple)):
+                return tuple(value)
+            return (value,)
+
+        entries: list[tuple[str, Any]] = []
+        raw = payload.get("findings")
+        if isinstance(raw, dict):
+            entries.extend(("MUST", item) for item in items(raw.get("must")))
+            entries.extend(("MAY", item) for item in items(raw.get("may")))
+        elif isinstance(raw, (list, tuple)):
+            default = (
+                "MAY"
+                if str(payload.get("verdict") or "")
+                in {"pass", "ready_for_editor_decision"}
+                else "MUST"
+            )
+            entries.extend((default, item) for item in raw)
+        entries.extend(("MUST", item) for item in items(payload.get("must")))
+        entries.extend(("MAY", item) for item in items(payload.get("may")))
+        findings: list[ReviewFinding] = []
+        for default_severity, item in entries:
+            if isinstance(item, dict):
+                note = NativeWorkflowRelay._result_text(
+                    item.get("revision_intent")
+                    or item.get("note")
+                    or item.get("message")
+                    or item.get("reader_effect")
+                )
+                findings.append(
+                    ReviewFinding(
+                        severity=str(
+                            item.get("severity") or default_severity
+                        ).upper(),
+                        location=NativeWorkflowRelay._result_text(
+                            item.get("location") or "全文"
+                        ),
+                        evidence=NativeWorkflowRelay._result_text(
+                            item.get("evidence") or ""
+                        ),
+                        reader_effect=NativeWorkflowRelay._result_text(
+                            item.get("reader_effect") or note
+                        ),
+                        revision_intent=note,
+                        status=str(item.get("status") or "open"),
+                    )
+                )
+            else:
+                note = NativeWorkflowRelay._result_text(item)
+                if note:
+                    findings.append(
+                        ReviewFinding(
+                            severity=default_severity,
+                            location="全文",
+                            evidence="",
+                            reader_effect=note,
+                            revision_intent=note,
+                            status="open",
+                        )
+                    )
+        return tuple(findings)
+
     @staticmethod
     def _review_outcome(
         payload: dict[str, Any],
@@ -2197,38 +2551,22 @@ class NativeWorkflowRelay:
         session: SessionIdentity,
         terminal: dict[str, str],
     ) -> ReviewOutcome:
-        findings_payload = payload.get("findings", ())
-        if not isinstance(findings_payload, (list, tuple)):
-            raise WorkflowError(f"{role} findings 格式无效。")
-        findings: list[ReviewFinding] = []
-        for item in findings_payload:
-            if not isinstance(item, dict):
-                raise WorkflowError(f"{role} finding 格式无效。")
-            try:
-                findings.append(
-                    ReviewFinding(
-                        severity=str(item.get("severity") or ""),
-                        location=str(item.get("location") or ""),
-                        evidence=str(item.get("evidence") or ""),
-                        reader_effect=str(
-                            item.get("reader_effect") or ""
-                        ),
-                        revision_intent=str(
-                            item.get("revision_intent") or ""
-                        ),
-                        status=str(item.get("status") or "open"),
-                    )
-                )
-            except TypeError as exc:
-                raise WorkflowError(
-                    f"{role} finding 字段无效。"
-                ) from exc
-        analysis = payload.get("analysis", {})
-        if not isinstance(analysis, dict) or not all(
-            isinstance(name, str) and isinstance(value, str)
-            for name, value in analysis.items()
-        ):
-            raise WorkflowError(f"{role} analysis 格式无效。")
+        findings = NativeWorkflowRelay._normalized_findings(payload)
+        raw_analysis = payload.get("analysis", {})
+        analysis = (
+            {
+                str(name): NativeWorkflowRelay._result_text(value)
+                for name, value in raw_analysis.items()
+            }
+            if isinstance(raw_analysis, dict)
+            else {}
+        )
+        summary = NativeWorkflowRelay._result_text(
+            payload.get("summary") or raw_analysis
+        )
+        if summary:
+            for name in REVIEW_ANALYSIS_FIELDS[role]:
+                analysis.setdefault(name, summary)
         coverage_payload = payload.get("hard_anchor_coverage", {})
         if coverage_payload is None:
             coverage_payload = {}
@@ -2251,22 +2589,30 @@ class NativeWorkflowRelay:
             hard_anchor_coverage[name] = dict(item)
         return ReviewOutcome(
             verdict=str(payload.get("verdict") or ""),
-            findings=tuple(findings),
+            findings=findings,
             human_likeness=str(
                 payload.get("human_likeness") or "not_applicable"
             ),
             reader_desire=str(
                 payload.get("reader_desire") or "not_applicable"
             ),
-            emotional_residue=str(
+            emotional_residue=NativeWorkflowRelay._result_text(
                 payload.get("emotional_residue") or "not_applicable"
             ),
-            next_chapter_pull=str(
+            next_chapter_pull=NativeWorkflowRelay._result_text(
                 payload.get("next_chapter_pull") or "not_applicable"
             ),
             analysis=dict(analysis),
             hard_anchor_coverage=hard_anchor_coverage,
-            evidence_quote=str(payload.get("evidence_quote") or ""),
+            evidence_quote=(
+                NativeWorkflowRelay._result_text(
+                    payload.get("evidence_quote", [""])[0]
+                )
+                if isinstance(payload.get("evidence_quote"), list)
+                else NativeWorkflowRelay._result_text(
+                    payload.get("evidence_quote") or ""
+                )
+            ),
             previous_chapter_quote=str(
                 payload.get("previous_chapter_quote")
                 or "not_applicable"
@@ -2295,6 +2641,7 @@ class NativeWorkflowRelay:
             role,
             session,
             outcome,
+            require_hard_anchor_coverage=self.strict_audit,
         )
         recorded = self.orchestrator._record_review_text(
             slug,
@@ -2339,6 +2686,231 @@ class NativeWorkflowRelay:
         )
         return text, recorded
 
+    @staticmethod
+    def _stored_outcome(payload: dict[str, Any]) -> ReviewOutcome:
+        values = dict(payload)
+        values["findings"] = tuple(
+            ReviewFinding(**item)
+            for item in payload.get("findings", [])
+            if isinstance(item, dict)
+        )
+        return ReviewOutcome(**values)
+
+    def _combined_must_findings(
+        self,
+        blind: ReviewOutcome,
+        editor: ReviewOutcome,
+    ) -> tuple[str, ...]:
+        must = [
+            self.orchestrator._patch_directive(item)
+            for item in (*blind.findings, *editor.findings)
+            if item.severity.upper() == "MUST"
+            and item.status.lower() == "open"
+        ]
+        if blind.verdict != "pass" and not must:
+            must.append("Blind Reader 判定需要修订，请按其审稿总结处理。")
+        if editor.verdict != "ready_for_editor_decision" and not must:
+            must.append("Chapter Editor 判定需要修订，请按其审稿总结处理。")
+        return tuple(dict.fromkeys(must))
+
+    def _request_staged_literary_patch(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        must: tuple[str, ...],
+    ) -> WorkflowResult:
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        request = self._request_from_state(state)
+        prepared = state.get("capsule")
+        writer = state.get("writer_session")
+        if not isinstance(prepared, dict) or not isinstance(writer, dict):
+            raise WorkflowError("临时正文缺少 Writer 绑定。")
+        revision_path = self._diff_dir(slug, chapter) / "修订要求.md"
+        revision_path.write_text(
+            "# 修订要求\n\n" + "\n".join(f"- {item}" for item in must) + "\n",
+            encoding="utf-8",
+        )
+        draft_path = self._staged_body_path(state)
+        action = {
+            "schema": NATIVE_ACTION_SCHEMA,
+            "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+            "kind": "run_role",
+            "role": "writer",
+            "stage": "patch",
+            "control_run_id": str(writer["session_id"]),
+            "session": {
+                "mode": "reuse_preferred",
+                "must_be_independent": False,
+            },
+            "reasoning_effort": "medium",
+            "capsule": {
+                "id": prepared["capsule_id"],
+                "path": prepared["capsule_dir"],
+                "operation": prepared["operation"],
+                "instructions": "instructions.md",
+                "handoff": "handoff.md",
+                "output": prepared["draft_output"],
+            },
+            "revision_file": str(revision_path),
+            "must_findings": list(must),
+            "repository_exploration_forbidden": True,
+            "allowed_project_writes": [
+                draft_path.relative_to(
+                    self._integrity_root(slug)
+                ).as_posix()
+            ],
+        }
+        state.update(
+            {
+                "phase": "awaiting_writer",
+                "must_findings": list(must),
+                "patch_round": 1,
+            }
+        )
+        state.pop("blind_outcome", None)
+        state.pop("blind_session", None)
+        self._reset_active_retry(state, "patch-writer")
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="patching",
+            retries=0,
+            must_findings=must,
+        )
+        self._write_action(slug, state, action)
+        return WorkflowResult(
+            user_state="running",
+            message="发现问题，正在自动修订。",
+            sequence_id=sequence_id,
+        )
+
+    def _complete_staged_review(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+        session: SessionIdentity,
+        outcome: ReviewOutcome,
+    ) -> WorkflowResult:
+        state.setdefault("review_session_ids", []).append(session.session_id)
+        state.setdefault("review_session_instance_ids", []).append(
+            session.session_instance_id
+        )
+        self._remember_session(
+            state,
+            session,
+            role=role,
+            status="completed",
+        )
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        request = self._request_from_state(state)
+        if role == "blind-reader":
+            state.update(
+                {
+                    "phase": "awaiting_chapter_editor",
+                    "blind_outcome": asdict(outcome),
+                    "blind_session": asdict(session),
+                }
+            )
+            self._reset_active_retry(state, "chapter-editor")
+            action = self._review_action(slug, state, "chapter-editor")
+            self._write_action(slug, state, action)
+            return WorkflowResult(
+                user_state="running",
+                message="正在自动审稿。",
+                sequence_id=sequence_id,
+            )
+
+        blind_payload = state.get("blind_outcome")
+        blind_session_payload = state.get("blind_session")
+        if not isinstance(blind_payload, dict) or not isinstance(
+            blind_session_payload, dict
+        ):
+            raise WorkflowError("Chapter Editor 前缺少 Blind Reader 结果。")
+        blind = self._stored_outcome(blind_payload)
+        must = self._combined_must_findings(blind, outcome)
+        if must:
+            if int(state.get("patch_round") or 0) >= 1:
+                result = self.orchestrator._decision_result(
+                    slug,
+                    request,
+                    chapter,
+                    sequence_id,
+                    message="自动修订后仍有问题，请选择下一步。",
+                    retries=int(state.get("technical_retry_count") or 0),
+                    decision_kind="literary_revision_required",
+                    must_findings=must,
+                    parent_generation_id=None,
+                )
+                state["phase"] = "decision_required"
+                state["decision_kind"] = "literary_revision_required"
+                state["must_findings"] = list(must)
+                _atomic_json(self._state_path(slug), state)
+                self._action_path(slug).unlink(missing_ok=True)
+                return result
+            return self._request_staged_literary_patch(slug, state, must)
+
+        self._promote_staged_writer(slug, state)
+        blind_session = SessionIdentity(**blind_session_payload)
+        self._record_native_review(
+            slug,
+            state,
+            "blind-reader",
+            blind_session,
+            blind,
+        )
+        self._record_native_review(
+            slug,
+            state,
+            "chapter-editor",
+            session,
+            outcome,
+        )
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "blind_read",
+            evidence=f"reviews/ch{chapter:02d}-blind-reader.md",
+        )
+        book_project.advance_state(
+            self.root,
+            slug,
+            chapter,
+            "editorial_reviewed",
+            evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+        )
+        writer_payload = state.get("writer_session")
+        if not isinstance(writer_payload, dict):
+            raise WorkflowError("当前章节缺少 Writer 会话绑定。")
+        result = self.orchestrator._finish_chapter(
+            slug,
+            request,
+            chapter,
+            sequence_id,
+            SessionIdentity(**writer_payload),
+            int(
+                (
+                    state.get("technical_retry_counts")
+                    if isinstance(state.get("technical_retry_counts"), dict)
+                    else {}
+                ).get("chapter-editor")
+                or 0
+            ),
+        )
+        state["phase"] = (
+            "complete"
+            if result.user_state == "chapter_complete"
+            else "decision_required"
+        )
+        _atomic_json(self._state_path(slug), state)
+        self._action_path(slug).unlink(missing_ok=True)
+        return result
+
     def _complete_review(
         self,
         slug: str,
@@ -2371,6 +2943,14 @@ class NativeWorkflowRelay:
             session=session,
             terminal=terminal,
         )
+        if not self.strict_audit:
+            return self._complete_staged_review(
+                slug,
+                state,
+                role,
+                session,
+                outcome,
+            )
         self._record_native_review(
             slug,
             state,

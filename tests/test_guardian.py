@@ -329,6 +329,28 @@ def test_prepare_capsule_exposes_only_bounded_inputs(tmp_path: Path):
     ).hexdigest() == result["prompt_sha256"]
 
 
+def test_lean_capsule_cannot_use_another_books_diff_workspace(
+    tmp_path: Path,
+):
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    _book(root)
+    other_capsule = (
+        root
+        / "books/other/.novel-forge/diff/ch01/writer"
+    )
+
+    with pytest.raises(guardian.GuardianError):
+        guardian.prepare_writer_capsule(
+            root,
+            "demo",
+            "seq-guardian",
+            "native-writer-001",
+            other_capsule,
+            "chapters/e01/ch-01/正文.md",
+        )
+
+
 def test_ingest_capsule_imports_only_draft_and_records_clean_receipt(
     tmp_path: Path,
 ):

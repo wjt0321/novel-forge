@@ -68,6 +68,7 @@ def prepare_review_capsule(
     instructions: str,
     inputs: dict[str, str],
     body_sha256: str,
+    capsule_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Seal the exact inputs one independent reviewer may read."""
     allowed = (
@@ -88,18 +89,22 @@ def prepare_review_capsule(
     if set(inputs) - allowed or "prose" not in inputs:
         raise ReviewCapsuleError("review capsule 输入超出角色边界。")
     capsule_id = f"review-{role}-{uuid.uuid4().hex[:16]}"
-    capsule_dir = (
-        Path(capsule_root).resolve()
-        / "review-capsules"
-        / slug
-        / capsule_id
+    resolved_capsule_dir = (
+        Path(capsule_dir).resolve()
+        if capsule_dir is not None
+        else (
+            Path(capsule_root).resolve()
+            / "review-capsules"
+            / slug
+            / capsule_id
+        )
     )
-    capsule_dir.mkdir(parents=True, exist_ok=False)
+    resolved_capsule_dir.mkdir(parents=True, exist_ok=False)
     material = {"instructions": instructions, **inputs}
     files: list[dict[str, Any]] = []
     for logical_name, text in material.items():
         filename = _FILE_NAMES[logical_name]
-        path = capsule_dir / filename
+        path = resolved_capsule_dir / filename
         payload = text.encode("utf-8")
         _write_new(path, payload)
         files.append(
@@ -118,7 +123,7 @@ def prepare_review_capsule(
         "body_sha256": body_sha256,
         "files": files,
     }
-    manifest_path = capsule_dir / "manifest.json"
+    manifest_path = resolved_capsule_dir / "manifest.json"
     _write_new(
         manifest_path,
         (
@@ -134,7 +139,7 @@ def prepare_review_capsule(
     return {
         "schema": REVIEW_CAPSULE_SCHEMA,
         "id": capsule_id,
-        "path": str(capsule_dir),
+        "path": str(resolved_capsule_dir),
         "role": role,
         "manifest": "manifest.json",
         "manifest_sha256": _sha256(manifest_path),
@@ -147,6 +152,7 @@ def verify_review_capsule(
     *,
     expected_role: str,
     expected_body_sha256: str,
+    require_machine_diagnostics: bool = True,
 ) -> dict[str, str]:
     """Verify every sealed input and return its logical text mapping."""
     if descriptor.get("schema") != REVIEW_CAPSULE_SCHEMA:
@@ -217,9 +223,10 @@ def verify_review_capsule(
                 "story_contract",
                 "canon",
                 "blind_review",
-                "machine_diagnostics",
             }
         )
+        if require_machine_diagnostics:
+            expected.add("machine_diagnostics")
     if not expected.issubset(result):
         raise ReviewCapsuleError("review capsule 缺少角色必要输入。")
     return result

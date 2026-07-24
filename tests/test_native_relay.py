@@ -997,8 +997,6 @@ def test_retry_after_review_transport_exhaustion_preserves_generation(
     assert len(
         list((root / "books/demo/evidence/generations").glob("*.md"))
     ) == 1
-
-
 def test_control_plane_mutation_is_restored_before_writer_retry(
     tmp_path: Path,
 ):
@@ -1394,8 +1392,12 @@ def test_lean_writer_completion_needs_only_the_existing_prose(
     assert result.message == "正在自动审稿。"
     assert relay.next_action("demo")["role"] == "blind-reader"
     assert (
-        root / "books/demo/chapters/e01/ch-01/正文.md"
+        root
+        / "books/demo/.novel-forge/diff/ch01/writer/draft/正文.md"
     ).read_text(encoding="utf-8") == prose
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
 
 
 def test_lean_surface_blockers_return_to_same_writer_before_import(
@@ -1440,9 +1442,10 @@ def test_lean_surface_blockers_return_to_same_writer_before_import(
 
     assert completed.message == "正在自动审稿。"
     assert relay.next_action("demo")["role"] == "blind-reader"
-    assert len(
-        list((root / "books/demo/evidence/generations").glob("*.md"))
-    ) == 1
+    assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
 
 def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     tmp_path: Path,
@@ -1453,7 +1456,7 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
         capsule_root=tmp_path / "capsules",
         strict_audit=False,
     )
-    backend = ScriptedBackend([], [_must_reviews()])
+    backend = ScriptedBackend([], [_must_reviews(), _pass_reviews()])
     relay.start("demo", _request(), chapter=1)
     writer_action = relay.next_action("demo")
     (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
@@ -1513,6 +1516,49 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     assert patch_action["session"]["mode"] == "reuse_preferred"
     assert patch_action["capsule"]["output"] == "draft/正文.md"
 
+    staged_body = Path(patch_action["capsule"]["path"]) / "draft/正文.md"
+    initial_body = root / "books/demo/.novel-forge/diff/ch01/初稿.md"
+    chapter_body = root / "books/demo/chapters/e01/ch-01/正文.md"
+    original = staged_body.read_text(encoding="utf-8")
+    revised = _prose("审核后在同一暂存正文上修订")
+
+    assert initial_body.read_text(encoding="utf-8") == original
+    assert not chapter_body.exists()
+
+    staged_body.write_text(revised, encoding="utf-8")
+    relay.complete_minimal("demo")
+    for index, role in enumerate(("blind-reader", "chapter-editor"), 1):
+        action = relay.next_action("demo")
+        session = SessionIdentity(
+            session_id=f"pass-{role}-{index}",
+            session_instance_id=f"pass-{role}-{index}",
+            provider="unknown",
+            model="unknown",
+            agent_harness="native-host",
+            role=role,
+        )
+        outcome = backend.run_review(
+            session,
+            role=role,
+            context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(outcome), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        completed = relay.complete_minimal("demo")
+
+    assert completed.user_state == "chapter_complete"
+    assert chapter_body.read_text(encoding="utf-8") == revised
+    assert initial_body.read_text(encoding="utf-8") == original
+    diff = (
+        root / "books/demo/.novel-forge/diff/ch01/修订.diff"
+    ).read_text(encoding="utf-8")
+    assert "待修订正文" in diff
+    assert "审核后在同一暂存正文上修订" in diff
+
 
 def test_lean_completion_uses_session_and_role_payload_only(
     tmp_path: Path,
@@ -1541,6 +1587,131 @@ def test_lean_completion_uses_session_and_role_payload_only(
     assert "completion_template" not in writer_action
 
 
+def test_lean_native_stages_body_inside_book_until_double_review_passes(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    backend = ScriptedBackend([], [_pass_reviews()])
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged_body = (
+        root
+        / "books/demo/.novel-forge/diff/ch01/writer/draft/正文.md"
+    )
+
+    assert Path(writer_action["capsule"]["path"]) == staged_body.parent.parent
+
+    prose = _prose("双审通过后才进入正式正文")
+    staged_body.write_text(prose, encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    chapter_body = root / "books/demo/chapters/e01/ch-01/正文.md"
+    assert not chapter_body.exists()
+    assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
+
+    blind_action = relay.next_action("demo")
+    blind_session = SessionIdentity(
+        session_id="lean-blind-01",
+        session_instance_id="lean-blind-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(asdict(blind), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    assert not chapter_body.exists()
+
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="lean-editor-01",
+        session_instance_id="lean-editor-01",
+        provider="unknown",
+        model="unknown",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
+        reasoning_effort="medium",
+    )
+    Path(editor_action["result_file"]).write_text(
+        json.dumps(asdict(editor), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "chapter_complete"
+    assert chapter_body.read_text(encoding="utf-8") == prose
+    assert staged_body.read_text(encoding="utf-8") == prose
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
+    assert len(
+        list(
+            (
+                root
+                / ".local-guardian/demo/native-relay/runtime"
+            ).glob("*.json")
+        )
+    ) == 1
+
+
+def test_lean_review_accepts_compact_result_with_natural_newlines(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("自然换行审稿"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        """{
+  "verdict": "pass",
+  "must": [],
+  "human_likeness": "convincing",
+  "reader_desire": "continue",
+  "emotional_residue": "人物的选择留下了明确余波。",
+  "next_chapter_pull": "门后的人是谁？
+他为何认识追兵？",
+  "summary": "空间、身体、约束、情绪、对白和记忆画面均能重建。",
+  "evidence_quote": "林舟握住门把"
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "chapter-editor"
+
+
 def test_lean_writer_unknown_runtime_does_not_discard_valid_prose(
     tmp_path: Path,
 ):
@@ -1560,19 +1731,14 @@ def test_lean_writer_unknown_runtime_does_not_discard_valid_prose(
 
     assert result.message == "正在自动审稿。"
     assert relay.next_action("demo")["role"] == "blind-reader"
-    assert (
+    assert (capsule / "draft/正文.md").read_text(encoding="utf-8") == prose
+    assert not (
         root / "books/demo/chapters/e01/ch-01/正文.md"
-    ).read_text(encoding="utf-8") == prose
-    assert len(
-        list((root / "books/demo/evidence/generations").glob("*.md"))
-    ) == 1
-    assert len(
-        list(
-            (root / "books/demo/evidence/guardian-receipts").glob(
-                "*.json"
-            )
-        )
-    ) == 1
+    ).exists()
+    assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
+    assert list(
+        (root / "books/demo/evidence/guardian-receipts").glob("*.json")
+    ) == []
 
 
 def test_lean_integrity_ignores_unrelated_repository_changes(

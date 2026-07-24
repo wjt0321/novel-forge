@@ -1759,6 +1759,8 @@ class NovelWorkflowOrchestrator:
         role: str,
         session: SessionIdentity,
         outcome: ReviewOutcome,
+        *,
+        require_hard_anchor_coverage: bool = True,
     ) -> str:
         book_dir = self.root / "books" / slug
         prose = book_project.find_chapter_file(
@@ -1779,7 +1781,7 @@ class NovelWorkflowOrchestrator:
                 + "、".join(missing_analysis)
             )
         anchor_section = ""
-        if role == "chapter-editor":
+        if role == "chapter-editor" and require_hard_anchor_coverage:
             coverage = outcome.hard_anchor_coverage
             missing_anchors = [
                 name for name in HARD_ANCHOR_FIELDS if name not in coverage
