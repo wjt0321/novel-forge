@@ -64,6 +64,9 @@ NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
 MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
+LEAN_ADVISORY_SURFACE_RULES = frozenset(
+    {"em-dash", "ellipsis", "not-is-flip"}
+)
 
 
 class NativeWorkspaceMutationError(WorkflowError):
@@ -427,16 +430,68 @@ class NativeWorkflowRelay:
         return "writer"
 
     @staticmethod
-    def _result_payload(result_file: Path | None) -> dict[str, Any]:
+    def _repair_common_json_quotes(text: str) -> str:
+        """Escape prose quotes that a role left unescaped inside JSON."""
+        repaired: list[str] = []
+        in_string = False
+        escaped = False
+        length = len(text)
+        for index, char in enumerate(text):
+            if not in_string:
+                repaired.append(char)
+                if char == '"':
+                    in_string = True
+                continue
+            if escaped:
+                repaired.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                repaired.append(char)
+                escaped = True
+                continue
+            if char != '"':
+                repaired.append(char)
+                continue
+            cursor = index + 1
+            while cursor < length and text[cursor].isspace():
+                cursor += 1
+            if cursor >= length or text[cursor] in {",", "}", "]", ":"}:
+                repaired.append(char)
+                in_string = False
+            else:
+                repaired.append('\\"')
+        return "".join(repaired)
+
+    @classmethod
+    def _result_payload(
+        cls,
+        result_file: Path | None,
+        *,
+        repair_common_quotes: bool = False,
+    ) -> dict[str, Any]:
         if result_file is None:
             return {}
         try:
-            payload = json.loads(
-                Path(result_file).read_text(encoding="utf-8-sig"),
-                strict=False,
-            )
-        except (OSError, json.JSONDecodeError) as exc:
+            text = Path(result_file).read_text(encoding="utf-8-sig")
+        except OSError as exc:
             raise WorkflowError("角色结果文件不存在或不是有效 JSON。") from exc
+        try:
+            payload = json.loads(text, strict=False)
+        except json.JSONDecodeError as exc:
+            if not repair_common_quotes:
+                raise WorkflowError(
+                    "角色结果文件不存在或不是有效 JSON。"
+                ) from exc
+            try:
+                payload = json.loads(
+                    cls._repair_common_json_quotes(text),
+                    strict=False,
+                )
+            except json.JSONDecodeError as repaired_exc:
+                raise WorkflowError(
+                    "角色结果文件不存在或不是有效 JSON。"
+                ) from repaired_exc
         if not isinstance(payload, dict):
             raise WorkflowError("角色结果文件顶层必须是 JSON 对象。")
         role_result = payload.get("role_result")
@@ -540,7 +595,10 @@ class NativeWorkflowRelay:
             raise WorkflowError("角色完成必须提供真实会话 ID。")
         if result_file is None and action.get("result_file"):
             result_file = Path(str(action["result_file"]))
-        payload = self._result_payload(result_file)
+        payload = self._result_payload(
+            result_file,
+            repair_common_quotes=True,
+        )
         if role == "writer":
             payload = {"artifact_relative_path": "draft/正文.md"}
         completion: dict[str, Any] = {
@@ -2101,6 +2159,7 @@ class NativeWorkflowRelay:
             )
             for finding in lint_file(draft_path)
             if finding.severity == "blocking"
+            and finding.rule_code not in LEAN_ADVISORY_SURFACE_RULES
         )
 
     def _request_surface_patch(
@@ -2567,6 +2626,7 @@ class NativeWorkflowRelay:
         role: str,
         session: SessionIdentity,
         terminal: dict[str, str],
+        strict_audit: bool = False,
     ) -> ReviewOutcome:
         findings = NativeWorkflowRelay._normalized_findings(payload)
         raw_analysis = payload.get("analysis", {})
@@ -2584,7 +2644,9 @@ class NativeWorkflowRelay:
         if summary:
             for name in REVIEW_ANALYSIS_FIELDS[role]:
                 analysis.setdefault(name, summary)
-        coverage_payload = payload.get("hard_anchor_coverage", {})
+        coverage_payload = (
+            payload.get("hard_anchor_coverage", {}) if strict_audit else {}
+        )
         if coverage_payload is None:
             coverage_payload = {}
         if not isinstance(coverage_payload, dict):
@@ -2962,6 +3024,7 @@ class NativeWorkflowRelay:
             role=role,
             session=session,
             terminal=terminal,
+            strict_audit=self.strict_audit,
         )
         if not self.strict_audit:
             return self._complete_staged_review(

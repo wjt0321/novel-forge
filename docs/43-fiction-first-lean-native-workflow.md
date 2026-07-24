@@ -81,13 +81,14 @@ The daily production loop is deliberately small:
 
 `Lead dispatches Writer -> Writer stages draft -> Blind Reader + Chapter Editor review -> MUST returns to the same staged body -> both reviewers re-review -> Python promotes -> ready`
 
-Lean checks blocking surface rules against the staged body. A failure returns
-the same capsule and file to Writer as `stage=patch`, so it creates no
-Generation, Git checkpoint, or technical retry. If a mechanical cleanup leaves
-a small number of blockers, Lean keeps issuing the same-file patch action for
-up to three consolidated rounds instead of dropping into a state with no next
-action. After surface checks, Python freezes the first draft but still does not
-write `chapters/`. Both reviewers read the staged body. When reviews produce
+Lean treats em dashes, ellipses, and the `not X but Y` construction as style
+advice, never as a reason to rewrite prose. Only real transport blockers such
+as Markdown emphasis or workflow metadata leakage return the same capsule and
+file to Writer as `stage=patch`; this creates no Generation, Git checkpoint, or
+technical retry. If cleanup leaves blockers, Lean keeps issuing the same-file
+patch action for up to three consolidated rounds instead of dropping into a
+state with no next action. After surface checks, Python freezes the first draft
+but still does not write `chapters/`. Both reviewers read the staged body. When reviews produce
 MUST findings, the control plane issues Writer `stage=patch` against that same
 file and prefers reusing the current host Writer session. Both reviewers then
 read the complete revised body again. Only a double pass causes Python to
@@ -99,6 +100,11 @@ generic `pass` or `needs_revision`, one complete MUST list, a short summary,
 and one prose quote. Python accepts `pass` as the internal editor-ready verdict
 and derives supporting record fields itself. Analysis matrices and hard-anchor
 coverage tables remain strict-audit evidence, not daily creative work.
+For Lean result files, Python makes one deterministic repair attempt for the
+common case where a prose quotation was left unescaped inside JSON. Legacy
+plain-text hard-anchor coverage is ignored because it is not a Lean gate.
+Neither condition may turn an otherwise valid literary judgment into a new
+review session or a prose rewrite.
 
 Writer planning remains available inside the Writer's writing process because
 research and story architecture can materially improve prose. It is a

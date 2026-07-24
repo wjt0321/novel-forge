@@ -1414,7 +1414,7 @@ def test_lean_surface_blockers_return_to_same_writer_before_import(
     capsule = Path(writer_action["capsule"]["path"])
     blocked = _prose("表面门修订").replace(
         "林舟握住门把",
-        "林舟——握住门把",
+        "**林舟握住门把**",
         1,
     )
     (capsule / "draft/正文.md").write_text(
@@ -1431,7 +1431,10 @@ def test_lean_surface_blockers_return_to_same_writer_before_import(
     assert patch_action["stage"] == "patch"
     assert patch_action["session"]["mode"] == "reuse_preferred"
     assert patch_action["capsule"]["path"] == str(capsule)
-    assert any("em-dash" in item for item in patch_action["must_findings"])
+    assert any(
+        "markdown-emphasis" in item
+        for item in patch_action["must_findings"]
+    )
     assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
 
     (capsule / "draft/正文.md").write_text(
@@ -1458,7 +1461,7 @@ def test_lean_surface_patch_can_continue_on_the_same_staged_body(
     staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
     blocked = _prose("连续表面修订").replace(
         "林舟握住门把",
-        "林舟——握住门把",
+        "**林舟握住门把**",
         1,
     )
     staged.write_text(blocked, encoding="utf-8")
@@ -1479,6 +1482,27 @@ def test_lean_surface_patch_can_continue_on_the_same_staged_body(
 
     assert completed.message == "正在自动审稿。"
     assert relay.next_action("demo")["role"] == "blind-reader"
+
+
+def test_lean_style_lint_does_not_force_a_surface_patch(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    prose = _prose("风格提示保留").replace(
+        "林舟握住门把",
+        "林舟——握住门把。那不是门，而是一道伤口……",
+        1,
+    )
+    staged.write_text(prose, encoding="utf-8")
+
+    result = relay.complete_minimal("demo")
+
+    assert result.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert staged.read_text(encoding="utf-8") == prose
+
 
 def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     tmp_path: Path,
@@ -1803,6 +1827,109 @@ def test_lean_editor_pass_uses_compact_result_without_a_hard_anchor_table(
     assert (
         root / "books/demo/chapters/e01/ch-01/正文.md"
     ).read_text(encoding="utf-8") == staged.read_text(encoding="utf-8")
+
+
+def test_lean_editor_repairs_common_unescaped_quotes_in_result_json(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(_prose("引号容错"), encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下了后果。",
+                "next_chapter_pull": "门后的人将要求什么代价？",
+                "summary": "现场、关系和行动均可重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    editor_action = relay.next_action("demo")
+    Path(editor_action["result_file"]).write_text(
+        """{
+  "verdict": "pass",
+  "findings": [
+    {
+      "severity": "MAY",
+      "issue": "信息来源可再清楚一点。",
+      "evidence": "原文："林舟握住门把""
+    }
+  ],
+  "summary": "本章成立。",
+  "evidence_quote": "林舟握住门把"
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "chapter_complete"
+
+
+def test_lean_editor_ignores_legacy_hard_anchor_prose(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(_prose("旧表兼容"), encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下了后果。",
+                "next_chapter_pull": "门后的人将要求什么代价？",
+                "summary": "现场、关系和行动均可重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    editor_action = relay.next_action("demo")
+    Path(editor_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "ready_for_editor_decision",
+                "findings": [],
+                "summary": "本章成立。",
+                "hard_anchor_coverage": "五项用户硬锚均已交付。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "chapter_complete"
 
 
 def test_lean_writer_unknown_runtime_does_not_discard_valid_prose(

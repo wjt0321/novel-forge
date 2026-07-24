@@ -109,14 +109,15 @@ Generation、Guardian、Git 或审稿信息。
 
 Lean 只返回 `verdict=pass|needs_revision`、一次列全的 `must`、简短 `summary` 和一条
 `evidence_quote`。不填写 `analysis`、`hard_anchor_coverage`、哈希、状态或 Session 表；
-Python 会把通用 `pass` 规范化为内部通过状态。strict audit 才使用完整编辑表。
+Python 会把通用 `pass` 规范化为内部通过状态，并自动修复常见的正文引号未转义问题；
+旧角色误写的纯文本 hard-anchor 说明在 Lean 中直接忽略。strict audit 才使用完整编辑表。
 
 ## 自动闭环
 
 1. Python 初始化项目，并直接签发 Writer 的 `draft` 动作。
-2. Writer 在当前书 diff 区写本章正文；Python 检查 blocking 表面规则。若有问题，
-   直接复用同一 Capsule 和同一暂存正文发回 Writer 修订；少量残留继续自动签发同文件
-   修订，最多三轮才请求用户决定，此时始终不写 `chapters/`。
+2. Writer 在当前书 diff 区写本章正文；破折号、省略号和“不是 X 而是 Y”只作风格提示，
+   不强制改写。只有 Markdown 强调、工作流元数据泄漏等真实 blocking 问题才复用同一
+   Capsule 和暂存正文修订，最多三轮才请求用户决定，此时始终不写 `chapters/`。
 3. Lead 签发 Blind Reader 审稿；Blind Reader 只读当前暂存正文并给出结论。
 4. Blind 记录成功后，Lead 签发 Chapter Editor；Chapter Editor 结合必要场景材料复审。
 5. 两审通过时，Python 自动把暂存正文晋升为 `chapters/eXX/ch-XX/正文.md`，再创建
