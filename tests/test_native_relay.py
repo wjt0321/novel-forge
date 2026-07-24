@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -75,13 +76,51 @@ def test_native_action_is_stored_outside_the_book_project(tmp_path: Path):
     ).is_file()
 
 
+def test_native_snapshot_namespace_separates_same_slug_across_roots(
+    tmp_path: Path,
+):
+    capsule_root = tmp_path / "capsules"
+    first = NativeWorkflowRelay(
+        tmp_path / "first-repo",
+        capsule_root=capsule_root,
+        strict_audit=False,
+    )
+    second = NativeWorkflowRelay(
+        tmp_path / "second-repo",
+        capsule_root=capsule_root,
+        strict_audit=False,
+    )
+
+    first.start("demo", _request(), chapter=1)
+    second.start("demo", _request(), chapter=1)
+    first_action = first.next_action("demo")
+    second_action = second.next_action("demo")
+
+    assert first._snapshot_path(
+        "demo", first_action["action_id"]
+    ).parent != second._snapshot_path(
+        "demo", second_action["action_id"]
+    ).parent
+    assert first._active_snapshot_action_id("demo") == (
+        first_action["action_id"]
+    )
+    assert second._active_snapshot_action_id("demo") == (
+        second_action["action_id"]
+    )
+
+
 def test_native_stop_retires_pending_action(tmp_path: Path):
     root = tmp_path / "repo"
     relay = NativeWorkflowRelay(
         root,
         capsule_root=tmp_path / "capsules",
+        strict_audit=False,
     )
     relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    action_id = action["action_id"]
+    assert relay._snapshot_path("demo", action_id).is_file()
+    assert relay._control_snapshot_path("demo", action_id).is_file()
 
     result = relay.stop("demo")
 
@@ -89,6 +128,10 @@ def test_native_stop_retires_pending_action(tmp_path: Path):
     assert not (
         root / ".local-guardian/demo/native-relay/next-action.json"
     ).exists()
+    assert not relay._snapshot_path("demo", action_id).exists()
+    assert not relay._backup_path("demo", action_id).exists()
+    assert not relay._control_snapshot_path("demo", action_id).exists()
+    assert not relay._control_backup_path("demo", action_id).exists()
     assert relay.status("demo").user_state == "stopped"
 
 
@@ -997,6 +1040,50 @@ def test_retry_after_review_transport_exhaustion_preserves_generation(
     assert len(
         list((root / "books/demo/evidence/generations").glob("*.md"))
     ) == 1
+
+
+def test_lean_retry_after_review_exhaustion_preserves_staged_prose(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    prose = _prose("审稿恢复保留正文")
+    staged.write_text(prose, encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    state = relay._load_state("demo")
+    state.update(
+        {
+            "phase": "decision_required",
+            "decision_kind": "native_role_failed",
+            "failed_phase": "awaiting_blind_reader",
+            "technical_retry_count": 2,
+            "technical_retry_counts": {"blind-reader": 2},
+        }
+    )
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    relay._action_path("demo").unlink(missing_ok=True)
+
+    result = relay.retry("demo")
+    action = relay.next_action("demo")
+
+    assert result.message == "正在自动审稿。"
+    assert action["role"] == "blind-reader"
+    assert staged.read_text(encoding="utf-8") == prose
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
+    assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
 def test_control_plane_mutation_is_restored_before_writer_retry(
     tmp_path: Path,
 ):
@@ -1591,8 +1678,29 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     assert initial_body.read_text(encoding="utf-8") == original
     assert not chapter_body.exists()
 
+    state_path = relay._state_path("demo")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["technical_retry_counts"]["blind-reader"] = 2
+    state["technical_retry_count"] = 2
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    relay._write_lean_control_snapshot(
+        "demo",
+        patch_action["action_id"],
+    )
     staged_body.write_text(revised, encoding="utf-8")
     relay.complete_minimal("demo")
+    assert relay._load_state("demo")["technical_retry_counts"][
+        "blind-reader"
+    ] == 0
+    diff_path = (
+        root / "books/demo/.novel-forge/diff/ch01/修订.diff"
+    )
+    diff = diff_path.read_text(encoding="utf-8")
+    assert "待修订正文" in diff
+    assert "审核后在同一暂存正文上修订" in diff
     for index, role in enumerate(("blind-reader", "chapter-editor"), 1):
         action = relay.next_action("demo")
         session = SessionIdentity(
@@ -1619,9 +1727,7 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     assert completed.user_state == "chapter_complete"
     assert chapter_body.read_text(encoding="utf-8") == revised
     assert initial_body.read_text(encoding="utf-8") == original
-    diff = (
-        root / "books/demo/.novel-forge/diff/ch01/修订.diff"
-    ).read_text(encoding="utf-8")
+    diff = diff_path.read_text(encoding="utf-8")
     assert "待修订正文" in diff
     assert "审核后在同一暂存正文上修订" in diff
 
@@ -1850,6 +1956,8 @@ def test_lean_editor_repairs_common_unescaped_quotes_in_result_json(
     relay.complete_minimal("demo")
 
     blind_action = relay.next_action("demo")
+    assert "result_file" in blind_action["task"]
+    assert "official terminal" not in blind_action["task"]
     Path(blind_action["result_file"]).write_text(
         json.dumps(
             {
@@ -1941,6 +2049,108 @@ def test_lean_editor_ignores_legacy_hard_anchor_prose(
     assert result.user_state == "chapter_complete"
 
 
+def test_lean_editor_accepts_a_valid_control_plane_capsule_refresh(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(_prose("控制面刷新"), encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下了后果。",
+                "next_chapter_pull": "门后的人将要求什么代价？",
+                "summary": "现场、关系和行动均可重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    editor_action = relay.next_action("demo")
+    capsule = Path(editor_action["review_capsule"]["path"])
+    manifest_path = capsule / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    scene_item = next(
+        item
+        for item in manifest["files"]
+        if item["logical_name"] == "scene_package"
+    )
+    scene_path = capsule / scene_item["path"]
+    scene_text = scene_path.read_text(encoding="utf-8") + "\n控制面刷新。\n"
+    scene_payload = scene_text.encode("utf-8")
+    scene_path.write_bytes(scene_payload)
+    scene_item["bytes"] = len(scene_payload)
+    scene_item["sha256"] = hashlib.sha256(scene_payload).hexdigest()
+    manifest["capsule_id"] = "review-chapter-editor-refreshed"
+    manifest_payload = (
+        json.dumps(
+            manifest,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    manifest_path.write_bytes(manifest_payload)
+
+    descriptor = dict(editor_action["review_capsule"])
+    descriptor["id"] = manifest["capsule_id"]
+    descriptor["manifest_sha256"] = hashlib.sha256(
+        manifest_payload
+    ).hexdigest()
+    editor_action["review_capsule"] = descriptor
+    relay._action_path("demo").write_text(
+        json.dumps(editor_action, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    state = relay._load_state("demo")
+    state["review_capsule"] = descriptor
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    relay._write_lean_control_snapshot(
+        "demo",
+        editor_action["action_id"],
+    )
+    Path(editor_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "summary": "因果、选择、对白、肌理和连续性均成立。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "chapter_complete"
+    assert editor_action["allowed_project_writes"] == [
+        ".novel-forge/diff/ch01/chapter-editor.json"
+    ]
+    assert set(editor_action["control_plane_managed_paths"]) >= {
+        ".novel-forge/diff/ch01/chapter-editor-input/manifest.json",
+        ".novel-forge/diff/ch01/chapter-editor-input/scene-package.md",
+    }
+
+
 def test_lean_writer_unknown_runtime_does_not_discard_valid_prose(
     tmp_path: Path,
 ):
@@ -1994,6 +2204,105 @@ def test_lean_integrity_ignores_unrelated_repository_changes(
 
     assert result.message == "正在自动审稿。"
     assert (root / "unrelated.txt").is_file()
+
+
+def test_lean_integrity_restores_protected_source_changes(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    source = root / "app/novel_forge/native_relay.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("# original control plane\n", encoding="utf-8")
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("代码保护"),
+        encoding="utf-8",
+    )
+    source.write_text("# role changed the rules\n", encoding="utf-8")
+
+    result = relay.complete_minimal("demo")
+
+    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert source.read_text(encoding="utf-8") == "# original control plane\n"
+    retry = relay.next_action("demo")
+    assert retry["role"] == "writer"
+    assert retry["stage"] == "draft"
+
+
+def test_lean_action_tampering_cannot_expand_book_write_scope(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    staged = Path(action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(_prose("动作防篡改"), encoding="utf-8")
+    protected = root / "books/demo/planning/story-engine.md"
+    original = protected.read_text(encoding="utf-8")
+
+    tampered = dict(action)
+    tampered["allowed_project_writes"] = [
+        "planning/story-engine.md",
+        ".novel-forge/diff/ch01/writer/draft/正文.md",
+    ]
+    relay._action_path("demo").write_text(
+        json.dumps(tampered, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    protected.write_text("角色改写了故事控制面\n", encoding="utf-8")
+
+    result = relay.complete_minimal("demo")
+
+    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert protected.read_text(encoding="utf-8") == original
+    retry = relay.next_action("demo")
+    assert "planning/story-engine.md" not in retry[
+        "allowed_project_writes"
+    ]
+
+
+def test_lean_state_tampering_uses_restored_state_for_recovery(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("状态防篡改"),
+        encoding="utf-8",
+    )
+    state = relay._load_state("demo")
+    state["action_id"] = "forged-action-id"
+    state["technical_retry_count"] = 99
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "running"
+    assert result.technical_retry_count == 1
+    restored = relay._load_state("demo")
+    assert restored["technical_retry_count"] == 1
+    assert restored["action_id"] != "forged-action-id"
+    assert relay.next_action("demo")["role"] == "writer"
 
 
 def test_strict_audit_keeps_full_completion_contract(tmp_path: Path):

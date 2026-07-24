@@ -57,6 +57,17 @@ def render_review_instructions(
     """Compile one complete literary review task."""
     if role == "blind-reader":
         micro_rules = render_literary_micro_rules(role)
+        delivery = (
+            "只把简短 JSON 结论写入动作指定的 result_file：verdict、must、"
+            "human_likeness、reader_desire、emotional_residue、"
+            "next_chapter_pull、summary 和 evidence_quote。不要填写技术终态、"
+            "哈希、Session、Runtime、Guardian、Git 或其他表格。"
+            if lean
+            else (
+                "通过宿主正式结果通道返回结构化判断，不直接写 reviews、状态或"
+                "证据；idle/available 不等于报告已送达。"
+            )
+        )
         return _prompt(
             role,
             f"""
@@ -77,8 +88,7 @@ def render_review_instructions(
 
 只有正文同时具有可重建现场、人物特异性、关系摩擦、主动选择及其余波，并让你自愿继续
 阅读，才能给 convincing + continue + pass。MUST 只用于不改就会破坏人物选择、逻辑、
-可读性或核心钩子的问题，不为显得严格而制造。通过宿主正式结果通道返回结构化判断，
-不直接写 reviews、状态或证据；idle/available 不等于报告已送达。
+可读性或核心钩子的问题，不为显得严格而制造。{delivery}
 """,
         )
     if role == "chapter-editor":

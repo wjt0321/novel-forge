@@ -14,15 +14,18 @@
 - 小说正文是唯一主产品；规划、审稿、Generation、Runtime、Guardian、状态和 Git
   都是服务正文的附属记录，不得因为遥测未知或技术字段缺失要求重写有效正文。
 - Python 状态机决定下一步并自动计算哈希、stale、证据绑定和 Git；宿主只负责创建或
-  复用独立会话、等待官方终态，并让角色写动作指定的外置产物。
+  复用独立会话、等待官方终态，并让角色写动作指定的当前书 diff 产物。
 - 默认完成命令为 `complete-role <slug>`。日常 Lean 的首个 Writer 动作直接写
   Capsule 内正文；两个审稿角色把简短 JSON 写入动作给出的 `result_file`。Lead 无需
   填写技术表单、拼装会话 ID、Generation、Runtime、Guardian、token、请求数、哈希或 Git 字段。
-- 创作角色对项目仓库零写入：Writer 只写仓库外 capsule 的 `draft/正文.md`，
-  规划和审稿只返回结构化结果。额外项目产物会被清理并换新会话。
+- 创作角色只允许写当前书 `.novel-forge/diff/chNN/` 内动作指定的单一文件：Writer
+  写 `writer/draft/正文.md`，审稿角色写各自 `result_file`。额外书内产物会被清理；
+  修改 `app/`、`tools/`、`tests/`、双 Skill、根入口规则、当前书 Guardian/本地 Git
+  账本或动作白名单会被恢复并换新会话。
 - ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
-- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
-  `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
+- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得修改书内控制面，
+  不得自行创建正式章节、规划、证据、审稿记录或 ready Git 恢复点。只有 Python 在双审
+  通过后把 diff 暂存正文晋升到 `chapters/`。
 - `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是交互式
   Skill 的前置条件，也不得成为用户选择题。
 - 高权限只属于无模型推理的确定性控制面，用于 Guardian、状态、证据和 Git。
@@ -41,6 +44,7 @@
   不得把探索稿称为完成，也不得用单会话模拟三个角色。
 - Writer 可在写作过程中做最多 5 次题材常识、事实边界与书名/人名重名检索；不另开
   规划回合、不回传规划表，也不得借此阅读工作流源码。正文与两个审稿角色不得做开放式仓库探索。
-- 默认 `lean_native` 由外置 Capsule、当前书作用域写入检查和 Python 自动记账构成。
-  角色不填 Runtime、哈希、token、请求数或 Git；未知遥测保持 null。只有明确传入
-  `--strict-audit` 才启用完整技术完成信封和全仓快照。
+- 默认 `lean_native` 由当前书 diff Capsule、书内精确写入检查、轻量代码控制面保护和
+  Python 自动记账构成。角色不填 Runtime、哈希、token、请求数或 Git；未知遥测保持
+  null。只有明确传入 `--strict-audit` 才启用仓库外一次性 Capsule、完整技术完成信封
+  和全仓快照。

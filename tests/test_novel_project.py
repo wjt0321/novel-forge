@@ -113,7 +113,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "test-book" in claude_md
     assert "chapters/eXX/ch-XX/正文.md" in claude_md
     assert "工作流版本" in claude_md
-    assert "v5.3" in claude_md
+    assert "v5.4" in claude_md
     assert "小说正文是唯一主产品" in claude_md
     assert "无需填写技术表单" in claude_md
     assert "result_file" in claude_md
@@ -140,7 +140,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     readme = (book_dir / "README.md").read_text(encoding="utf-8")
     assert "Test Book" in readme
-    assert "默认工作流: v5.3" in readme
+    assert "默认工作流: v5.4" in readme
     assert "guardian-contract.json" in readme
     assert ".local-guardian" in readme
     assert "隔离" in readme
@@ -291,7 +291,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "创作任务禁止先探索仓库实现" in claude_md
     assert "无需填写技术表单" in claude_md
     assert "不得创建或注册宿主专用 Agent 类型" in claude_md
-    assert "Python 导入正文、跑机器门" in claude_md
+    assert "双审前正文仍留在 diff 区" in claude_md
     assert "第二版仍有 MUST" in claude_md
     assert "Generation 和两份 Review" in claude_md
     assert "next_chapter_pull" in (
@@ -486,7 +486,7 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "新书先由确定性控制面通过 `init-novel-project` 初始化" in text
     assert "本章未开始" in text
     assert "只有用户明确要求探索稿" in text
-    assert "不得自行创建正文、规划、审稿或 ready Git 恢复点" in text
+    assert "不得自行创建正式章节、规划、证据、审稿记录或 ready Git 恢复点" in text
     assert "不得创建、修改、修复、包装、安装或配置 Harness" in text
     assert "不得向用户提供部署或配置 Harness 的选项" in text
     assert "没有命令 Backend 时 `start` 自动进入原生会话 Relay" in text
@@ -500,12 +500,12 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
     assert "Python 状态机决定下一步" in text
     assert "技术表单" in text
-    assert "创作角色对项目仓库零写入" in text
+    assert "创作角色只允许写当前书" in text
     assert "ACP 只用于事后取证" in text
     assert "不得创建或注册宿主专用 Agent 类型" in text
 
 
-def test_skill_documents_v53_fiction_first_native_workflow():
+def test_skill_documents_v54_fiction_first_native_workflow():
     text = (_REPO_ROOT / ".agents/skills/novel-forge/SKILL.md").read_text(
         encoding="utf-8"
     )

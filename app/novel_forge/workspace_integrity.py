@@ -74,6 +74,30 @@ def snapshot_workspace(root: Path) -> dict[str, str]:
     return snapshot
 
 
+def snapshot_workspace_paths(
+    root: Path,
+    relative_paths: tuple[str, ...],
+) -> dict[str, str]:
+    """Snapshot a bounded set of files or directories under one root."""
+    root = Path(root).resolve()
+    snapshot: dict[str, str] = {}
+    for relative in relative_paths:
+        pure = Path(relative)
+        if pure.is_absolute() or ".." in pure.parts:
+            raise ValueError("workspace snapshot 路径越界。")
+        target = root.joinpath(*pure.parts)
+        prefix = pure.as_posix()
+        if target.is_symlink():
+            snapshot[prefix] = f"symlink:{os.readlink(target)}"
+        elif target.is_file():
+            snapshot[prefix] = f"file:{_file_sha256(target)}"
+        elif target.is_dir():
+            snapshot[prefix] = "directory"
+            for child, marker in snapshot_workspace(target).items():
+                snapshot[f"{prefix}/{child}"] = marker
+    return snapshot
+
+
 def workspace_delta(
     before: dict[str, str],
     after: dict[str, str],
@@ -153,6 +177,39 @@ def create_workspace_backup(root: Path, archive_path: Path) -> None:
                         path,
                         arcname=path.relative_to(root).as_posix(),
                     )
+        os.replace(temporary, archive_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def create_workspace_backup_from_snapshot(
+    root: Path,
+    archive_path: Path,
+    snapshot: dict[str, str],
+) -> None:
+    """Back up only the paths named by a bounded workspace snapshot."""
+    root = Path(root).resolve()
+    archive_path = Path(archive_path).resolve()
+    if archive_path == root or archive_path.is_relative_to(root):
+        raise ValueError("workspace backup 必须位于项目仓库外。")
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = archive_path.with_name(
+        f".{archive_path.name}.{os.getpid()}.tmp"
+    )
+    temporary.unlink(missing_ok=True)
+    try:
+        with zipfile.ZipFile(
+            temporary,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=6,
+        ) as archive:
+            for relative, marker in sorted(snapshot.items()):
+                path = root.joinpath(*Path(relative).parts)
+                if marker == "directory":
+                    archive.writestr(f"{relative}/", b"")
+                elif marker.startswith("file:"):
+                    archive.write(path, arcname=relative)
         os.replace(temporary, archive_path)
     finally:
         temporary.unlink(missing_ok=True)

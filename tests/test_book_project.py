@@ -1798,23 +1798,23 @@ def test_sync_tools_refreshes_managed_and_preserves_handwritten(tmp_path: Path):
     assert voice.read_text(encoding="utf-8") == "# 手写声音圣经\n"
 
 
-def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
+def test_sync_tools_migrates_generated_v53_constitution_only(tmp_path: Path):
     book_dir = _make_book(tmp_path)
     (book_dir / ".git").unlink()
     _remove_readonly_tree(tmp_path / ".local-book-git" / "demo.git")
     claude = book_dir / "CLAUDE.md"
     claude.write_text(
         claude.read_text(encoding="utf-8").replace(
+            "- 工作流版本: v5.4（正文优先 Lean 原生工作流）",
             "- 工作流版本: v5.3（正文优先 Lean 原生工作流）",
-            "- 工作流版本: v4.4（隔离 Writer Capsule 与外置控制面）",
         ),
         encoding="utf-8",
     )
     readme = book_dir / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
+            "- 默认工作流: v5.4",
             "- 默认工作流: v5.3",
-            "- 默认工作流: v4.4",
         ),
         encoding="utf-8",
     )
@@ -1823,8 +1823,8 @@ def test_sync_tools_migrates_generated_v44_constitution_only(tmp_path: Path):
 
     assert "CLAUDE.md" in result["updated"]
     assert "README.md" in result["updated"]
-    assert "v5.3" in claude.read_text(encoding="utf-8")
-    assert "v5.3" in readme.read_text(encoding="utf-8")
+    assert "v5.4" in claude.read_text(encoding="utf-8")
+    assert "v5.4" in readme.read_text(encoding="utf-8")
     assert result["local_git"]["initialized"] is True
     assert result["local_git"]["commit_created"] is True
     assert result["local_git"]["remote_count"] == 0

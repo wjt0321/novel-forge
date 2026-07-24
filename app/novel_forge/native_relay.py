@@ -41,9 +41,11 @@ from .review_capsule import (
 from .session_audit import audit_session_log
 from .workspace_integrity import (
     create_workspace_backup,
+    create_workspace_backup_from_snapshot,
     remove_created_paths,
     restore_workspace_paths,
     snapshot_workspace,
+    snapshot_workspace_paths,
     workspace_delta,
 )
 from .workflow import (
@@ -64,6 +66,19 @@ NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
 MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
+LEAN_PROTECTED_CONTROL_PLANE_PATHS = (
+    "app",
+    "tools",
+    "tests",
+    ".agents/skills/novel-forge",
+    ".claude/skills/novel-forge",
+    ".gitignore",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "requirements.txt",
+    "run_novel_test.py",
+)
 
 
 class NativeWorkspaceMutationError(WorkflowError):
@@ -357,6 +372,13 @@ class NativeWorkflowRelay:
             return self.root
         return self.root / "books" / slug
 
+    @staticmethod
+    def _lean_protected_control_plane_paths(slug: str) -> tuple[str, ...]:
+        return LEAN_PROTECTED_CONTROL_PLANE_PATHS + (
+            f".local-guardian/{slug}",
+            f".local-book-git/{slug}.git",
+        )
+
     def _diff_dir(self, slug: str, chapter: int) -> Path:
         return (
             self.root
@@ -374,6 +396,21 @@ class NativeWorkflowRelay:
         return Path(str(prepared["capsule_dir"])) / str(
             prepared.get("draft_output") or "draft/正文.md"
         )
+
+    def _staged_body_matches_state(self, state: dict[str, Any]) -> bool:
+        if self.strict_audit or not isinstance(state.get("capsule"), dict):
+            return False
+        expected = str(state.get("body_sha256") or "").strip()
+        if not expected:
+            return False
+        try:
+            body = self._staged_body_path(state)
+            return (
+                body.is_file()
+                and hashlib.sha256(body.read_bytes()).hexdigest() == expected
+            )
+        except (OSError, KeyError, TypeError, ValueError):
+            return False
 
     @staticmethod
     def _reset_transient_dir(path: Path) -> None:
@@ -640,29 +677,77 @@ class NativeWorkflowRelay:
     def _action_path(self, slug: str) -> Path:
         return self._relay_dir(slug) / "next-action.json"
 
-    def _snapshot_path(self, slug: str, action_id: str) -> Path:
+    def _relay_snapshot_dir(self, slug: str) -> Path:
+        root_namespace = hashlib.sha256(
+            str(self.root).casefold().encode("utf-8")
+        ).hexdigest()[:16]
         return (
             self.orchestrator.capsule_root
             / "native-relay-snapshots"
+            / root_namespace
             / slug
-            / f"{action_id}.json"
         )
 
+    def _snapshot_path(self, slug: str, action_id: str) -> Path:
+        return self._relay_snapshot_dir(slug) / f"{action_id}.json"
+
     def _backup_path(self, slug: str, action_id: str) -> Path:
-        return (
-            self.orchestrator.capsule_root
-            / "native-relay-snapshots"
-            / slug
-            / f"{action_id}.zip"
+        return self._relay_snapshot_dir(slug) / f"{action_id}.zip"
+
+    def _control_snapshot_path(self, slug: str, action_id: str) -> Path:
+        return self._snapshot_path(slug, action_id).with_suffix(
+            ".control.json"
+        )
+
+    def _control_backup_path(self, slug: str, action_id: str) -> Path:
+        return self._backup_path(slug, action_id).with_suffix(
+            ".control.zip"
+        )
+
+    def _write_lean_control_snapshot(
+        self,
+        slug: str,
+        action_id: str,
+    ) -> None:
+        protected_paths = self._lean_protected_control_plane_paths(slug)
+        control_snapshot = snapshot_workspace_paths(
+            self.root,
+            protected_paths,
+        )
+        _atomic_json(
+            self._control_snapshot_path(slug, action_id),
+            control_snapshot,
+        )
+        create_workspace_backup_from_snapshot(
+            self.root,
+            self._control_backup_path(slug, action_id),
+            control_snapshot,
         )
 
     def _result_path(self, slug: str, action_id: str) -> Path:
+        root_namespace = hashlib.sha256(
+            str(self.root).casefold().encode("utf-8")
+        ).hexdigest()[:16]
         return (
             self.orchestrator.capsule_root
             / "native-role-results"
+            / root_namespace
             / slug
             / f"{action_id}.json"
         )
+
+    def _active_snapshot_action_id(self, slug: str) -> str | None:
+        directory = self._relay_snapshot_dir(slug)
+        if not directory.is_dir():
+            return None
+        candidates = sorted(
+            path.stem
+            for path in directory.glob("*.json")
+            if not path.name.endswith(".control.json")
+        )
+        if len(candidates) > 1:
+            raise WorkflowError("原生角色存在多个活动动作快照。")
+        return candidates[0] if candidates else None
 
     def _load_state(self, slug: str) -> dict[str, Any]:
         path = self._state_path(slug)
@@ -959,8 +1044,61 @@ class NativeWorkflowRelay:
             integrity_root,
             self._backup_path(slug, action["action_id"]),
         )
+        if not self.strict_audit:
+            self._write_lean_control_snapshot(
+                slug,
+                str(action["action_id"]),
+            )
+
+    def _verify_lean_control_plane(
+        self,
+        slug: str,
+        action_id: str,
+    ) -> bool:
+        snapshot_path = self._control_snapshot_path(slug, action_id)
+        backup_path = self._control_backup_path(slug, action_id)
+        if not snapshot_path.is_file():
+            return False
+        try:
+            before = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise WorkflowError("原生角色控制面快照损坏。") from exc
+        if not isinstance(before, dict):
+            raise WorkflowError("原生角色控制面快照格式无效。")
+        protected_paths = self._lean_protected_control_plane_paths(slug)
+        after = snapshot_workspace_paths(self.root, protected_paths)
+        delta = workspace_delta(before, after)
+        if delta.changed:
+            remove_created_paths(self.root, delta.created)
+            restore_workspace_paths(
+                self.root,
+                backup_path,
+                before,
+                delta.modified + delta.deleted,
+            )
+            restored = workspace_delta(
+                before,
+                snapshot_workspace_paths(
+                    self.root,
+                    protected_paths,
+                ),
+            )
+            snapshot_path.unlink(missing_ok=True)
+            backup_path.unlink(missing_ok=True)
+            if restored.changed:
+                raise WorkflowError("项目控制面自动恢复失败。")
+            return True
+        snapshot_path.unlink(missing_ok=True)
+        backup_path.unlink(missing_ok=True)
+        return False
 
     def _verify_workspace(self, slug: str, action_id: str) -> None:
+        control_plane_mutated = False
+        if not self.strict_audit:
+            control_plane_mutated = self._verify_lean_control_plane(
+                slug,
+                action_id,
+            )
         snapshot_path = self._snapshot_path(slug, action_id)
         if not snapshot_path.is_file():
             raise WorkflowError("原生角色动作缺少执行前仓库快照。")
@@ -983,14 +1121,20 @@ class NativeWorkflowRelay:
             for path in action.get("allowed_project_writes", [])
             if isinstance(path, str)
         }
+        control_plane_managed = {
+            str(path)
+            for path in action.get("control_plane_managed_paths", [])
+            if isinstance(path, str)
+        }
+        permitted_delta = allowed | control_plane_managed
         unexpected_created = tuple(
-            path for path in delta.created if path not in allowed
+            path for path in delta.created if path not in permitted_delta
         )
         unexpected_modified = tuple(
-            path for path in delta.modified if path not in allowed
+            path for path in delta.modified if path not in permitted_delta
         )
         unexpected_deleted = tuple(
-            path for path in delta.deleted if path not in allowed
+            path for path in delta.deleted if path not in permitted_delta
         )
         backup_path = self._backup_path(slug, action_id)
         if unexpected_created or unexpected_modified or unexpected_deleted:
@@ -1006,24 +1150,36 @@ class NativeWorkflowRelay:
                 snapshot_workspace(integrity_root),
             )
             restored_unexpected = (
-                tuple(path for path in restored.created if path not in allowed)
-                + tuple(
-                    path for path in restored.modified if path not in allowed
+                tuple(
+                    path
+                    for path in restored.created
+                    if path not in permitted_delta
                 )
-                + tuple(path for path in restored.deleted if path not in allowed)
+                + tuple(
+                    path
+                    for path in restored.modified
+                    if path not in permitted_delta
+                )
+                + tuple(
+                    path
+                    for path in restored.deleted
+                    if path not in permitted_delta
+                )
             )
             if restored_unexpected:
                 raise WorkflowError("项目控制面自动恢复失败。")
             snapshot_path.unlink(missing_ok=True)
             backup_path.unlink(missing_ok=True)
-            reason = (
-                "control_plane_mutation"
-                if unexpected_modified or unexpected_deleted
-                else "unexpected_project_artifact"
-            )
+            reason = "control_plane_mutation" if (
+                control_plane_mutated
+                or unexpected_modified
+                or unexpected_deleted
+            ) else "unexpected_project_artifact"
             raise NativeWorkspaceMutationError(reason)
         snapshot_path.unlink(missing_ok=True)
         backup_path.unlink(missing_ok=True)
+        if control_plane_mutated:
+            raise NativeWorkspaceMutationError("control_plane_mutation")
 
     @staticmethod
     def _control_session(role: str, chapter: int) -> SessionIdentity:
@@ -1321,12 +1477,26 @@ class NativeWorkflowRelay:
 
     def stop(self, slug: str) -> WorkflowResult:
         """Stop the workflow and retire any pending native action."""
+        action_id = ""
+        if self._state_path(slug).is_file():
+            action_id = str(
+                self._load_state(slug).get("action_id") or ""
+            )
         result = self.orchestrator.stop(slug)
         if self._state_path(slug).is_file():
             state = self._load_state(slug)
             state["phase"] = "stopped"
             _atomic_json(self._state_path(slug), state)
         self._action_path(slug).unlink(missing_ok=True)
+        if action_id:
+            self._snapshot_path(slug, action_id).unlink(missing_ok=True)
+            self._backup_path(slug, action_id).unlink(missing_ok=True)
+            self._control_snapshot_path(slug, action_id).unlink(
+                missing_ok=True
+            )
+            self._control_backup_path(slug, action_id).unlink(
+                missing_ok=True
+            )
         return result
 
     def retry(self, slug: str) -> WorkflowResult:
@@ -1338,14 +1508,18 @@ class NativeWorkflowRelay:
         chapter = int(state["chapter"])
         sequence_id = str(state.get("sequence_id") or "")
         decision_kind = str(state.get("decision_kind") or "")
+        failed_phase = str(state.get("failed_phase") or "")
+        review_body_available = bool(
+            state.get("generation_id") and state.get("body_sha256")
+        ) or self._staged_body_matches_state(state)
         if (
             sequence_id
-            and state.get("generation_id")
-            and state.get("body_sha256")
+            and review_body_available
             and not state.get("must_findings")
             and decision_kind in {"", "native_role_failed"}
+            and failed_phase
+            in {"awaiting_blind_reader", "awaiting_chapter_editor"}
         ):
-            failed_phase = str(state.get("failed_phase") or "")
             role = (
                 "chapter-editor"
                 if (
@@ -1561,10 +1735,14 @@ class NativeWorkflowRelay:
         """Accept one official native terminal and issue the next action."""
         state = self._load_state(slug)
         try:
+            action_id = self._active_snapshot_action_id(slug) or str(
+                state.get("action_id") or ""
+            )
             self._verify_workspace(
                 slug,
-                str(state.get("action_id") or ""),
+                action_id,
             )
+            state = self._load_state(slug)
             phase = state.get("phase")
             if phase == "awaiting_writer":
                 return self._complete_writer(slug, state, completion)
@@ -1586,12 +1764,14 @@ class NativeWorkflowRelay:
                 raise WorkflowError("当前没有等待中的可回传角色。")
             return self._complete_planning(slug, state, completion)
         except NativeCompletionRepairError as exc:
+            state = self._load_state(slug)
             return self._request_completion_repair(
                 slug,
                 state,
                 reason=exc.reason,
             )
         except NativeWorkspaceMutationError as exc:
+            state = self._load_state(slug)
             self._remember_failed_completion_session(state, completion)
             return self._recover_technical_failure(
                 slug,
@@ -1599,6 +1779,7 @@ class NativeWorkflowRelay:
                 failure_reason=exc.reason,
             )
         except (GuardianError, WorkflowError, OSError, ValueError):
+            state = self._load_state(slug)
             self._remember_failed_completion_session(state, completion)
             return self._recover_technical_failure(slug, state)
 
@@ -1638,8 +1819,8 @@ class NativeWorkflowRelay:
         if not isinstance(counts, dict):
             counts = {}
             state["technical_retry_counts"] = counts
-        counts.setdefault(bucket, 0)
-        state["technical_retry_count"] = int(counts[bucket])
+        counts[bucket] = 0
+        state["technical_retry_count"] = 0
 
     def _request_completion_repair(
         self,
@@ -1795,8 +1976,14 @@ class NativeWorkflowRelay:
             "reasoning_effort": "medium",
             "review_capsule": descriptor,
             "task": (
-                "Read only the sealed review capsule and return the "
-                "structured role result through the official terminal."
+                "Read only the sealed review capsule and write the compact "
+                "JSON judgment to result_file. Do not create any form, "
+                "envelope, evidence, or control-plane record."
+                if not self.strict_audit
+                else (
+                    "Read only the sealed review capsule and return the "
+                    "structured role result through the official terminal."
+                )
             ),
             "result": {
                 **_result_contract(role),
@@ -1811,6 +1998,12 @@ class NativeWorkflowRelay:
                 int(state["chapter"]),
             ).session_id
             action["session"]["must_be_independent"] = False
+            integrity_root = self._integrity_root(slug)
+            review_prefix = review_dir.relative_to(integrity_root).as_posix()
+            action["control_plane_managed_paths"] = [
+                f"{review_prefix}/{path}"
+                for path in snapshot_workspace(review_dir)
+            ]
         return action
 
     def _verify_current_review_capsule(
@@ -2267,6 +2460,8 @@ class NativeWorkflowRelay:
                     surface_findings,
                 )
             self._freeze_initial_draft(state)
+            if state.get("patch_round"):
+                self._write_staged_diff(state)
             staged_body = self._staged_body_path(state)
             body_sha256 = hashlib.sha256(staged_body.read_bytes()).hexdigest()
             if not isinstance(runtime_snapshot, dict):

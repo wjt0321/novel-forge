@@ -1,5 +1,10 @@
 # 01 - 快速开始
 
+> 当前自动长篇工作流以 `books/`、`lean_native` 和 diff 暂存正文为默认；请先阅读
+> `docs/43-fiction-first-lean-native-workflow.md` 与
+> `docs/44-current-workflow-logic-audit.md`。本页后半部分的 `library/` 命令是 legacy
+> 审计工作流，仍受支持，但不是通用写作 Agent 的默认入口。
+
 ## 环境要求
 
 - Python 3.12+
@@ -11,7 +16,19 @@
 pip install -r requirements.txt
 ```
 
-## 创建并初始化一本书
+## 当前推荐：自动三角色写作
+
+```bash
+PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> start my-novel \
+  --title "我的小说" --genre "都市" --protagonist "主角设定" \
+  --world "世界观" --conflict "本章核心冲突" --hook "本章结尾钩子"
+```
+
+随后由 Lead 循环执行 `next-action`、等待宿主官方终态、调用 `complete-role`。Writer
+只写当前书 diff 暂存正文，两个审稿角色只写简短结果；双审通过后 Python 自动晋升、
+记证据并建立每书 Git 恢复点。
+
+## Legacy：创建并初始化一本书
 
 源码包位于 `app/novel_forge`。运行 CLI 前请将 `app` 加入 `PYTHONPATH`：
 

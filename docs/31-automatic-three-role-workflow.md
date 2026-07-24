@@ -1,5 +1,10 @@
 # 自动三角色小说工作流
 
+> 本文记录 v5.0 里程碑设计。当前默认已简化为 v5.4 正文优先 Lean 流程：不单开
+> Writer 规划回合，不在双审前创建 Generation，日常审稿不填完整表。现行规则见
+> `docs/43-fiction-first-lean-native-workflow.md` 与
+> `docs/44-current-workflow-logic-audit.md`。
+
 ## 目标
 
 本里程碑在现有 books/、Skill adapter、Guardian、章节序列、证据、状态机和每书

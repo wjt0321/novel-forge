@@ -1995,11 +1995,11 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
     migratable_project_files = {
         "CLAUDE.md": re.compile(
             r"(?m)^-\s*(?:\*\*)?工作流版本(?:\*\*)?\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.2)(?:\s|（|\()"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.(?:2|3))(?:\s|（|\()"
         ),
         "README.md": re.compile(
             r"(?m)^-\s*默认工作流\s*:\s*"
-            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.2)(?:$|[\s；;。])"
+            r"(?:v3\.(?:7|8|9)|v4\.(?:0|1|2|3|4)|v5\.(?:2|3))(?:$|[\s；;。])"
         ),
     }
     refresh_set = (

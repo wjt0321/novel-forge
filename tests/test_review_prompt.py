@@ -38,6 +38,16 @@ def test_blind_reader_task_judges_life_not_only_clarity_or_mystery():
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 
+def test_lean_blind_reader_writes_only_the_compact_result_file():
+    prompt = render_review_instructions("blind-reader", lean=True)
+
+    assert "result_file" in prompt.text
+    assert "不要填写技术终态" in prompt.text
+    assert "Runtime" in prompt.text
+    assert "宿主正式结果通道" not in prompt.text
+    assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
+
+
 def test_chapter_editor_task_requires_complete_review_every_round():
     prompt = render_review_instructions("chapter-editor")
 

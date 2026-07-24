@@ -1,5 +1,9 @@
 # v5.1 原生会话 Relay 与双保证模式
 
+> 本文保留 v5.1 的历史设计。当前交互默认是 `lean_native`：Writer 在当前书 diff
+> 暂存区写正文，审稿角色写简短 `result_file`，双审后才晋升；仓库外一次性 Capsule、
+> 完整终态信封和全仓快照仅属于 `--strict-audit`。见 `docs/43` 与 `docs/44`。
+
 ## 问题
 
 此前 Skill 文档虽然声明交互式宿主可使用原生 Roles，但命令入口在缺少
