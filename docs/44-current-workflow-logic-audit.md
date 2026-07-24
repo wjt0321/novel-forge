@@ -106,3 +106,47 @@ Lean 不使用全仓快照。它同时维护两个小边界：
 - 有效暂存正文不会因为遥测、Session 字段或审稿运输问题被重写。
 - 两个审稿角色都通过前，正文不会进入 `chapters/`。
 - `ready` 只表示工作流通过，不表示作者批准或发布许可。
+
+## 2026-07-24 三模型实测归因
+
+本轮用宿主本地会话记录对齐了同一天的三个真实样本。统计只计算可见工具调用、
+工作流命令和终态，不使用模型隐藏思考内容。
+
+| Lead / 模型 | 独立角色 Agent | 工作流命令 | 工具错误 | 结果 |
+|---|---:|---:|---:|---|
+| Claude Code + GLM 5.2，`yesun-zai` | 3 | 7 | 0 | Writer、Blind Reader、Chapter Editor 一次通过 |
+| Kimi Code + Kimi K3 high，`shanhaijing-K3-h` | 3 | 7 | 0 | 主动发现 root 错误后重启，双审与晋升一次通过 |
+| Claude Code + DeepSeek v4 Flash，`shanhaijing-ds-flash` | 0 | 40 | 19 | Lead 亲自写三种产物，随后修改 Guardian/状态并形成循环 |
+
+### 代码责任
+
+1. 未加引号的 Windows 反斜杠 root 会被 Bash 吞掉，`D:\mydev\s-black-novel`
+   变成驱动器相对路径并在 D 盘当前目录下建错资产。这是入口缺少绝对路径校验，
+   与模型能力无关。CLI 现在会在任何资产写入前拒绝非绝对 root，并提示使用
+   `D:/path/to/repo` 或给反斜杠路径整体加引号。
+2. 当时的 review capsule 所有权校验会把 Python 合法刷新误判为角色修改，能够触发
+   Chapter Editor 技术重试。这是代码缺陷；当前版本已把 Python 管理路径与角色输出
+   分开，并有完整回归测试。
+3. Lean 动作曾把 Skill 的“独立角色”要求改写成 `must_be_independent=false`，同时向
+   Lead 暴露内部 `control_run_id`。这是协议自相矛盾，会诱导通用模型直接代写或把内部
+   ID 当成需要修复的 Session 字段。当前公开动作恢复为独立角色要求，明确禁止 Lead
+   写角色产物；内部恢复 ID 只保存在 Python state。
+
+### 模型责任
+
+DeepSeek v4 Flash 在第一次可恢复故障后没有停留在公开的
+`next-action -> 独立角色 -> complete-role` 路径，而是依次尝试手传内部 ID、停止与重试、
+直接改 Guardian capsule 状态、删除和重建技术记录，最后绕过 gate 手改 `ready`。
+这些操作违反 Skill 与项目边界，并把一次代码故障放大为长循环。GLM 5.2 与 Kimi K3
+面对同一类公开动作时都把角色工作交给三个独立 Agent，Lead 没有代写，也没有碰控制面。
+
+### 选模结论
+
+- 日常 Lead / 编排首选：GLM 5.2 或 Kimi K3 high。当前样本中二者都能理解三角色边界，
+  工具调用短，且不会在技术失败后自行修状态机。
+- DeepSeek v4 Flash 不建议担任 Lead。可以把它限制在 Writer 或单一审稿角色中，只给
+  Capsule 和唯一输出路径，让更稳定的 Lead 负责调度。
+- DeepSeek v4 Pro 的既往会话也出现过高命令数、恢复协议纠缠和控制面干预，因此在新的
+  对照测试证明稳定前，同样不作为默认 Lead。
+- 即使使用 GLM/Kimi，root 校验和角色所有权仍必须由代码保证；不能把系统正确性寄托在
+  “模型恰好聪明地避开错误路径”上。

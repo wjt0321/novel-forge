@@ -2762,7 +2762,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path.cwd(),
+        default=None,
         help="Novel Forge 项目根目录。",
     )
     parser.add_argument(
@@ -2792,6 +2792,16 @@ def main(argv: list[str] | None = None) -> int:
     complete.add_argument("--model", default="unknown")
     complete.add_argument("--agent-harness", default="native-host")
     args = parser.parse_args(argv)
+    if args.root is None:
+        args.root = Path.cwd().resolve()
+    elif not args.root.is_absolute():
+        print(
+            "项目根路径无效。Windows 请使用 D:/path/to/repo，"
+            "或给 D:\\path\\to\\repo 加引号。"
+        )
+        return 2
+    else:
+        args.root = args.root.resolve()
     try:
         from .native_relay import NativeWorkflowRelay
 

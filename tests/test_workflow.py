@@ -2250,3 +2250,39 @@ def test_cli_wrapper_runs_without_pythonpath():
     assert "status" in completed.stdout
     assert "retry" in completed.stdout
     assert "stop" in completed.stdout
+
+
+def test_workflow_cli_rejects_relative_root_before_creating_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    monkeypatch.chdir(tmp_path)
+
+    code = workflow_module.main(
+        [
+            "--root",
+            "nested-root",
+            "start",
+            "demo",
+            "--title",
+            "测试书",
+            "--genre",
+            "悬疑",
+            "--protagonist",
+            "林舟",
+            "--world",
+            "旧城",
+            "--conflict",
+            "必须打开暗门",
+            "--hook",
+            "门后传来敲击声",
+        ]
+    )
+
+    assert code == 2
+    assert not (tmp_path / "nested-root").exists()
+    assert not Path("D:mydevs-black-novel").is_absolute()
+    visible = capsys.readouterr().out
+    assert "D:/" in visible
+    assert "加引号" in visible

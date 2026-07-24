@@ -1451,6 +1451,11 @@ def test_lean_start_dispatches_prose_capsule_as_first_writer_action(
     assert action["role"] == "writer"
     assert action["stage"] == "draft"
     assert action["session"]["mode"] == "new"
+    assert action["session"]["must_be_independent"] is True
+    assert action["lead_must_delegate"] is True
+    assert action["lead_may_write_role_output"] is False
+    assert "禁止亲自写正文" in action["delivery"]
+    assert "control_run_id" not in action
     assert action["capsule"]["output"] == "draft/正文.md"
     assert Path(action["capsule"]["path"]).is_dir()
     assert "result_file" not in action
@@ -1486,6 +1491,13 @@ def test_lean_writer_completion_needs_only_the_existing_prose(
         root / "books/demo/chapters/e01/ch-01/正文.md"
     ).exists()
 
+    review_action = relay.next_action("demo")
+    assert review_action["session"]["must_be_independent"] is True
+    assert review_action["lead_must_delegate"] is True
+    assert review_action["lead_may_write_role_output"] is False
+    assert "禁止亲自写 result_file" in review_action["delivery"]
+    assert "control_run_id" not in review_action
+
 
 def test_lean_surface_blockers_return_to_same_writer_before_import(
     tmp_path: Path,
@@ -1517,6 +1529,10 @@ def test_lean_surface_blockers_return_to_same_writer_before_import(
     assert patch_action["role"] == "writer"
     assert patch_action["stage"] == "patch"
     assert patch_action["session"]["mode"] == "reuse_preferred"
+    assert patch_action["session"]["must_be_independent"] is True
+    assert patch_action["lead_must_delegate"] is True
+    assert patch_action["lead_may_write_role_output"] is False
+    assert "control_run_id" not in patch_action
     assert patch_action["capsule"]["path"] == str(capsule)
     assert any(
         "markdown-emphasis" in item

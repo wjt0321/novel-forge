@@ -24,6 +24,8 @@ PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> start
   --world "世界观" --conflict "本章核心冲突" --hook "本章结尾钩子"
 ```
 
+Windows 的 Git Bash/类 Bash 请把 `--root` 写成 `D:/path/to/repo`；反斜杠路径必须整体加引号。CLI 会在创建资产前拒绝 `D:foo` 一类驱动器相对路径。
+
 随后由 Lead 循环执行 `next-action`、等待宿主官方终态、调用 `complete-role`。Writer
 只写当前书 diff 暂存正文，两个审稿角色只写简短结果；双审通过后 Python 自动晋升、
 记证据并建立每书 Git 恢复点。

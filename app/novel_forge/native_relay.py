@@ -603,7 +603,7 @@ class NativeWorkflowRelay:
         action = self.next_action(slug)
         role = self._phase_role(state)
         expected = action.get("session")
-        control_run_id = str(action.get("control_run_id") or "").strip()
+        control_run_id = str(state.get("control_run_id") or "").strip()
         if control_run_id:
             session_id = control_run_id
             session_instance_id = control_run_id
@@ -1022,13 +1022,13 @@ class NativeWorkflowRelay:
                         ).as_posix()
                     ]
                 action["delivery"] = (
-                    "角色只把创作结论写入 result_file；"
+                    "Lead 禁止亲自写 result_file；必须委派独立角色。"
                     "Lead 等待角色完成后执行 complete-role；无需填写技术表单。"
                 )
             else:
                 action.pop("result_file", None)
                 action["delivery"] = (
-                    "Writer 只写 capsule 内的 draft/正文.md；"
+                    "Lead 禁止亲自写正文；必须委派 Writer 角色。"
                     "Lead 等待正文落盘后执行 complete-role；无需填写技术表单。"
                 )
         state["action_id"] = action["action_id"]
@@ -1270,13 +1270,14 @@ class NativeWorkflowRelay:
             "kind": "run_role",
             "role": "writer",
             "stage": "patch" if must_findings else "draft",
-            "control_run_id": session.session_id,
             "session": {
                 "mode": (
                     "reuse_preferred" if reuse_preferred else "new"
                 ),
-                "must_be_independent": False,
+                "must_be_independent": True,
             },
+            "lead_must_delegate": True,
+            "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
             "capsule": {
                 "id": prepared["capsule_id"],
@@ -1315,6 +1316,7 @@ class NativeWorkflowRelay:
                 "writer_session": asdict(session),
                 "capsule": prepared,
                 "parent_generation_id": parent_generation_id,
+                "control_run_id": session.session_id,
             }
         )
         state.pop("human_decision_reference", None)
@@ -1973,6 +1975,8 @@ class NativeWorkflowRelay:
                 "mode": "new",
                 "must_be_independent": True,
             },
+            "lead_must_delegate": True,
+            "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
             "review_capsule": descriptor,
             "task": (
@@ -1993,11 +1997,11 @@ class NativeWorkflowRelay:
             "allowed_project_writes": [],
         }
         if not self.strict_audit:
-            action["control_run_id"] = self._control_session(
+            control_session = self._control_session(
                 role,
                 int(state["chapter"]),
-            ).session_id
-            action["session"]["must_be_independent"] = False
+            )
+            state["control_run_id"] = control_session.session_id
             integrity_root = self._integrity_root(slug)
             review_prefix = review_dir.relative_to(integrity_root).as_posix()
             action["control_plane_managed_paths"] = [
@@ -2394,8 +2398,10 @@ class NativeWorkflowRelay:
                 "stage": "patch",
                 "session": {
                     "mode": "reuse_preferred",
-                    "must_be_independent": False,
+                    "must_be_independent": True,
                 },
+                "lead_must_delegate": True,
+                "lead_may_write_role_output": False,
                 "must_findings": list(findings),
                 "surface_patch": True,
             }
@@ -3011,11 +3017,12 @@ class NativeWorkflowRelay:
             "kind": "run_role",
             "role": "writer",
             "stage": "patch",
-            "control_run_id": str(writer["session_id"]),
             "session": {
                 "mode": "reuse_preferred",
-                "must_be_independent": False,
+                "must_be_independent": True,
             },
+            "lead_must_delegate": True,
+            "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
             "capsule": {
                 "id": prepared["capsule_id"],
@@ -3039,6 +3046,7 @@ class NativeWorkflowRelay:
                 "phase": "awaiting_writer",
                 "must_findings": list(must),
                 "patch_round": 1,
+                "control_run_id": str(writer["session_id"]),
             }
         )
         state.pop("blind_outcome", None)

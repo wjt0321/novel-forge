@@ -47,7 +47,7 @@ python -m novel_forge.cli audit my-novel --limit 50
 PYTHONPATH=. python -m app.novel_forge.lint <file>
 
 # Skill-first 受限 JSON 入口（自动化/编排器唯一推荐通道；--root 必须是绝对路径）
-PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:\s-black-novel <operation> ...
+PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:/s-black-novel <operation> ...
 # 变更类操作强制 --confirm <operation>；只输出 JSON，永不返回正文全文
 # books/ 工作流专用 op：project-status / set-draft-mode / run-gates / record-review / advance-state / sync-tools
 # v4.1 章节序列 op：begin-chapter-sequence / claim-chapter-session / advance-chapter-sequence / chapter-sequence-status
@@ -58,12 +58,12 @@ PYTHONPATH=. python -m app.novel_forge.skill_adapter --root D:\s-black-novel <op
 
 # 面向用户的自动三角色入口（输出人话状态，不输出内部 JSON）
 # 自动写作请求的首个写操作只能是 start；无命令 Backend 时进入原生会话 Relay
-python tools\novel-workflow.py --root D:\s-black-novel start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
-python tools\novel-workflow.py --root D:\s-black-novel next-action <slug>
-python tools\novel-workflow.py --root D:\s-black-novel complete-role <slug> --from-file <仓库外终态JSON>
-python tools\novel-workflow.py --root D:\s-black-novel status <slug>
-python tools\novel-workflow.py --root D:\s-black-novel retry <slug>
-python tools\novel-workflow.py --root D:\s-black-novel stop <slug>
+python tools\novel-workflow.py --root D:/s-black-novel start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
+python tools\novel-workflow.py --root D:/s-black-novel next-action <slug>
+python tools\novel-workflow.py --root D:/s-black-novel complete-role <slug>
+python tools\novel-workflow.py --root D:/s-black-novel status <slug>
+python tools\novel-workflow.py --root D:/s-black-novel retry <slug>
+python tools\novel-workflow.py --root D:/s-black-novel stop <slug>
 
 # 本地只读 API
 set PYTHONPATH=app

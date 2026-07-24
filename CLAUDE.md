@@ -15,6 +15,8 @@
   都是服务正文的附属记录，不得因为遥测未知或技术字段缺失要求重写有效正文。
 - Python 状态机决定下一步并自动计算哈希、stale、证据绑定和 Git；宿主只负责创建或
   复用独立会话、等待官方终态，并让角色写动作指定的当前书 diff 产物。
+- Windows 的 Git Bash/类 Bash 必须使用 `D:/path/to/repo` 形式的绝对 root；禁止使用未加引号的反斜杠路径。
+- `next-action` 要求角色委派时，Lead 禁止亲自写正文或审稿 JSON；内部 `control_run_id` 不向 Lead 暴露。
 - 默认完成命令为 `complete-role <slug>`。日常 Lean 的首个 Writer 动作直接写
   Capsule 内正文；两个审稿角色把简短 JSON 写入动作给出的 `result_file`。Lead 无需
   填写技术表单、拼装会话 ID、Generation、Runtime、Guardian、token、请求数、哈希或 Git 字段。
