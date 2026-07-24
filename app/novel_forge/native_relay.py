@@ -427,7 +427,7 @@ class NativeWorkflowRelay:
         self,
         slug: str,
         *,
-        session_id: str,
+        session_id: str | None = None,
         result_file: Path | None = None,
         session_instance_id: str | None = None,
         provider: str = "unknown",
@@ -441,16 +441,22 @@ class NativeWorkflowRelay:
         action = self.next_action(slug)
         role = self._phase_role(state)
         expected = action.get("session")
-        if (
+        control_run_id = str(action.get("control_run_id") or "").strip()
+        if control_run_id:
+            session_id = control_run_id
+            session_instance_id = control_run_id
+        elif (
             isinstance(expected, dict)
             and expected.get("mode") == "reuse"
         ):
             session_id = str(expected["session_id"])
             session_instance_id = str(expected["session_instance_id"])
+        else:
+            session_id = str(session_id or "").strip()
         session = SessionIdentity(
-            session_id=session_id.strip(),
+            session_id=str(session_id or "").strip(),
             session_instance_id=(
-                str(session_instance_id or session_id).strip()
+                str(session_instance_id or session_id or "").strip()
             ),
             provider=provider.strip() or "unknown",
             model=model.strip() or "unknown",
@@ -793,13 +799,13 @@ class NativeWorkflowRelay:
                 action["result_file"] = str(result_path)
                 action["delivery"] = (
                     "角色只把创作结论写入 result_file；"
-                    "Lead 等待官方终态后只回传真实 session ID。"
+                    "Lead 等待角色完成后执行 complete-role；无需填写技术表单。"
                 )
             else:
                 action.pop("result_file", None)
                 action["delivery"] = (
                     "Writer 只写 capsule 内的 draft/正文.md；"
-                    "Lead 等待官方终态后只回传真实 session ID。"
+                    "Lead 等待正文落盘后执行 complete-role；无需填写技术表单。"
                 )
         state["action_id"] = action["action_id"]
         state["assurance_mode"] = self.assurance_mode
@@ -853,6 +859,151 @@ class NativeWorkflowRelay:
         snapshot_path.unlink(missing_ok=True)
         backup_path.unlink(missing_ok=True)
 
+    @staticmethod
+    def _control_session(role: str, chapter: int) -> SessionIdentity:
+        run_id = (
+            f"relay-{role}-ch{chapter:02d}-{uuid.uuid4().hex[:16]}"
+        )
+        return SessionIdentity(
+            session_id=run_id,
+            session_instance_id=run_id,
+            provider="unknown",
+            model="unknown",
+            agent_harness="deterministic-control-plane",
+            role=role,
+        )
+
+    def _prepare_lean_writer_action(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        *,
+        request: WorkflowRequest,
+        chapter: int,
+        sequence_id: str,
+        must_findings: tuple[str, ...] = (),
+        parent_generation_id: str | None = None,
+        reuse_preferred: bool = False,
+    ) -> dict[str, Any]:
+        sequence = chapter_sequence_status(
+            self.root,
+            slug,
+            sequence_id,
+        )
+        active_session_id = str(
+            sequence.get("active_session_id") or ""
+        )
+        if sequence.get("status") == "running" and active_session_id:
+            rotate_chapter_session(
+                self.root,
+                slug,
+                sequence_id,
+                active_session_id,
+                reason=(
+                    "literary_patch"
+                    if must_findings
+                    else "technical_retry"
+                ),
+            )
+        session = self._control_session("writer", chapter)
+        claim_chapter_session(
+            self.root,
+            slug,
+            sequence_id,
+            session.session_id,
+        )
+        capsule_dir = (
+            self.orchestrator.capsule_root
+            / slug
+            / sequence_id
+            / f"{session.session_id}-{uuid.uuid4().hex[:8]}"
+        )
+        authorization_id = None
+        human_decision_reference = str(
+            state.get("human_decision_reference") or ""
+        ).strip()
+        if human_decision_reference:
+            authorization = authorize_regeneration(
+                self.root,
+                slug,
+                sequence_id,
+                session.session_id,
+                authority="human_delegate",
+                decision_reference=human_decision_reference,
+            )
+            authorization_id = authorization["authorization_id"]
+        prepared = prepare_writer_capsule(
+            self.root,
+            slug,
+            sequence_id,
+            session.session_id,
+            capsule_dir,
+            f"chapters/e01/ch-{chapter:02d}/正文.md",
+            regeneration_authorization_id=authorization_id,
+            patch_directive=(
+                "\n".join(f"- {item}" for item in must_findings)
+                if must_findings
+                else None
+            ),
+        )
+        action = {
+            "schema": NATIVE_ACTION_SCHEMA,
+            "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+            "kind": "run_role",
+            "role": "writer",
+            "stage": "patch" if must_findings else "draft",
+            "control_run_id": session.session_id,
+            "session": {
+                "mode": (
+                    "reuse_preferred" if reuse_preferred else "new"
+                ),
+                "must_be_independent": False,
+            },
+            "reasoning_effort": "medium",
+            "capsule": {
+                "id": prepared["capsule_id"],
+                "path": prepared["capsule_dir"],
+                "operation": prepared["operation"],
+                "instructions": "instructions.md",
+                "handoff": "handoff.md",
+                "output": prepared["draft_output"],
+            },
+            "runtime": {
+                "schema": "novel-forge-runtime/v1",
+                "assurance_mode": "lean_native",
+                "reported_by": "deterministic_control_plane",
+                "filesystem_scope": "capsule_output",
+                "write_scope": "post_execution_verified",
+                "repository_snapshot_enforced": False,
+            },
+            "result": {
+                **_result_contract("writer"),
+                "runtime_snapshot_required": False,
+            },
+            "repository_exploration_forbidden": True,
+            "allowed_project_writes": [],
+        }
+        state.update(
+            {
+                "phase": "awaiting_writer",
+                "sequence_id": sequence_id,
+                "writer_session": asdict(session),
+                "capsule": prepared,
+                "parent_generation_id": parent_generation_id,
+            }
+        )
+        state.pop("human_decision_reference", None)
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="patching" if must_findings else "writing",
+            retries=int(state.get("technical_retry_count") or 0),
+        )
+        self._write_action(slug, state, action)
+        return action
+
     def start(
         self,
         slug: str,
@@ -860,10 +1011,80 @@ class NativeWorkflowRelay:
         *,
         chapter: int = 1,
     ) -> WorkflowResult:
-        """Initialize deterministic state and request Writer planning."""
+        """Initialize deterministic state and dispatch the first creative role."""
         request.validate()
         self.orchestrator._assert_project_is_managed(slug, chapter)
         book_dir = self.orchestrator._prepare_project(slug, request, chapter)
+        if not self.strict_audit:
+            planning = self.orchestrator._prose_first_control_planning(
+                book_dir,
+                chapter,
+                request,
+            )
+            self.orchestrator._write_writer_planning(
+                book_dir,
+                chapter,
+                request,
+                planning,
+            )
+            sequence_id = (
+                f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
+            )
+            begin_chapter_sequence(
+                self.root,
+                slug,
+                chapter,
+                1,
+                sequence_id=sequence_id,
+                orchestrator_run_id=(
+                    f"workflow-{uuid.uuid4().hex[:12]}"
+                ),
+            )
+            book_project.set_draft_mode(
+                self.root,
+                slug,
+                chapter,
+                "formal",
+            )
+            book_project.advance_state(
+                self.root,
+                slug,
+                chapter,
+                "context_collected",
+                evidence="planning/story-engine.md",
+            )
+            book_project.advance_state(
+                self.root,
+                slug,
+                chapter,
+                "scene_packaged",
+                evidence=f"planning/scene-package-ch{chapter:02d}.md",
+            )
+            state = {
+                "schema": NATIVE_RELAY_SCHEMA,
+                "slug": slug,
+                "chapter": chapter,
+                "request": asdict(request),
+                "phase": "awaiting_writer",
+                "action_id": "",
+                "technical_retry_count": 0,
+                "technical_retry_counts": {},
+                "delivery_repair_counts": {},
+                "author_approval": False,
+                "publication_eligibility": False,
+            }
+            self._prepare_lean_writer_action(
+                slug,
+                state,
+                request=request,
+                chapter=chapter,
+                sequence_id=sequence_id,
+            )
+            return WorkflowResult(
+                user_state="running",
+                message="正在写作。",
+                sequence_id=sequence_id,
+            )
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
@@ -991,6 +1212,52 @@ class NativeWorkflowRelay:
                 sequence_id=sequence_id,
             )
         if not sequence_id:
+            if not self.strict_audit:
+                book_dir = self.root / "books" / slug
+                planning = self.orchestrator._prose_first_control_planning(
+                    book_dir,
+                    chapter,
+                    request,
+                )
+                self.orchestrator._write_writer_planning(
+                    book_dir,
+                    chapter,
+                    request,
+                    planning,
+                )
+                sequence_id = (
+                    f"auto-ch{chapter:02d}-{uuid.uuid4().hex[:10]}"
+                )
+                begin_chapter_sequence(
+                    self.root,
+                    slug,
+                    chapter,
+                    1,
+                    sequence_id=sequence_id,
+                    orchestrator_run_id=(
+                        f"workflow-{uuid.uuid4().hex[:12]}"
+                    ),
+                )
+                state.update(
+                    {
+                        "technical_retry_count": 0,
+                        "human_decision_reference": (
+                            f"native-retry-{uuid.uuid4().hex[:16]}"
+                        ),
+                    }
+                )
+                self._prepare_lean_writer_action(
+                    slug,
+                    state,
+                    request=request,
+                    chapter=chapter,
+                    sequence_id=sequence_id,
+                )
+                return WorkflowResult(
+                    user_state="running",
+                    message="正在重新生成本章。",
+                    sequence_id=sequence_id,
+                )
             book_dir = self.root / "books" / slug
             action = {
                 "schema": NATIVE_ACTION_SCHEMA,
@@ -1055,6 +1322,29 @@ class NativeWorkflowRelay:
                 sequence_id,
                 active_session_id,
                 reason="user_regeneration",
+            )
+        if not self.strict_audit:
+            state.update(
+                {
+                    "technical_retry_count": 0,
+                    "human_decision_reference": (
+                        f"native-retry-{uuid.uuid4().hex[:16]}"
+                    ),
+                    "retry_reason": "user_regeneration",
+                }
+            )
+            self._prepare_lean_writer_action(
+                slug,
+                state,
+                request=request,
+                chapter=chapter,
+                sequence_id=sequence_id,
+                parent_generation_id=state.get("generation_id"),
+            )
+            return WorkflowResult(
+                user_state="running",
+                message="正在重新生成本章。",
+                sequence_id=sequence_id,
             )
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
@@ -1287,6 +1577,7 @@ class NativeWorkflowRelay:
         role: str,
     ) -> dict[str, Any]:
         prompt = render_review_instructions(role).text
+        action_id = f"native-action-{uuid.uuid4().hex[:16]}"
         descriptor = prepare_review_capsule(
             self.orchestrator.capsule_root,
             slug,
@@ -1296,9 +1587,9 @@ class NativeWorkflowRelay:
             body_sha256=str(state["body_sha256"]),
         )
         state["review_capsule"] = descriptor
-        return {
+        action = {
             "schema": NATIVE_ACTION_SCHEMA,
-            "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+            "action_id": action_id,
             "kind": "run_role",
             "role": role,
             "session": {
@@ -1318,6 +1609,13 @@ class NativeWorkflowRelay:
             "repository_exploration_forbidden": True,
             "allowed_project_writes": [],
         }
+        if not self.strict_audit:
+            action["control_run_id"] = self._control_session(
+                role,
+                int(state["chapter"]),
+            ).session_id
+            action["session"]["must_be_independent"] = False
+        return action
 
     def _verify_current_review_capsule(
         self,
@@ -1578,6 +1876,25 @@ class NativeWorkflowRelay:
                     )
                 except GuardianError:
                     pass
+        if not self.strict_audit and sequence_id:
+            self._prepare_lean_writer_action(
+                slug,
+                state,
+                request=request,
+                chapter=chapter,
+                sequence_id=sequence_id,
+                must_findings=tuple(
+                    str(item) for item in state.get("must_findings", [])
+                ),
+                parent_generation_id=state.get("parent_generation_id"),
+                reuse_preferred=bool(state.get("must_findings")),
+            )
+            return WorkflowResult(
+                user_state="running",
+                message="写作会话异常，已自动换新会话重试。",
+                sequence_id=sequence_id,
+                technical_retry_count=retries,
+            )
         if sequence_id:
             sequence = chapter_sequence_status(
                 self.root,
@@ -2065,6 +2382,30 @@ class NativeWorkflowRelay:
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
                 return result
+            if not self.strict_audit:
+                state.update(
+                    {
+                        "must_findings": list(must),
+                        "parent_generation_id": state["generation_id"],
+                        "patch_round": 1,
+                    }
+                )
+                self._reset_active_retry(state, "patch-writer")
+                self._prepare_lean_writer_action(
+                    slug,
+                    state,
+                    request=request,
+                    chapter=chapter,
+                    sequence_id=sequence_id,
+                    must_findings=must,
+                    parent_generation_id=str(state["generation_id"]),
+                    reuse_preferred=True,
+                )
+                return WorkflowResult(
+                    user_state="running",
+                    message="发现问题，正在自动修订。",
+                    sequence_id=sequence_id,
+                )
             writer_session_id = str(
                 (state.get("writer_session") or {}).get("session_id")
                 or ""

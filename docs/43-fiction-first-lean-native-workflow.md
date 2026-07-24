@@ -1,6 +1,6 @@
 # 43. Fiction-First Lean Native Workflow
 
-Date: 2026-07-23
+Date: 2026-07-24
 
 ## Problem
 
@@ -25,14 +25,17 @@ This is one state machine with two assurance levels, not a parallel workflow.
 The host performs only four duties:
 
 1. Create or reuse the independent session requested by `next-action`.
-2. Give the role only the action's sealed Capsule.
+2. Give the role only the action's sealed Capsule or review input.
 3. Wait for the host's official terminal state.
-4. Run `complete-role <slug> --session-id <real-session-id>`.
+4. Run `complete-role <slug>`.
 
-Planning and review roles write their small JSON payload to the external
-`result_file` named by the action. Writer writes only `draft/正文.md`.
-The Lead does not construct Generation, Runtime, Guardian, hash, token,
-request-count, state, or Git fields.
+The first Lean Writer action is `stage=draft`: Writer writes only
+`draft/正文.md`. Python creates the minimum continuity and scene materials in
+its control plane, so Writer may think through planning without returning a
+separate planning result. Blind Reader and Chapter Editor write their small
+JSON payload to the external `result_file` named by their actions. The Lead
+does not construct Generation, Runtime, Guardian, hash, token, request-count,
+state, Git fields, or a session-ID envelope.
 
 ### Python-owned records
 
@@ -69,13 +72,17 @@ automatically because they may contain user edits.
 
 ## Literary workflow
 
-The three creative roles are unchanged:
+The daily production loop is deliberately small:
 
-`Writer -> Blind Reader -> Chapter Editor -> optional Patch Writer -> full re-review`
+`Lead dispatches Writer -> Writer drafts -> Blind Reader + Chapter Editor review -> MUST returns to Writer patch -> both reviewers re-review -> ready`
 
-Writer planning remains available in the Writer's own session because research
-and story architecture can materially improve prose. It is a supporting
-artifact, not a fourth role and not a reason to reject a completed chapter.
+Writer planning remains available inside the Writer's writing process because
+research and story architecture can materially improve prose. It is a
+supporting activity, not a fourth role, not a separate action, and not a
+reason to reject a completed chapter. When reviews produce MUST findings, the
+control plane issues Writer `stage=patch` directly and prefers reusing the
+current host Writer session; a new isolated Writer session is only the
+fallback when reuse is unavailable.
 
 ## Compatibility
 
@@ -83,6 +90,7 @@ artifact, not a fourth role and not a reason to reject a completed chapter.
   envelope for existing integrations.
 - CLI `start` defaults to Lean; add global `--strict-audit` before the
   subcommand to request the old assurance level.
-- Legacy full JSON completion remains accepted through
-  `complete-role --from-file`.
+- Review result files and legacy full JSON completion remain accepted through
+  `complete-role --from-file`; Lean itself does not require it for Writer
+  completion.
 - No existing book, sample, framework, or user data is deleted.

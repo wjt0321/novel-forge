@@ -1557,11 +1557,24 @@ def test_missing_command_backend_starts_native_relay(
         ).read_text(encoding="utf-8")
     )
     assert action["role"] == "writer"
-    assert action["stage"] == "planning"
+    assert action["stage"] == "draft"
     assert action["assurance_mode"] == "lean_native"
     assert "completion_template" not in action
-    assert action["result_file"].endswith(".json")
-    assert "真实 session ID" in action["delivery"]
+    assert "result_file" not in action
+    assert action["capsule"]["output"] == "draft/正文.md"
+    assert "无需填写技术表单" in action["delivery"]
+
+    capsule = Path(action["capsule"]["path"])
+    (capsule / "draft/正文.md").write_text(
+        _prose("native completion without a host session id"),
+        encoding="utf-8",
+    )
+    code = workflow_module.main(
+        ["--root", str(tmp_path), "complete-role", "demo"]
+    )
+
+    assert code == 0
+    assert capsys.readouterr().out.strip() == "正在自动审稿。"
 
 
 def test_command_workflow_help_marks_native_relay_as_default(

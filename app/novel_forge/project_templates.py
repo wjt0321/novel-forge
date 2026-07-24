@@ -148,13 +148,14 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 - 正文只写入 `books/{slug}/chapters/eXX/ch-XX/正文.md`；不建 `正文-v2.md`。
 - 创作任务禁止先探索仓库实现。首个写操作必须是
   `python tools/novel-workflow.py ... start`，随后只执行
-  `next-action → 宿主官方终态 → complete-role --session-id <真实ID>`。
+  `next-action → 宿主官方终态 → complete-role`。
 
 ## 角色边界
 - Python 状态机决定下一步并自动计算哈希、stale、证据绑定、状态和 Git。
-- 宿主只负责创建独立 Session、等待官方终态、让角色写动作指定的外置产物，
-  并只回传真实 session ID。
-- Writer 只写 Capsule 内 `draft/正文.md`；规划和审稿只写动作的 `result_file`。
+- 宿主只负责创建或复用独立 Session、等待官方终态、让角色写动作指定的外置产物；
+  Lead 无需填写技术表单或拼装宿主 session ID。
+- 首个 Lean Writer 动作直接写 Capsule 内 `draft/正文.md`；Python 在后台准备最小
+  规划材料。两个审稿角色只写动作的 `result_file`。
 - Blind Reader 只读当前正文；Chapter Editor 再读场景包、必要 Canon 和 Blind 结果。
 - Lead 不写正文、不审稿、不填 Runtime、Guardian、Generation、token、请求数或 Git。
 - 不得创建或注册宿主专用 Agent 类型，不得写项目或用户级 `.claude/agents`。
@@ -165,12 +166,13 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   `--strict-audit` 时才启用完整技术信封与全仓快照。
 
 ## 闭环
-1. Writer 新 Session 完成必要规划和正式正文；规划可做最多 5 次题材、事实边界或
-   重名检索，不得探索仓库实现。正式章至少 5000 CJK。
+1. Python 直接签发 Writer 的正文动作；Writer 可在写作过程中做必要规划或最多 5 次
+   题材、事实边界、重名检索，但不回传规划表。正式章至少 5000 CJK。
 2. Python 导入正文、跑机器门并自动建立 Generation、Guardian、Runtime 和 draft Git。
 3. 新 Blind Reader Session 只读正文；通过后才创建新 Chapter Editor Session。
 4. 两审通过后 Python 自动推进 ready 并建立 ready Git。
-5. 有 MUST 时创建新的 Patch Writer，只集中修一次 MUST，然后全文重新双审。
+5. 有 MUST 时直接签发 Writer 的 patch 动作，优先复用当前宿主 Writer 会话，只集中修一次 MUST，
+   然后全文重新双审。
 6. 第二版仍有 MUST 时停止自动回炉并让用户选择，不无限循环。
 7. 有效正文已产生后，技术附属记录失败必须优先原地补记；禁止无理由重写正文。
 
@@ -226,9 +228,9 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 - `.snapshots/` — 临时快照
 
 ## 默认工作流
-Writer 规划与正文 → Python 自动导入和记账 → blind-reader → chapter-editor →
-至多一次集中 patch → 全文双审 → ready。角色只交付正文或审稿结论，哈希、状态、
-stale、Guardian、Runtime 和 Git 由 Python 自动处理。
+Writer 正文 → Python 自动导入和记账 → blind-reader → chapter-editor →
+有 MUST 则 Writer patch → 全文双审 → ready。规划只在 Writer 写作过程中进行，不单独
+交付或卡住正文。哈希、状态、stale、Guardian、Runtime 和 Git 由 Python 自动处理。
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
@@ -965,7 +967,7 @@ model: inherit
    拼接或回报宿主绝对路径。
 3. 只完成一章；正文达到 `instructions.md` 的完整章节目标后停止。
 4. 不读取完整 Skill、验证器、其他章节、旧会话、旧审稿或 `books/` 控制面。
-5. 有 MUST 时仍是新的 Patch Writer 会话，只处理合并后的 MUST，不顺手处理 MAY。
+5. 有 MUST 时优先复用当前 Writer 宿主会话执行 Patch，只处理合并后的 MUST，不顺手处理 MAY。
 6. 无法遵守 capsule-only 边界时返回失败，不得降级为主会话直写。
 """
 
@@ -1469,9 +1471,9 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
 - Python 状态机决定下一步；宿主只负责创建、等待和回传。创作角色对项目仓库零写入，
   ACP 只用于事后取证，不参与生产控制。
-- Lead 必须从动作的 `completion_template` 填写真实终态；格式错误只补交同一终态，
-  不得重跑角色。Writer 只接收 Writer Capsule，审稿角色只接收
-  `review_capsule.path`，Lead 不搬运正文。
+- 默认 Lean 不携带 `completion_template`：Lead 等官方终态后执行 `complete-role`，
+  无需填写技术表单或拼装宿主 session ID。Writer 只接收 Writer Capsule，审稿角色只接收
+  `review_capsule.path`，Lead 不搬运正文。严格审计才使用完整终态信封。
 - 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
   `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
 - `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
@@ -1497,9 +1499,10 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
   / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   也不得把探索稿称为完成。
-- Writer 规划阶段可做最多 5 次题材、事实边界和重名检索；不得借此阅读工作流源码。
-- 默认 `formal_native` 使用外置 Capsule、零项目写入、全仓快照和 Guardian；
-  宿主有真实 OS 沙箱时透明升级为 `formal_sandboxed`，不询问用户 A/B。
+- Writer 可在写作过程中做最多 5 次题材、事实边界和重名检索；不单独交付规划表，
+  不得借此阅读工作流源码。
+- 默认 `lean_native` 使用外置 Capsule、当前书写入检查和 Python 自动记账；
+  `--strict-audit` 才启用完整技术信封与全仓快照。
 
 ## 默认闭环
 1. 启动时读取 `evaluation/harness-contract.json` 与

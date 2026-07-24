@@ -1129,6 +1129,135 @@ class NovelWorkflowOrchestrator:
         return f"{contract}\n\n{cleaned}".strip()
 
     @classmethod
+    def _prose_first_control_planning(
+        cls,
+        book_dir: Path,
+        chapter: int,
+        request: WorkflowRequest,
+    ) -> PlanningOutcome:
+        """Build minimal control materials without asking Writer to fill forms."""
+        handoff = ""
+        if chapter > 1:
+            previous = book_project.find_chapter_file(book_dir, chapter - 1)
+            previous_text = previous.read_text(encoding="utf-8-sig")
+            previous_quote = cls._quote(
+                previous_text[max(0, int(len(previous_text) * 0.8)) :]
+            )
+            previous_sha256 = hashlib.sha256(previous.read_bytes()).hexdigest()
+            handoff = (
+                "## 0b. 章际交接\n"
+                f"- 上一章正文路径：{previous.relative_to(book_dir).as_posix()}\n"
+                f"- 上一章正文 SHA-256：{previous_sha256}\n"
+                f"- 上一章结尾原文：{previous_quote}\n"
+                "- 本章开头原文：deferred_until_drafted\n"
+                "- 上一章结束时间：上一章结尾时刻\n"
+                "- 本章开始时间：紧接上一章之后\n"
+                "- 上一章结束地点：上一章结尾场景\n"
+                "- 本章开始地点：承接上一章场景或其直接后果\n"
+                "- 上一章结束动作：见上一章结尾原文\n"
+                "- 本章开始动作：从该动作造成的压力继续\n"
+                "- 转场类型：same_day_continuous\n"
+                "- 上一章末明确决定：延续上一章已经发生的选择\n"
+                "- 本章是否推翻该决定：否\n"
+                "- 若推翻，触发事件原文：无需：未推翻上一章决定\n\n"
+            )
+        scene = (
+            f"# Scene Package - 第{chapter:02d}章\n\n"
+            "## 0. 边界\n"
+            f"- 开始动作 / 停止动作：从{request.conflict}进入现场；"
+            f"在{request.ending_hook}出现后停止。\n"
+            "- 承接压力 / 本章不解决：只完成本章冲突与钩子，"
+            "不替作者预先解释后续答案。\n\n"
+            f"{handoff}"
+            "## 1. 场景压力\n"
+            f"- 视角角色要什么：{request.protagonist}必须面对本章冲突。\n"
+            f"- 对手/世界独立要什么：世界与其他人物按自身目标阻止"
+            f"{request.protagonist}轻易达成目的。\n"
+            f"- 选择与即时成本：{request.conflict}\n"
+            f"- 章末未解除压力：{request.ending_hook}\n\n"
+            "## 1c. 决策问题\n"
+            "- 不能同时得到的两样东西：解决眼前冲突 / 不付出私人代价\n"
+            "- 角色拒绝承认什么：拖延本身也会造成后果\n"
+            "- 角色误读了谁或什么：对手或世界施压的真实方向\n"
+            "- 哪句话不能说出口：会暴露人物软肋或关系债务的话\n"
+            "- 最终接受的具体代价：为主动选择承担立刻可见的损失\n\n"
+            "## 1d. 认知与可证伪假设\n"
+            "| 观察 | 当前假设 | 替代解释 | 置信度 | 可推翻证据 | 状态 |\n"
+            "|---|---|---|---|---|---|\n"
+            "| 压力正在升级 | 主角必须立即行动 | 对手在诱导主角误判 | 中 | "
+            "现场出现与当前判断矛盾的行动结果 | 未决 |\n\n"
+            "## 1e. 规划反证与常识检查\n"
+            "- 时间/日历算术：事件按正文现场的连续时间推进。\n"
+            "- 物理动作机制：关键变化必须由人物、物件或环境中的实际动作造成。\n"
+            "- 人物知识来源：人物只能依据亲历、已知事实和现场线索判断。\n"
+            "- 不可逆性反证：若选择可无代价撤销，正文必须增加真实后果。\n"
+            f"- 场景停止点：{request.ending_hook}\n\n"
+            "## 2. 在场者状态\n"
+            "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
+            "|---|---|---|---|\n"
+            f"| {request.protagonist} | 处理本章核心冲突 | 不掌握全部真相 | "
+            "必须作出带代价的选择 |\n"
+            "| 对手或世界压力 | 推进自身目标 | 不向主角完整解释 | "
+            "迫使局面改变 |\n\n"
+            "## 3. Beat 因果链\n"
+            "| # | 触发 | 行动/决定 | 阻力/反应 | 结果与下一步 | 语域 |\n"
+            "|---|---|---|---|---|---|\n"
+            f"| 1 | {request.conflict} | 主角尝试处理眼前问题 | "
+            "对手或环境拒绝配合 | 原方案失效，必须承担选择 | 贴身 |\n"
+            f"| 2 | 原方案失效 | 主角作出不可轻易撤销的行动 | "
+            f"行动产生即时后果 | {request.ending_hook} | 贴身 |\n\n"
+            "## 3c. 因果归属账本\n"
+            "| 动作/条件 | 提出/执行者 | 知情者 | 后果承担者 |\n"
+            "|---|---|---|---|\n"
+            f"| 面对并处理本章冲突 | {request.protagonist} | "
+            f"{request.protagonist}与在场者 | {request.protagonist}及关系人 |\n\n"
+            "## 4. 信息账本\n"
+            f"- 本章唯一新信息 / 来源 / 导致的选择：{request.ending_hook}\n\n"
+            "## 5. 信息预算\n"
+            "- 锚定物象：由 Writer 从当前场景的身体、物件和位置中选择。\n"
+            "- 关键对白意图：对白必须改变信息、关系或行动方向；无对白亦可。\n"
+            "- 新规则/伏笔/术语：只保留会改变当前选择的一项以内。\n"
+            "- 延后信息：钩子背后的完整答案留到后续章节。\n\n"
+            "## 5b. 专业判断审计\n"
+            "- 无需：控制面不预设专业结论，正文如使用专业行动由 Editor 核对。\n\n"
+            "## 7. 场景余波\n"
+            f"- 身体 / 物件 / 关系 / 认知误信 / 未偿承诺：{request.ending_hook}\n"
+        )
+        return PlanningOutcome(
+            files={
+                "memory/worldbuilding.md": (
+                    "# 世界设定\n\n"
+                    f"## 物理规则\n- {request.world}\n\n"
+                    "## 社会规则\n"
+                    f"- 故事采用{request.genre}的现实后果；人物与环境拥有独立意志。\n\n"
+                    "## 禁忌\n"
+                    f"- 不得绕过用户给定的核心冲突：{request.conflict}\n"
+                ),
+                "planning/research-boundaries.md": (
+                    "# 研究边界\n\n"
+                    "- 无需：默认不把未经验证的外部事实作为唯一关键情节支点；"
+                    "需要专业事实时由正文审稿指出具体风险。\n"
+                ),
+                "planning/story-engine.md": (
+                    "# 故事发动机\n\n"
+                    f"## 核心秘密\n- {request.ending_hook}\n\n"
+                    f"## 欲望\n- {request.protagonist}必须处理：{request.conflict}\n\n"
+                    "## 对抗中的独立意志\n"
+                    "- 对手、关系人和世界压力拥有自身目标，不等待主角完成解释。\n\n"
+                    "## 主角的错误模型\n"
+                    "- 主角对冲突的理解不完整，现场后果可以推翻其判断。\n\n"
+                    "## 替代行动与不兼容欲望\n"
+                    "- 逃避代价会放大冲突，立即行动又会失去另一项重要事物。\n\n"
+                    f"## 不可逆选择\n- {request.conflict}\n\n"
+                    "## 即时代价\n- 主角的行动必须造成身体、物件或关系上的即时变化。\n\n"
+                    f"## 未解承诺\n- {request.ending_hook}\n\n"
+                    "## 主题压力\n- 选择的意义由人物承担的具体后果呈现，不由旁白总结。\n"
+                ),
+                f"planning/scene-package-ch{chapter:02d}.md": scene,
+            }
+        )
+
+    @classmethod
     def _write_writer_planning(
         cls,
         book_dir: Path,
@@ -2673,7 +2802,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(action, ensure_ascii=False, sort_keys=True))
             return 0
         if args.operation == "complete-role":
-            if args.session_id:
+            if not args.strict_audit:
                 result = relay.complete_minimal(
                     args.slug,
                     session_id=args.session_id,
@@ -2686,8 +2815,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if args.from_file is None:
                     raise WorkflowError(
-                        "complete-role 必须提供 --session-id；"
-                        "严格审计兼容入口需提供 --from-file。"
+                        "严格审计 complete-role 必须提供 --from-file。"
                     )
                 completion = json.loads(
                     args.from_file.read_text(encoding="utf-8")

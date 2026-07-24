@@ -115,7 +115,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "工作流版本" in claude_md
     assert "v5.3" in claude_md
     assert "小说正文是唯一主产品" in claude_md
-    assert "只回传真实 session ID" in claude_md
+    assert "无需填写技术表单" in claude_md
     assert "result_file" in claude_md
     assert "draft/正文.md" in claude_md
     assert "ready" in claude_md
@@ -289,7 +289,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
 
     assert "本章未开始" in claude_md
     assert "创作任务禁止先探索仓库实现" in claude_md
-    assert "只回传真实 session ID" in claude_md
+    assert "无需填写技术表单" in claude_md
     assert "不得创建或注册宿主专用 Agent 类型" in claude_md
     assert "Python 导入正文、跑机器门" in claude_md
     assert "第二版仍有 MUST" in claude_md
@@ -499,7 +499,7 @@ def test_root_claude_routes_automatic_writing_to_the_generic_skill():
     assert "必须使用宿主官方 wait / join 等到角色终态" in text
     assert "创建成功、已接单、进度消息或文件暂时稳定都不算完成" in text
     assert "Python 状态机决定下一步" in text
-    assert "只回传真实 session ID" in text
+    assert "技术表单" in text
     assert "创作角色对项目仓库零写入" in text
     assert "ACP 只用于事后取证" in text
     assert "不得创建或注册宿主专用 Agent 类型" in text
@@ -519,7 +519,7 @@ def test_skill_documents_v53_fiction_first_native_workflow():
     assert "complete-role <slug>" in text
     assert "`NOVEL_FORGE_HARNESS_COMMAND` 只是可选 headless" in text
     assert "Python 创建项目骨架" in text
-    assert "只回传真实 session ID" in text
+    assert "技术表单" in text
     assert "不得创建、注册、修改或安装宿主专用 Agent 类型" in text
     assert ".claude/agents" in text
     assert "ACP 只用于事后取证" in text

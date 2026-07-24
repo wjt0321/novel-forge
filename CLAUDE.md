@@ -13,11 +13,11 @@
   Task Agent / Session 只负责上下文隔离、角色执行、等待和回传。
 - 小说正文是唯一主产品；规划、审稿、Generation、Runtime、Guardian、状态和 Git
   都是服务正文的附属记录，不得因为遥测未知或技术字段缺失要求重写有效正文。
-- Python 状态机决定下一步并自动计算哈希、stale、证据绑定和 Git；宿主只负责创建
-  独立会话、等待官方终态、让角色写动作指定的外置产物，并只回传真实 session ID。
-- 默认完成命令为 `complete-role <slug> --session-id <真实ID>`。规划和审稿角色把
-  简短 JSON 写入动作给出的 `result_file`，Writer 只写 Capsule 内正文；Lead 不装配
-  Generation、Runtime、Guardian、token、请求数、哈希或 Git 字段。
+- Python 状态机决定下一步并自动计算哈希、stale、证据绑定和 Git；宿主只负责创建或
+  复用独立会话、等待官方终态，并让角色写动作指定的外置产物。
+- 默认完成命令为 `complete-role <slug>`。日常 Lean 的首个 Writer 动作直接写
+  Capsule 内正文；两个审稿角色把简短 JSON 写入动作给出的 `result_file`。Lead 无需
+  填写技术表单、拼装会话 ID、Generation、Runtime、Guardian、token、请求数、哈希或 Git 字段。
 - 创作角色对项目仓库零写入：Writer 只写仓库外 capsule 的 `draft/正文.md`，
   规划和审稿只返回结构化结果。额外项目产物会被清理并换新会话。
 - ACP 只用于事后取证和根因调查，不创建生产会话，不参与 Guardian、ready 或 Git。
@@ -39,8 +39,8 @@
   / SessionBackend；headless 缺失时不得自行设置命令桥，也不得向用户提供部署或配置 Harness 的选项。
 - `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
   不得把探索稿称为完成，也不得用单会话模拟三个角色。
-- Writer 规划阶段可做最多 5 次题材常识、事实边界与书名/人名重名检索；不得借此
-  阅读工作流源码。正文与两个审稿角色不得做开放式仓库探索。
+- Writer 可在写作过程中做最多 5 次题材常识、事实边界与书名/人名重名检索；不另开
+  规划回合、不回传规划表，也不得借此阅读工作流源码。正文与两个审稿角色不得做开放式仓库探索。
 - 默认 `lean_native` 由外置 Capsule、当前书作用域写入检查和 Python 自动记账构成。
   角色不填 Runtime、哈希、token、请求数或 Git；未知遥测保持 null。只有明确传入
   `--strict-audit` 才启用完整技术完成信封和全仓快照。
