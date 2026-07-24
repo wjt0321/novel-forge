@@ -76,7 +76,10 @@ The daily production loop is deliberately small:
 
 `Lead dispatches Writer -> Writer drafts -> Blind Reader + Chapter Editor review -> MUST returns to Writer patch -> both reviewers re-review -> ready`
 
-Writer planning remains available inside the Writer's writing process because
+Before import, Lean checks blocking surface rules against the capsule draft. A
+failure returns the same capsule to Writer as `stage=patch`, so it creates no
+Generation, Git checkpoint, or technical retry. Writer planning remains available
+inside the Writer's writing process because
 research and story architecture can materially improve prose. It is a
 supporting activity, not a fourth role, not a separate action, and not a
 reason to reject a completed chapter. When reviews produce MUST findings, the

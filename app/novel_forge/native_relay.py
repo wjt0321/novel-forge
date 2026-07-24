@@ -17,6 +17,7 @@ from .chapter_sequence import (
     claim_chapter_session,
     rotate_chapter_session,
 )
+from .lint import lint_file
 from .guardian import (
     GuardianError,
     authorize_regeneration,
@@ -1943,6 +1944,95 @@ class NativeWorkflowRelay:
             technical_retry_count=retries,
         )
 
+    @staticmethod
+    def _capsule_surface_findings(
+        prepared: dict[str, Any],
+    ) -> tuple[str, ...]:
+        capsule_dir = Path(str(prepared.get("capsule_dir") or ""))
+        draft_output = str(
+            prepared.get("draft_output") or "draft/正文.md"
+        )
+        draft_path = capsule_dir / draft_output
+        return tuple(
+            (
+                f"{finding.rule_code}（第 {finding.line_number} 行）："
+                f"{finding.message}；原文：{finding.evidence}"
+            )
+            for finding in lint_file(draft_path)
+            if finding.severity == "blocking"
+        )
+
+    def _request_surface_patch(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        findings: tuple[str, ...],
+    ) -> WorkflowResult:
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        request = self._request_from_state(state)
+        round_number = int(state.get("surface_patch_round") or 0)
+        if round_number >= 1:
+            state.update(
+                {
+                    "phase": "decision_required",
+                    "decision_kind": "surface_revision_required",
+                    "surface_findings": list(findings),
+                }
+            )
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return self.orchestrator._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="表面规则修订后仍有问题，请选择下一步。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="surface_revision_required",
+                must_findings=findings,
+                resume_context={
+                    "capsule_path": str(
+                        (state.get("capsule") or {}).get("capsule_dir")
+                        or ""
+                    ),
+                },
+            )
+        action = self.next_action(slug)
+        action.update(
+            {
+                "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+                "stage": "patch",
+                "session": {
+                    "mode": "reuse_preferred",
+                    "must_be_independent": False,
+                },
+                "must_findings": list(findings),
+                "surface_patch": True,
+            }
+        )
+        action.pop("completion_repair", None)
+        state["surface_patch_round"] = round_number + 1
+        state["surface_findings"] = list(findings)
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="patching",
+            retries=int(state.get("technical_retry_count") or 0),
+            must_findings=findings,
+        )
+        self._write_action(slug, state, action)
+        return WorkflowResult(
+            user_state="running",
+            message="发现问题，正在自动修订。",
+            sequence_id=sequence_id,
+            technical_retry_count=int(
+                state.get("technical_retry_count") or 0
+            ),
+        )
+
     def _complete_writer(
         self,
         slug: str,
@@ -1972,6 +2062,15 @@ class NativeWorkflowRelay:
         prepared = state.get("capsule")
         if not isinstance(prepared, dict):
             raise WorkflowError("Writer 动作缺少 Capsule 绑定。")
+        if not self.strict_audit:
+            surface_findings = self._capsule_surface_findings(prepared)
+            if surface_findings:
+                return self._request_surface_patch(
+                    slug,
+                    state,
+                    surface_findings,
+                )
+        state.pop("surface_findings", None)
         capsule_id = str(prepared.get("capsule_id") or "")
         runtime_path = (
             self.orchestrator.capsule_root

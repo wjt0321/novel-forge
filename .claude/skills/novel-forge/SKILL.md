@@ -105,7 +105,8 @@ Generation、Guardian、Git 或审稿信息。
 ## 自动闭环
 
 1. Python 初始化项目，并直接签发 Writer 的 `draft` 动作。
-2. Writer 在 Capsule 内写本章正文；Python 导入正文并自动建立附属技术记录。
+2. Writer 在 Capsule 内写本章正文；Python 导入前先检查 blocking 表面规则。若有问题，
+   直接复用同一 Capsule 发回 Writer 修订；通过后才导入正文并建立附属技术记录。
 3. Lead 签发 Blind Reader 审稿；Blind Reader 只读当前正文并给出结论。
 4. Blind 记录成功后，Lead 签发 Chapter Editor；Chapter Editor 结合必要场景材料复审。
 5. 两审通过时，Python 推进 `ready` 并建立本地 Git 恢复点。

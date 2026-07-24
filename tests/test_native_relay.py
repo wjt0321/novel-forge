@@ -1398,6 +1398,52 @@ def test_lean_writer_completion_needs_only_the_existing_prose(
     ).read_text(encoding="utf-8") == prose
 
 
+def test_lean_surface_blockers_return_to_same_writer_before_import(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    capsule = Path(writer_action["capsule"]["path"])
+    blocked = _prose("表面门修订").replace(
+        "林舟握住门把",
+        "林舟——握住门把",
+        1,
+    )
+    (capsule / "draft/正文.md").write_text(
+        blocked,
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+    patch_action = relay.next_action("demo")
+
+    assert result.message == "发现问题，正在自动修订。"
+    assert result.technical_retry_count == 0
+    assert patch_action["role"] == "writer"
+    assert patch_action["stage"] == "patch"
+    assert patch_action["session"]["mode"] == "reuse_preferred"
+    assert patch_action["capsule"]["path"] == str(capsule)
+    assert any("em-dash" in item for item in patch_action["must_findings"])
+    assert list((root / "books/demo/evidence/generations").glob("*.md")) == []
+
+    (capsule / "draft/正文.md").write_text(
+        _prose("表面门修订完成"),
+        encoding="utf-8",
+    )
+    completed = relay.complete_minimal("demo")
+
+    assert completed.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
+
 def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     tmp_path: Path,
 ):
