@@ -64,9 +64,6 @@ NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
 MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
-LEAN_ADVISORY_SURFACE_RULES = frozenset(
-    {"em-dash", "ellipsis", "not-is-flip"}
-)
 
 
 class NativeWorkspaceMutationError(WorkflowError):
@@ -2159,7 +2156,6 @@ class NativeWorkflowRelay:
             )
             for finding in lint_file(draft_path)
             if finding.severity == "blocking"
-            and finding.rule_code not in LEAN_ADVISORY_SURFACE_RULES
         )
 
     def _request_surface_patch(

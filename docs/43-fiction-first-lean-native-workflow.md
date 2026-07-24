@@ -81,14 +81,15 @@ The daily production loop is deliberately small:
 
 `Lead dispatches Writer -> Writer stages draft -> Blind Reader + Chapter Editor review -> MUST returns to the same staged body -> both reviewers re-review -> Python promotes -> ready`
 
-Lean treats em dashes, ellipses, and the `not X but Y` construction as style
-advice, never as a reason to rewrite prose. Only real transport blockers such
-as Markdown emphasis or workflow metadata leakage return the same capsule and
-file to Writer as `stage=patch`; this creates no Generation, Git checkpoint, or
-technical retry. If cleanup leaves blockers, Lean keeps issuing the same-file
-patch action for up to three consolidated rounds instead of dropping into a
-state with no next action. After surface checks, Python freezes the first draft
-but still does not write `chapters/`. Both reviewers read the staged body. When reviews produce
+Em dashes, ellipses, and the `not X but Y` construction remain blocking because
+high-frequency model output can saturate a chapter with them. The Writer prompt
+forbids all three up front and requires a whole-text search before submission.
+If any remain, Python returns every located occurrence in one consolidated
+`stage=patch` action against the same file; this creates no Generation, Git
+checkpoint, or technical retry. Lean allows up to three same-file cleanup
+rounds instead of dropping into a state with no next action. After surface
+checks, Python freezes the first draft but still does not write `chapters/`.
+Both reviewers read the staged body. When reviews produce
 MUST findings, the control plane issues Writer `stage=patch` against that same
 file and prefers reusing the current host Writer session. Both reviewers then
 read the complete revised body again. Only a double pass causes Python to

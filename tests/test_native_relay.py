@@ -1484,7 +1484,9 @@ def test_lean_surface_patch_can_continue_on_the_same_staged_body(
     assert relay.next_action("demo")["role"] == "blind-reader"
 
 
-def test_lean_style_lint_does_not_force_a_surface_patch(tmp_path: Path):
+def test_lean_mechanical_language_forces_one_consolidated_surface_patch(
+    tmp_path: Path,
+):
     root = tmp_path / "repo"
     relay = NativeWorkflowRelay(root, strict_audit=False)
     relay.start("demo", _request(), chapter=1)
@@ -1498,9 +1500,16 @@ def test_lean_style_lint_does_not_force_a_surface_patch(tmp_path: Path):
     staged.write_text(prose, encoding="utf-8")
 
     result = relay.complete_minimal("demo")
+    patch_action = relay.next_action("demo")
 
-    assert result.message == "正在自动审稿。"
-    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert result.message == "发现问题，正在自动修订。"
+    assert patch_action["role"] == "writer"
+    assert patch_action["stage"] == "patch"
+    assert patch_action["capsule"]["path"] == writer_action["capsule"]["path"]
+    findings = "\n".join(patch_action["must_findings"])
+    assert "em-dash" in findings
+    assert "ellipsis" in findings
+    assert "not-is-flip" in findings
     assert staged.read_text(encoding="utf-8") == prose
 
 

@@ -36,6 +36,11 @@ def test_formal_writer_prompt_is_short_complete_and_vendor_neutral():
     assert "解释性修补" in prompt.text
     assert "整齐问答记录" in prompt.text
     assert "机械插入动作" in prompt.text
+    assert "全文禁用破折号" in prompt.text
+    assert "省略号" in prompt.text
+    assert "不是 X，而是 Y" in prompt.text
+    assert "提交前全文检索" in prompt.text
+    assert "直接陈述" in prompt.text
     assert len(prompt.text) <= MAX_FORMAL_WRITER_PROMPT_CHARS
 
     lowered = prompt.text.lower()
