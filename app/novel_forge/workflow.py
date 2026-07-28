@@ -2900,8 +2900,8 @@ def main(argv: list[str] | None = None) -> int:
     except BackendUnavailableError:
         print("自动写作环境尚未就绪，本章没有开始。")
         return 2
-    except (NovelForgeError, OSError, ValueError):
-        print("自动流程暂时无法继续，请稍后重试。")
+    except (NovelForgeError, OSError, ValueError) as exc:
+        print(f"自动流程无法继续：{type(exc).__name__}：{exc}")
         return 2
 
 

@@ -434,6 +434,111 @@ def test_native_relay_completes_independent_double_review_and_ready(
     assert book_git_status(root, "demo")["dirty"] is False
 
 
+def test_native_relay_retries_review_after_writer_promotion(
+    tmp_path: Path,
+    monkeypatch,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    backend = ScriptedBackend([], [_pass_reviews(), _pass_reviews()])
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("重试收尾"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    blind_action = relay.next_action("demo")
+    blind_session = SessionIdentity(
+        session_id="native-blind-01",
+        session_instance_id="blind-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(asdict(blind), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    editor_action = relay.next_action("demo")
+    editor_session = SessionIdentity(
+        session_id="native-editor-01",
+        session_instance_id="editor-instance-01",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    editor = backend.run_review(
+        editor_session,
+        role="chapter-editor",
+        context=_review_capsule_context(editor_action),
+        instructions=_review_capsule_instructions(editor_action),
+        reasoning_effort="medium",
+    )
+    Path(editor_action["result_file"]).write_text(
+        json.dumps(asdict(editor), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    original_record_review = relay._record_native_review
+
+    def fail_after_promotion(*args, **kwargs):
+        raise OSError("simulated review persistence failure")
+
+    monkeypatch.setattr(relay, "_record_native_review", fail_after_promotion)
+    repair = relay.complete_minimal("demo")
+    assert repair.user_state == "running"
+    assert repair.technical_retry_count == 1
+    state = relay._load_state("demo")
+    capsule_id = state["capsule"]["capsule_id"]
+    control = json.loads(
+        (
+            root
+            / "books/demo/planning/guardian-sessions"
+            / f"{capsule_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert control["status"] == "imported"
+
+    monkeypatch.setattr(relay, "_record_native_review", original_record_review)
+    retry_action = relay.next_action("demo")
+    assert retry_action["role"] == "chapter-editor"
+    retry_session = SessionIdentity(
+        session_id="native-editor-02",
+        session_instance_id="editor-instance-02",
+        provider="editor-provider",
+        model="editor-model",
+        agent_harness="native-host",
+        role="chapter-editor",
+    )
+    retry_editor = backend.run_review(
+        retry_session,
+        role="chapter-editor",
+        context=_review_capsule_context(retry_action),
+        instructions=_review_capsule_instructions(retry_action),
+        reasoning_effort="medium",
+    )
+    Path(retry_action["result_file"]).write_text(
+        json.dumps(asdict(retry_editor), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "chapter_complete"
+    assert len(
+        list((root / "books/demo/evidence/generations").glob("*.md"))
+    ) == 1
+
+
 def test_editor_missing_hard_anchor_requires_a_must_finding(
     tmp_path: Path,
 ):
@@ -1898,6 +2003,43 @@ def test_lean_review_accepts_compact_result_with_natural_newlines(
 
     assert result.message == "正在自动审稿。"
     assert relay.next_action("demo")["role"] == "chapter-editor"
+
+
+def test_lean_blind_reader_retries_when_evidence_quote_is_not_in_prose(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("盲审引文校验"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "结尾留下明确的情绪余波。",
+                "next_chapter_pull": "读者想知道门后的人是谁。",
+                "summary": "空间、动作与情绪均能重建。",
+                "evidence_quote": "这句文字不在当前正文中。",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "running"
+    assert result.technical_retry_count == 1
+    assert relay.next_action("demo")["role"] == "blind-reader"
 
 
 def test_lean_editor_pass_uses_compact_result_without_a_hard_anchor_table(

@@ -989,6 +989,16 @@ def reject_writer_capsule(
     return json.loads(receipt_path.read_text(encoding="utf-8"))
 
 
+def capsule_status(root: Path, slug: str, capsule_id: str) -> str | None:
+    """Return a capsule's recorded status without mutating its control file."""
+    try:
+        _, control = _load_control(_book_dir(root, slug), capsule_id)
+    except GuardianError:
+        return None
+    status = control.get("status")
+    return status if isinstance(status, str) else None
+
+
 def record_capsule_runtime(
     root: Path,
     slug: str,

@@ -24,6 +24,7 @@ from .lint import lint_file
 from .guardian import (
     GuardianError,
     authorize_regeneration,
+    capsule_status,
     ingest_writer_capsule,
     prepare_writer_capsule,
     record_capsule_runtime,
@@ -1522,14 +1523,21 @@ class NativeWorkflowRelay:
             and failed_phase
             in {"awaiting_blind_reader", "awaiting_chapter_editor"}
         ):
-            role = (
-                "chapter-editor"
-                if (
-                    failed_phase == "awaiting_chapter_editor"
-                    or isinstance(state.get("blind_outcome"), dict)
-                )
-                else "blind-reader"
-            )
+            role = "blind-reader"
+            blind_payload = state.get("blind_outcome")
+            if isinstance(blind_payload, dict):
+                try:
+                    self._assert_review_evidence_quote(
+                        slug,
+                        state,
+                        "blind-reader",
+                        self._stored_outcome(blind_payload),
+                    )
+                except WorkflowError:
+                    state.pop("blind_outcome", None)
+                    state.pop("blind_session", None)
+                else:
+                    role = "chapter-editor"
             bucket = role
             counts = state.get("technical_retry_counts")
             if not isinstance(counts, dict):
@@ -2202,8 +2210,23 @@ class NativeWorkflowRelay:
         *,
         failure_reason: str = "writer_result_invalid",
     ) -> WorkflowResult:
-        _, retries = self._next_retry_count(state)
         phase = str(state.get("phase") or "")
+        if phase == "awaiting_chapter_editor":
+            blind_payload = state.get("blind_outcome")
+            if isinstance(blind_payload, dict):
+                try:
+                    self._assert_review_evidence_quote(
+                        slug,
+                        state,
+                        "blind-reader",
+                        self._stored_outcome(blind_payload),
+                    )
+                except WorkflowError:
+                    state.pop("blind_outcome", None)
+                    state.pop("blind_session", None)
+                    state["phase"] = "awaiting_blind_reader"
+                    phase = "awaiting_blind_reader"
+        _, retries = self._next_retry_count(state)
         sequence_id = str(state.get("sequence_id") or "")
         request = self._request_from_state(state)
         chapter = int(state["chapter"])
@@ -2652,6 +2675,8 @@ class NativeWorkflowRelay:
             raise WorkflowError("当前章节缺少 Writer 完成记录。")
         session = SessionIdentity(**writer_payload)
         capsule_id = str(prepared.get("capsule_id") or "")
+        if capsule_status(self.root, slug, capsule_id) == "imported":
+            return session
         runtime_path = (
             self._relay_dir(slug)
             / "runtime"
@@ -2905,6 +2930,29 @@ class NativeWorkflowRelay:
             result_transport=terminal["result_transport"],
         )
 
+    def _assert_review_evidence_quote(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+        outcome: ReviewOutcome,
+    ) -> None:
+        """Require every review's evidence quote to match the reviewed prose."""
+        quote = outcome.evidence_quote.strip()
+        if not self.strict_audit:
+            prose = self._staged_body_path(state).read_text(
+                encoding="utf-8-sig"
+            )
+        else:
+            prose = book_project.find_chapter_file(
+                self.root / "books" / slug,
+                int(state["chapter"]),
+            ).read_text(encoding="utf-8-sig")
+        if not quote or quote not in prose:
+            raise WorkflowError(
+                f"{role} 没有返回当前正文中的有效审稿引文。"
+            )
+
     def _record_native_review(
         self,
         slug: str,
@@ -3113,6 +3161,12 @@ class NativeWorkflowRelay:
         ):
             raise WorkflowError("Chapter Editor 前缺少 Blind Reader 结果。")
         blind = self._stored_outcome(blind_payload)
+        self._assert_review_evidence_quote(
+            slug,
+            state,
+            "blind-reader",
+            blind,
+        )
         must = self._combined_must_findings(blind, outcome)
         if must:
             if int(state.get("patch_round") or 0) >= 1:
@@ -3225,6 +3279,7 @@ class NativeWorkflowRelay:
             terminal=terminal,
             strict_audit=self.strict_audit,
         )
+        self._assert_review_evidence_quote(slug, state, role, outcome)
         if not self.strict_audit:
             return self._complete_staged_review(
                 slug,
