@@ -120,6 +120,27 @@ generic `pass` or `needs_revision`, one complete MUST list, a short summary,
 and one prose quote. Python accepts `pass` as the internal editor-ready verdict
 and derives supporting record fields itself. Analysis matrices and hard-anchor
 coverage tables remain strict-audit evidence, not daily creative work.
+
+Blind Reader's canonical JSON keys are `must`, `evidence_quote`, and
+`emotional_residue`. `must_issues`, `quote`, and `emotional_aftertaste` are
+accepted only as compatibility aliases and are normalized immediately, so the
+state cache and the rendered review cannot disagree on field names. Its two
+ratings are canonical strings: `human_likeness` is `convincing`, `uncertain`,
+or `synthetic`; `reader_desire` is `continue`, `conditional`, or `stop`.
+Natural 0--10 values are deterministically mapped to those enums (7--10,
+4--6, and 0--3 respectively) before they enter state. Invalid values report
+the actual value and the accepted values rather than silently becoming an
+unusable string.
+
+Python records the accepted Blind Reader result together with its result-file
+digest and capsule-bound session. A Python-managed refresh can replace that
+cached copy only when the file digest changes; a creative role may never edit
+a previous role's result while another action is active. Each accepted staged
+review also receives a provisional external session-completion receipt. The
+receipt is finalized against the canonical review only after double-pass
+promotion, preserving the rule that no formal Review History exists before
+promotion while retaining evidence if promotion is interrupted.
+
 For Lean result files, Python makes one deterministic repair attempt for the
 common case where a prose quotation was left unescaped inside JSON. Legacy
 plain-text hard-anchor coverage is ignored because it is not a Lean gate.
@@ -129,10 +150,12 @@ review session or a prose rewrite.
 Technical retry budgets are scoped to the current role execution. A new
 review cycle after Writer patch starts Blind Reader and Chapter Editor at zero
 technical retries instead of inheriting transport failures from the previous
-body. If review delivery exhausts its automatic retries, an explicit user
-retry validates the staged body SHA-256 and resumes the failed reviewer even
-though Generation has not been created yet. Valid staged prose is never
-regenerated merely because evidence promotion intentionally happens later.
+body; the already addressed `must_findings` are cleared at that transition.
+If review delivery exhausts its automatic retries, an explicit user retry
+validates the staged body SHA-256 (falling back to already-promoted prose when
+necessary) and resumes the failed reviewer even though Generation has not
+been created yet. Valid staged prose is never regenerated merely because
+evidence promotion intentionally happens later.
 
 Writer planning remains available inside the Writer's writing process because
 research and story architecture can materially improve prose. It is a

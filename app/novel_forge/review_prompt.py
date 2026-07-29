@@ -87,8 +87,10 @@ def render_review_instructions(
 纯对白，不按固定句数判错。
 
 只有正文同时具有可重建现场、人物特异性、关系摩擦、主动选择及其余波，并让你自愿继续
-阅读，才能给 convincing + continue + pass。MUST 只用于不改就会破坏人物选择、逻辑、
-可读性或核心钩子的问题，不为显得严格而制造。{delivery}
+阅读，才能给 convincing + continue + pass。`human_likeness` 必须是 JSON 字符串
+`convincing`、`uncertain` 或 `synthetic` 之一；`reader_desire` 必须是 JSON 字符串
+`continue`、`conditional` 或 `stop` 之一，不能填写 0-10 数字。MUST 只用于不改就会破坏
+人物选择、逻辑、可读性或核心钩子的问题，不为显得严格而制造。{delivery}
 """,
         )
     if role == "chapter-editor":

@@ -1,6 +1,6 @@
 # 44. 现行工作流逻辑审计
 
-日期：2026-07-24
+日期：2026-07-29
 
 ## 审计目标
 
@@ -35,8 +35,8 @@ Blind Reader 只提交：
 
 - `verdict`
 - 一次列全的 `must`
-- `human_likeness`
-- `reader_desire`
+- `human_likeness`（仅允许 `convincing` / `uncertain` / `synthetic`；0-10 分数由 Python 立即归一化）
+- `reader_desire`（仅允许 `continue` / `conditional` / `stop`；0-10 分数由 Python 立即归一化）
 - `emotional_residue`
 - `next_chapter_pull`
 - `summary`
@@ -52,9 +52,10 @@ Session、Runtime、Guardian、哈希和 Git 均不是 Lean 创作角色的表�
 |---|---|---|
 | Writer 结果运输缺失但正文有效 | Python 补记或复用同一正文 | 重写正文 |
 | Blind Reader 运输失败 | 只换 Blind Reader | 重跑 Writer |
-| Chapter Editor 运输失败 | 保留 Blind 结果，只换 Chapter Editor | 重跑 Blind 或 Writer |
-| 审稿自动重试耗尽后用户继续 | 校验暂存正文哈希，恢复失败审稿角色 | 因尚无 Generation 而重写 |
-| Writer 完成文学修订 | 新一轮双审的角色重试预算归零 | 继承旧正文的失败次数 |
+| Chapter Editor 运输失败 | 保留已绑定的 Blind 结果，只换 Chapter Editor | 重跑 Blind 或 Writer |
+| Python 发现 Blind result_file 摘要已变化 | 重新解析并替换同 capsule/session 的缓存副本 | 使用过时 `state.json` 继续晋升 |
+| 审稿自动重试耗尽后用户继续 | 校验暂存正文哈希（必要时回退正式正文）并恢复失败审稿角色 | 因尚无 Generation 而重写 |
+| Writer 完成文学修订 | 清除已解决 MUST；新一轮双审的角色重试预算归零 | 继承旧正文的 finding 或失败次数 |
 | Python 合法刷新 review capsule | 接受新 descriptor，并逐文件验哈希 | 归责为角色越权并循环重建 |
 | 角色修改 review capsule | manifest 或文件哈希失败，退役该审稿角色 | 接受被篡改输入 |
 | 角色新增未声明文件 | 清理并退役当前角色 | 把额外文件视为 Python 管理路径 |
@@ -173,3 +174,26 @@ DeepSeek v4 Flash 在第一次可恢复故障后没有停留在公开的
 Novel Forge Skill 从约 6,269 字符缩到约 2,725 字符；两份扫描位置仍逐字节同步。角色
 提示词本身保持小于既有预算（Writer ≤1200 字符、Lean Blind Reader / Chapter Editor
 分别受 2200 字符上限），不再把哈希、Runtime、Guardian、Git、状态表作为日常角色输入。
+
+## 2026-07-29：双审收敛与审稿回执修复
+
+V2 实测表明，双审卡死的主要风险不是正文或文学判断，而是把一次已接受的审稿结果在不同
+持久化层中表示为不同值，再把控制面问题错误地交给新的审稿 Agent 重做。为此，当前规则
+增加以下可测试约束：
+
+1. **审稿字段只有一个规范层。** Lean 输入文档、结果解析和 state 使用 `must`、
+   `evidence_quote`、`emotional_residue`；旧字段仅在入口处映射，绝不以两套名称进入
+   `blind_outcome`。0--10 的自然评分也在入口归一化，7--10 对应通过档，避免 `"7"`
+   这种字符串延后到晋升门禁才失败。
+2. **缓存可溯源，不能无限陈旧。** `blind_outcome` 同时保存 result-file 摘要与路径。
+   Python 在复用它之前比较摘要；存在合法的控制面刷新时重新解析并覆盖缓存。角色不能
+   借此修改旧文件，工作区快照仍会拒绝越权写入。
+3. **MUST 只属于其正文版本。** Writer 完成同一暂存正文的 Patch 后，旧
+   `must_findings` 立即清除；新的双审只依据新正文的结论，恢复路径不会被已修复问题阻断。
+4. **审稿完成先留可审计回执，晋升后再最终绑定。** Blind Reader 与 Chapter Editor 的
+   已接受终态立即写入 provisional `session-completions`；双审通过后同一会话再以正式
+   review artifact、Generation 与正文哈希 finalization。这样技术晋升失败不会抹掉
+   “角色已经完成”的事实，也不提前创建正式 Review History。
+5. **技术重试只处理技术运输。** 规范化、缓存刷新、旧 MUST 清理和已存在 seal 的幂等
+   处理必须在 Python 内完成；只有缺 JSON、无效引文、capsule/会话绑定不一致等角色可修复
+   的交付问题才重开该角色。错误信息必须携带具体原因，而非笼统称为“审稿会话异常”。

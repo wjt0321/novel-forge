@@ -405,6 +405,14 @@ class NativeWorkflowRelay:
             prepared.get("draft_output") or "draft/正文.md"
         )
 
+    def _review_result_path(
+        self,
+        slug: str,
+        chapter: int,
+        role: str,
+    ) -> Path:
+        return self._diff_dir(slug, chapter) / f"{role}.json"
+
     def _staged_body_matches_state(self, state: dict[str, Any]) -> bool:
         if self.strict_audit or not isinstance(state.get("capsule"), dict):
             return False
@@ -412,10 +420,17 @@ class NativeWorkflowRelay:
         if not expected:
             return False
         try:
-            body = self._staged_body_path(state)
-            return (
+            candidates = [self._staged_body_path(state)]
+            candidates.append(
+                self.root
+                / "books"
+                / str(state["slug"])
+                / _chapter_target_path(int(state["chapter"]))
+            )
+            return any(
                 body.is_file()
                 and hashlib.sha256(body.read_bytes()).hexdigest() == expected
+                for body in candidates
             )
         except (OSError, KeyError, TypeError, ValueError):
             return False
@@ -1853,10 +1868,22 @@ class NativeWorkflowRelay:
                 state,
                 failure_reason=exc.reason,
             )
-        except (GuardianError, WorkflowError, OSError, ValueError):
+        except (GuardianError, WorkflowError, OSError, ValueError) as exc:
             state = self._load_state(slug)
             self._remember_failed_completion_session(state, completion)
-            return self._recover_technical_failure(slug, state)
+            return self._recover_technical_failure(
+                slug,
+                state,
+                failure_reason=f"{type(exc).__name__}: {exc}",
+            )
+
+    @staticmethod
+    def _review_retry_message(failure_reason: str) -> str:
+        """Return a compact, actionable review delivery retry message."""
+        detail = str(failure_reason or "").strip()
+        if not detail:
+            return "审稿会话异常，已自动换新会话重试。"
+        return "审稿结果未被接受，已自动换新会话重试：" + detail[:360]
 
     @staticmethod
     def _retry_bucket(state: dict[str, Any]) -> str:
@@ -1956,6 +1983,8 @@ class NativeWorkflowRelay:
             ).read_text(encoding="utf-8-sig")
         if role == "blind-reader":
             return {"prose": prose}
+        if not self.strict_audit:
+            self._refresh_blind_outcome_if_changed(slug, state)
         scene = (
             book_dir / f"planning/scene-package-ch{chapter:02d}.md"
         ).read_text(encoding="utf-8-sig")
@@ -2276,6 +2305,10 @@ class NativeWorkflowRelay:
         failure_reason: str = "writer_result_invalid",
     ) -> WorkflowResult:
         phase = str(state.get("phase") or "")
+        if phase == "awaiting_blind_reader":
+            state.pop("blind_outcome", None)
+            state.pop("blind_outcome_source", None)
+            state.pop("blind_session", None)
         if phase == "awaiting_chapter_editor":
             blind_payload = state.get("blind_outcome")
             if isinstance(blind_payload, dict):
@@ -2341,7 +2374,7 @@ class NativeWorkflowRelay:
             self._write_action(slug, state, action)
             return WorkflowResult(
                 user_state="running",
-                message="审稿会话异常，已自动换新会话重试。",
+                message=self._review_retry_message(failure_reason),
                 sequence_id=sequence_id,
                 technical_retry_count=retries,
             )
@@ -2556,6 +2589,7 @@ class NativeWorkflowRelay:
             self._freeze_initial_draft(state)
             if state.get("patch_round"):
                 self._write_staged_diff(state)
+                state.pop("must_findings", None)
             staged_body = self._staged_body_path(state)
             body_sha256 = hashlib.sha256(staged_body.read_bytes()).hexdigest()
             if not isinstance(runtime_snapshot, dict):
@@ -2582,6 +2616,7 @@ class NativeWorkflowRelay:
             )
             self._reset_active_retry(state, "blind-reader")
             state.pop("blind_outcome", None)
+            state.pop("blind_outcome_source", None)
             state.pop("blind_session", None)
             state.pop("editor_outcome", None)
             state.pop("editor_session", None)
@@ -2907,6 +2942,51 @@ class NativeWorkflowRelay:
         return tuple(findings)
 
     @staticmethod
+    def _canonical_review_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """Map older compact review keys into the one canonical Lean schema."""
+        canonical = dict(payload)
+        aliases = {
+            "must_issues": "must",
+            "quote": "evidence_quote",
+            "emotional_aftertaste": "emotional_residue",
+        }
+        for legacy, current in aliases.items():
+            if current not in canonical and legacy in canonical:
+                canonical[current] = canonical[legacy]
+        return canonical
+
+    @staticmethod
+    def _review_enum_value(
+        value: Any,
+        *,
+        field: str,
+        allowed: tuple[str, ...],
+    ) -> str:
+        """Normalize natural 0--10 review scores without preserving ambiguity."""
+        if value is None or str(value).strip() == "":
+            return "not_applicable"
+        text = str(value).strip().lower()
+        if text in allowed or text == "not_applicable":
+            return text
+        try:
+            if isinstance(value, bool):
+                raise ValueError
+            score = float(text)
+        except (TypeError, ValueError):
+            raise WorkflowError(
+                f"Blind Reader {field} 无效：当前值={value!r}；"
+                f"期望值={' / '.join(allowed)}，或 0-10 数字分数。"
+            ) from None
+        if not 0 <= score <= 10:
+            raise WorkflowError(
+                f"Blind Reader {field} 无效：当前值={value!r}；"
+                f"数字分数必须位于 0-10，或使用 {' / '.join(allowed)}。"
+            )
+        if field == "human_likeness":
+            return "convincing" if score >= 7 else "uncertain" if score >= 4 else "synthetic"
+        return "continue" if score >= 7 else "conditional" if score >= 4 else "stop"
+
+    @staticmethod
     def _review_outcome(
         payload: dict[str, Any],
         *,
@@ -2915,6 +2995,7 @@ class NativeWorkflowRelay:
         terminal: dict[str, str],
         strict_audit: bool = False,
     ) -> ReviewOutcome:
+        payload = NativeWorkflowRelay._canonical_review_payload(payload)
         findings = NativeWorkflowRelay._normalized_findings(payload)
         raw_analysis = payload.get("analysis", {})
         analysis = (
@@ -2959,12 +3040,16 @@ class NativeWorkflowRelay:
         return ReviewOutcome(
             verdict=verdict,
             findings=findings,
-            human_likeness=str(
-                payload.get("human_likeness") or "not_applicable"
-            ),
-            reader_desire=str(
-                payload.get("reader_desire") or "not_applicable"
-            ),
+            human_likeness=NativeWorkflowRelay._review_enum_value(
+                payload.get("human_likeness"),
+                field="human_likeness",
+                allowed=("convincing", "uncertain", "synthetic"),
+            ) if role == "blind-reader" else "not_applicable",
+            reader_desire=NativeWorkflowRelay._review_enum_value(
+                payload.get("reader_desire"),
+                field="reader_desire",
+                allowed=("continue", "conditional", "stop"),
+            ) if role == "blind-reader" else "not_applicable",
             emotional_residue=NativeWorkflowRelay._result_text(
                 payload.get("emotional_residue") or "not_applicable"
             ),
@@ -2995,6 +3080,65 @@ class NativeWorkflowRelay:
             result_transport=terminal["result_transport"],
         )
 
+    def _review_outcome_source(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+    ) -> dict[str, Any] | None:
+        path = self._review_result_path(slug, int(state["chapter"]), role)
+        try:
+            payload = path.read_bytes()
+            stat = path.stat()
+        except OSError:
+            return None
+        return {
+            "path": path.relative_to(self.root / "books" / slug).as_posix(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "mtime_ns": stat.st_mtime_ns,
+        }
+
+    def _refresh_blind_outcome_if_changed(
+        self,
+        slug: str,
+        state: dict[str, Any],
+    ) -> None:
+        """Use a corrected Blind Reader result file instead of a stale state copy."""
+        source = self._review_outcome_source(slug, state, "blind-reader")
+        stored_source = state.get("blind_outcome_source")
+        if (
+            source is None
+            or not isinstance(stored_source, dict)
+            or source["sha256"] == stored_source.get("sha256")
+        ):
+            return
+        session_payload = state.get("blind_session")
+        existing = state.get("blind_outcome")
+        if not isinstance(session_payload, dict) or not isinstance(existing, dict):
+            raise WorkflowError("Blind Reader 缓存缺少会话绑定，不能刷新结果。")
+        session = SessionIdentity(**session_payload)
+        existing_outcome = self._stored_outcome(existing)
+        payload = self._result_payload(
+            self._review_result_path(slug, int(state["chapter"]), "blind-reader"),
+            repair_common_quotes=True,
+        )
+        refreshed = self._review_outcome(
+            payload,
+            role="blind-reader",
+            session=session,
+            terminal={
+                "kind": str(existing_outcome.operation_kind),
+                "value": str(existing_outcome.operation_id),
+                "result_transport": str(existing_outcome.result_transport),
+            },
+            strict_audit=False,
+        )
+        self._assert_review_evidence_quote(
+            slug, state, "blind-reader", refreshed
+        )
+        state["blind_outcome"] = asdict(refreshed)
+        state["blind_outcome_source"] = source
+
     def _assert_review_evidence_quote(
         self,
         slug: str,
@@ -3017,6 +3161,47 @@ class NativeWorkflowRelay:
             raise WorkflowError(
                 f"{role} 没有返回当前正文中的有效审稿引文。"
             )
+
+    def _record_staged_review_completion(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+        session: SessionIdentity,
+        outcome: ReviewOutcome,
+    ) -> None:
+        result_path = self._review_result_path(
+            slug, int(state["chapter"]), role
+        )
+        if not result_path.is_file():
+            return
+        record_session_completion(
+            self.root,
+            slug,
+            session_id=session.session_id,
+            session_instance_id=session.session_instance_id,
+            role=role,
+            provider=session.provider,
+            model=session.model,
+            agent_harness=session.agent_harness,
+            context_scope=(
+                "prose_only"
+                if role == "blind-reader"
+                else "full_review_context"
+            ),
+            operation_kind=str(outcome.operation_kind),
+            operation_id=str(outcome.operation_id),
+            result_transport=str(outcome.result_transport),
+            chapter=int(state["chapter"]),
+            generation_id=(
+                f"staged-review.ch{int(state['chapter']):02d}."
+                f"{str(state.get('body_sha256') or '')[:16]}"
+            ),
+            content_sha256=str(state["body_sha256"]),
+            artifact=result_path,
+            provisional=True,
+            workflow_authority=self.orchestrator._workflow_authority,
+        )
 
     def _record_native_review(
         self,
@@ -3074,6 +3259,7 @@ class NativeWorkflowRelay:
                 / slug
                 / recorded["review_file"]
             ),
+            provisional=False,
             workflow_authority=self.orchestrator._workflow_authority,
         )
         return text, recorded
@@ -3163,6 +3349,7 @@ class NativeWorkflowRelay:
             }
         )
         state.pop("blind_outcome", None)
+        state.pop("blind_outcome_source", None)
         state.pop("blind_session", None)
         self._reset_active_retry(state, "patch-writer")
         self.orchestrator._save_control(
@@ -3202,11 +3389,17 @@ class NativeWorkflowRelay:
         chapter = int(state["chapter"])
         sequence_id = str(state["sequence_id"])
         request = self._request_from_state(state)
+        self._record_staged_review_completion(
+            slug, state, role, session, outcome
+        )
         if role == "blind-reader":
             state.update(
                 {
                     "phase": "awaiting_chapter_editor",
                     "blind_outcome": asdict(outcome),
+                    "blind_outcome_source": self._review_outcome_source(
+                        slug, state, "blind-reader"
+                    ),
                     "blind_session": asdict(session),
                 }
             )
@@ -3219,6 +3412,7 @@ class NativeWorkflowRelay:
                 sequence_id=sequence_id,
             )
 
+        self._refresh_blind_outcome_if_changed(slug, state)
         blind_payload = state.get("blind_outcome")
         blind_session_payload = state.get("blind_session")
         if not isinstance(blind_payload, dict) or not isinstance(

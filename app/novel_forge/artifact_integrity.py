@@ -318,6 +318,49 @@ def _safe_id(value: str) -> str:
     return safe[:120]
 
 
+def _record_session_finalization(
+    root: Path,
+    slug: str,
+    values: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create or reuse the immutable formal binding for a staged receipt."""
+    payload = {
+        "schema": SESSION_COMPLETION_SCHEMA,
+        "slug": slug,
+        **values,
+        "finalized_at": _now(),
+    }
+    payload["signature"] = _sign(root, slug, payload)
+    target = (
+        _ledger_dir(root, slug)
+        / "session-completion-finalizations"
+        / f"{_safe_id(str(values['session_instance_id']))}.json"
+    )
+    if target.is_file():
+        try:
+            existing = json.loads(target.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ArtifactIntegrityError(
+                f"会话完成 finalization 损坏：{target.name}"
+            ) from exc
+        identity = {
+            "schema": SESSION_COMPLETION_SCHEMA,
+            "slug": slug,
+            **values,
+        }
+        if (
+            isinstance(existing, dict)
+            and all(existing.get(key) == value for key, value in identity.items())
+            and existing.get("signature") == _sign(root, slug, existing)
+        ):
+            return existing
+        raise ArtifactIntegrityError(
+            f"会话完成 finalization 已存在，不得覆盖：{target.name}"
+        )
+    _write_immutable_json(target, payload)
+    return payload
+
+
 def record_session_completion(
     root: Path,
     slug: str,
@@ -336,12 +379,15 @@ def record_session_completion(
     generation_id: str,
     content_sha256: str,
     artifact: Path,
+    provisional: bool = False,
     workflow_authority: WorkflowAuthority | None = None,
 ) -> dict[str, Any]:
     """Record one completed native role session bound to exact artifacts."""
     require_workflow_authority(workflow_authority)
     if not isinstance(chapter, int) or isinstance(chapter, bool) or chapter < 1:
         raise ArtifactIntegrityError("会话完成凭证 chapter 必须是正整数。")
+    if not isinstance(provisional, bool):
+        raise ArtifactIntegrityError("会话完成凭证 provisional 必须是布尔值。")
     if not generation_id.strip():
         raise ArtifactIntegrityError("会话完成凭证缺少 generation_id。")
     if not _SHA256_RE.fullmatch(content_sha256):
@@ -385,7 +431,21 @@ def record_session_completion(
                 continue
             if existing.get("session_id") == session_id:
                 if (
+                    existing.get("schema") != SESSION_COMPLETION_SCHEMA
+                    or existing.get("slug") != slug
+                    or not hmac.compare_digest(
+                        str(existing.get("signature") or ""),
+                        _sign(root, slug, existing),
+                    )
+                ):
+                    raise ArtifactIntegrityError("会话完成凭证无效。")
+                if existing.get("session_instance_id") != session_instance_id:
+                    raise ArtifactIntegrityError("原生 session_id 已被其他角色使用。")
+                if bool(existing.get("provisional")) and not provisional:
+                    return _record_session_finalization(root, slug, values)
+                if (
                     all(existing.get(key) == value for key, value in values.items())
+                    and bool(existing.get("provisional")) == provisional
                 ):
                     return existing
                 raise ArtifactIntegrityError("原生 session_id 已被其他角色使用。")
@@ -397,6 +457,8 @@ def record_session_completion(
         **values,
         "completed_at": _now(),
     }
+    if provisional:
+        payload["provisional"] = True
     payload["signature"] = _sign(root, slug, payload)
     target = directory / f"{_safe_id(session_instance_id)}.json"
     _write_immutable_json(target, payload)
@@ -432,6 +494,42 @@ def session_completion_errors(
             break
     if matching is None:
         return [f"session_completion_missing:{expected_role}"]
+    if matching.get("provisional") is True:
+        base_signature = str(matching.get("signature") or "")
+        if (
+            matching.get("schema") != SESSION_COMPLETION_SCHEMA
+            or matching.get("slug") != slug
+            or not hmac.compare_digest(
+                base_signature,
+                _sign(root, slug, matching),
+            )
+        ):
+            return [f"session_completion_invalid:{expected_role}"]
+        session_instance_id = str(matching.get("session_instance_id") or "")
+        try:
+            safe_instance_id = _safe_id(session_instance_id)
+        except ArtifactIntegrityError:
+            return [f"session_completion_invalid:{expected_role}"]
+        finalization_path = (
+            _ledger_dir(root, slug)
+            / "session-completion-finalizations"
+            / f"{safe_instance_id}.json"
+        )
+        if not finalization_path.is_file():
+            return [f"session_completion_unfinalized:{expected_role}"]
+        try:
+            finalization = json.loads(
+                finalization_path.read_text(encoding="utf-8-sig")
+            )
+        except json.JSONDecodeError:
+            return [f"session_completion_invalid:{expected_role}"]
+        if (
+            not isinstance(finalization, dict)
+            or finalization.get("session_id") != session_id
+            or finalization.get("session_instance_id") != session_instance_id
+        ):
+            return [f"session_completion_invalid:{expected_role}"]
+        matching = finalization
     errors: list[str] = []
     signature = str(matching.get("signature") or "")
     if (

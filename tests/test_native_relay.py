@@ -614,7 +614,7 @@ def test_editor_missing_hard_anchor_requires_a_must_finding(
     result = relay.complete_role("demo", completion)
 
     assert result.user_state == "running"
-    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert result.message.startswith("审稿结果未被接受，已自动换新会话重试：")
     assert not (
         root / "books/demo/reviews/ch01-chapter-editor.md"
     ).exists()
@@ -669,7 +669,7 @@ def test_review_session_cannot_reuse_any_writer_sequence_identity(
         _review_completion(blind_action, reused, blind),
     )
 
-    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert result.message.startswith("审稿结果未被接受，已自动换新会话重试：")
     assert list((root / "books/demo/reviews").glob("ch01-*.md")) == []
 
 
@@ -722,8 +722,8 @@ def test_failed_review_session_cannot_retry_with_same_identity(
         _review_completion(retry_action, reused, blind),
     )
 
-    assert first.message == "审稿会话异常，已自动换新会话重试。"
-    assert second.message == "审稿会话异常，已自动换新会话重试。"
+    assert first.message.startswith("审稿结果未被接受，已自动换新会话重试：")
+    assert second.message.startswith("审稿结果未被接受，已自动换新会话重试：")
     assert list((root / "books/demo/reviews").glob("ch01-*.md")) == []
 
 
@@ -972,7 +972,7 @@ def test_blind_review_retry_budget_is_independent_from_writer_history(
     retry_action = relay.next_action("demo")
 
     assert result.user_state == "running"
-    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert result.message.startswith("审稿结果未被接受，已自动换新会话重试：")
     assert result.technical_retry_count == 1
     assert retry_action["role"] == "blind-reader"
     assert retry_action["session"]["mode"] == "new"
@@ -1025,7 +1025,7 @@ def test_mutated_review_capsule_is_replaced_before_review_retry(
         root / "books/demo/chapters/e01/ch-01/正文.md"
     ).read_text(encoding="utf-8")
 
-    assert result.message == "审稿会话异常，已自动换新会话重试。"
+    assert result.message.startswith("审稿结果未被接受，已自动换新会话重试：")
     assert retry_action["review_capsule"]["id"] != (
         blind_action["review_capsule"]["id"]
     )
@@ -1813,9 +1813,9 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     )
     staged_body.write_text(revised, encoding="utf-8")
     relay.complete_minimal("demo")
-    assert relay._load_state("demo")["technical_retry_counts"][
-        "blind-reader"
-    ] == 0
+    refreshed_state = relay._load_state("demo")
+    assert refreshed_state["technical_retry_counts"]["blind-reader"] == 0
+    assert "must_findings" not in refreshed_state
     diff_path = (
         root / "books/demo/.novel-forge/diff/ch01/修订.diff"
     )
@@ -2684,3 +2684,168 @@ def test_lean_native_unknown_telemetry_can_finish_double_review_and_ready(
     payload = json.loads(runtime.read_text(encoding="utf-8"))
     assert payload["budget"]["status"] == "unassessed"
     assert payload["request_count"] is None
+
+
+def test_lean_blind_normalizes_score_and_legacy_field_aliases_before_caching(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("分数归一化"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must_issues": [],
+                "human_likeness": 7,
+                "reader_desire": 9,
+                "emotional_aftertaste": "人物选择留下具体余味。",
+                "next_chapter_pull": "代价尚未揭开。",
+                "summary": "现场、行动和情绪均可重建。",
+                "quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+    state = relay._load_state("demo")
+
+    assert result.message == "正在自动审稿。"
+    assert state["blind_outcome"]["human_likeness"] == "convincing"
+    assert state["blind_outcome"]["reader_desire"] == "continue"
+    assert state["blind_outcome"]["emotional_residue"] == "人物选择留下具体余味。"
+    assert state["blind_outcome"]["evidence_quote"] == "林舟握住门把"
+
+
+def test_lean_refreshes_a_changed_blind_result_file_before_reusing_cache(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("刷新盲审缓存"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    blind_payload = {
+        "verdict": "pass",
+        "must": [],
+        "human_likeness": "convincing",
+        "reader_desire": "continue",
+        "emotional_residue": "旧的余味。",
+        "next_chapter_pull": "代价尚未揭开。",
+        "summary": "现场、行动和情绪均可重建。",
+        "evidence_quote": "林舟握住门把",
+    }
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(blind_payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    blind_payload["emotional_residue"] = "刷新后的余味。"
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(blind_payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    state = relay._load_state("demo")
+
+    relay._refresh_blind_outcome_if_changed("demo", state)
+
+    assert state["blind_outcome"]["emotional_residue"] == "刷新后的余味。"
+    assert state["blind_outcome_source"]["sha256"] == hashlib.sha256(
+        Path(blind_action["result_file"]).read_bytes()
+    ).hexdigest()
+
+
+def test_lean_review_acceptance_writes_a_session_completion_before_promotion(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("审稿回执"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下具体余味。",
+                "next_chapter_pull": "代价尚未揭开。",
+                "summary": "现场、行动和情绪均可重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    relay.complete_minimal("demo")
+
+    completions = list(
+        (root / ".local-guardian/demo/session-completions").glob("*.json")
+    )
+    assert len(completions) == 1
+    payload = json.loads(completions[0].read_text(encoding="utf-8"))
+    assert payload["role"] == "blind-reader"
+    assert payload["provisional"] is True
+
+
+def test_lean_review_retry_message_exposes_the_invalid_rating_value(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("审稿错误诊断"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": 11,
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下具体余味。",
+                "next_chapter_pull": "代价尚未揭开。",
+                "summary": "现场、行动和情绪均可重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal("demo")
+
+    assert "当前值=11" in result.message
+    assert "0-10" in result.message

@@ -19,6 +19,7 @@ from app.novel_forge.artifact_integrity import (
     ArtifactIntegrityError,
     record_session_completion,
     seal_artifact,
+    session_completion_errors,
 )
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.chapter_sequence import (
@@ -853,6 +854,203 @@ def test_session_completion_seals_native_operation_and_result_channel(
     assert payload["operation_kind"] == "host_background_task"
     assert payload["operation_id"] == "opaque-operation-001"
     assert payload["result_transport"] == "artifact"
+
+
+
+def test_provisional_session_finalization_is_idempotent_across_timestamps(
+    tmp_path: Path,
+    monkeypatch,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    timestamps = iter(
+        (
+            "2026-07-29T10:00:00+00:00",
+            "2026-07-29T10:00:01+00:00",
+            "2026-07-29T10:00:02+00:00",
+        )
+    )
+    monkeypatch.setattr(artifact_integrity, "_now", lambda: next(timestamps))
+    common = {
+        "session_id": "review-session-001",
+        "session_instance_id": "review-instance-001",
+        "role": "blind-reader",
+        "provider": "test-provider",
+        "model": "test-model",
+        "agent_harness": "test-harness",
+        "context_scope": "prose_only",
+        "operation_kind": "native-session",
+        "operation_id": "review-operation-001",
+        "result_transport": "artifact",
+        "chapter": 1,
+        "content_sha256": digest,
+        "artifact": chapter,
+        "workflow_authority": _workflow_authority(tmp_path),
+    }
+    record_session_completion(
+        tmp_path,
+        "demo",
+        generation_id="staged-review.ch01.temporary",
+        provisional=True,
+        **common,
+    )
+    first = record_session_completion(
+        tmp_path,
+        "demo",
+        generation_id="generation.ch01.current",
+        **common,
+    )
+    second = record_session_completion(
+        tmp_path,
+        "demo",
+        generation_id="generation.ch01.current",
+        **common,
+    )
+
+    assert first == second
+    assert first["finalized_at"] == "2026-07-29T10:00:01+00:00"
+
+
+def test_provisional_session_finalization_rejects_a_different_instance(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    common = {
+        "session_id": "review-session-002",
+        "role": "blind-reader",
+        "provider": "test-provider",
+        "model": "test-model",
+        "agent_harness": "test-harness",
+        "context_scope": "prose_only",
+        "operation_kind": "native-session",
+        "operation_id": "review-operation-002",
+        "result_transport": "artifact",
+        "chapter": 1,
+        "content_sha256": digest,
+        "artifact": chapter,
+        "workflow_authority": _workflow_authority(tmp_path),
+    }
+    record_session_completion(
+        tmp_path,
+        "demo",
+        session_instance_id="review-instance-002a",
+        generation_id="staged-review.ch01.temporary",
+        provisional=True,
+        **common,
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="session_id 已被其他角色使用"):
+        record_session_completion(
+            tmp_path,
+            "demo",
+            session_instance_id="review-instance-002b",
+            generation_id="generation.ch01.current",
+            **common,
+        )
+
+
+
+def test_provisional_session_finalization_rejects_a_tampered_base_receipt(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    common = {
+        "session_id": "review-session-003",
+        "session_instance_id": "review-instance-003",
+        "role": "blind-reader",
+        "provider": "test-provider",
+        "model": "test-model",
+        "agent_harness": "test-harness",
+        "context_scope": "prose_only",
+        "operation_kind": "native-session",
+        "operation_id": "review-operation-003",
+        "result_transport": "artifact",
+        "chapter": 1,
+        "content_sha256": digest,
+        "artifact": chapter,
+        "workflow_authority": _workflow_authority(tmp_path),
+    }
+    record_session_completion(
+        tmp_path,
+        "demo",
+        generation_id="staged-review.ch01.temporary",
+        provisional=True,
+        **common,
+    )
+    receipt = (
+        tmp_path
+        / ".local-guardian/demo/session-completions/review-instance-003.json"
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["role"] = "chapter-editor"
+    receipt.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="会话完成凭证无效"):
+        record_session_completion(
+            tmp_path,
+            "demo",
+            generation_id="generation.ch01.current",
+            **common,
+        )
+
+
+def test_session_completion_errors_reports_invalid_for_malformed_provisional_receipt(
+    tmp_path: Path,
+):
+    book_dir = _make_book(tmp_path)
+    chapter = book_project.find_chapter_file(book_dir, 1)
+    digest = hashlib.sha256(chapter.read_bytes()).hexdigest()
+    record_session_completion(
+        tmp_path,
+        "demo",
+        session_id="review-session-004",
+        session_instance_id="review-instance-004",
+        role="blind-reader",
+        provider="test-provider",
+        model="test-model",
+        agent_harness="test-harness",
+        context_scope="prose_only",
+        operation_kind="native-session",
+        operation_id="review-operation-004",
+        result_transport="artifact",
+        chapter=1,
+        generation_id="staged-review.ch01.temporary",
+        content_sha256=digest,
+        artifact=chapter,
+        provisional=True,
+        workflow_authority=_workflow_authority(tmp_path),
+    )
+    receipt = (
+        tmp_path
+        / ".local-guardian/demo/session-completions/review-instance-004.json"
+    )
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["session_instance_id"] = ""
+    receipt.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    errors = session_completion_errors(
+        tmp_path,
+        "demo",
+        session_id="review-session-004",
+        expected_role="blind-reader",
+        expected_context_scope="prose_only",
+        expected_chapter=1,
+        expected_content_sha256=digest,
+        expected_artifact=chapter,
+    )
+
+    assert errors == ["session_completion_invalid:blind-reader"]
 
 
 def test_ready_chapter_launches_next_fresh_session_with_bounded_handoff(
