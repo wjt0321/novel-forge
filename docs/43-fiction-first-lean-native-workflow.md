@@ -158,3 +158,23 @@ reason to reject a completed chapter.
 milestone documents remain useful design history, but old requirements for an
 external daily Writer Capsule, pre-review Generation creation, complete Lean
 terminal envelopes, or mandatory analysis tables do not override v5.4.
+
+## Relay handoff and context budget (2026-07-29)
+
+The daily CLI now renders `next-action` as a compact handoff card: the role,
+its sealed input directory, its only writable output, and the follow-up
+`complete-role <slug>` command. It intentionally omits JSON, hashes, session
+IDs, Guardian, runtime, and Git details. Host integrations that need the full
+machine action opt in with `next-action --json`.
+
+Relay `status` is derived from the persisted native phase, so a waiting Writer,
+Blind Reader, or Chapter Editor is described consistently with `next-action`.
+After a completed chapter, `next-action` returns a `start_next_chapter`
+handoff instead of an empty-action error; `start <slug> --chapter N` reuses the
+persisted book metadata for later chapters.
+
+Canonical final-prose paths are derived solely from the chapter number:
+`chapters/eNN/ch-NN/正文.md`. Artifact seals are idempotent for exactly the same
+signed artifact identity, preventing a transport retry from turning an already
+valid review into an integrity collision. A changed artifact or invalid
+signature remains a hard failure.

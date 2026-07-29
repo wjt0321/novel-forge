@@ -67,6 +67,13 @@ NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
 MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
+
+
+def _chapter_target_path(chapter: int) -> str:
+    """Return the canonical final-prose path for one chapter."""
+    return f"chapters/e{chapter:02d}/ch-{chapter:02d}/正文.md"
+
+
 LEAN_PROTECTED_CONTROL_PLANE_PATHS = (
     "app",
     "tools",
@@ -1257,7 +1264,7 @@ class NativeWorkflowRelay:
             sequence_id,
             session.session_id,
             capsule_dir,
-            f"chapters/e01/ch-{chapter:02d}/正文.md",
+            _chapter_target_path(chapter),
             regeneration_authorization_id=authorization_id,
             patch_directive=(
                 "\n".join(f"- {item}" for item in must_findings)
@@ -1465,9 +1472,21 @@ class NativeWorkflowRelay:
         )
 
     def next_action(self, slug: str) -> dict[str, Any]:
-        """Return the current bounded host action."""
+        """Return the current bounded host action or the next chapter handoff."""
         path = self._action_path(slug)
         if not path.is_file():
+            state = self._load_state(slug)
+            if state.get("phase") == "complete":
+                next_chapter = int(state.get("chapter") or 0) + 1
+                return {
+                    "schema": NATIVE_ACTION_SCHEMA,
+                    "kind": "start_next_chapter",
+                    "chapter": next_chapter,
+                    "task": (
+                        f"第{next_chapter - 1:02d}章已完成。"
+                        f"执行 start {slug} --chapter {next_chapter} 开始下一章。"
+                    ),
+                }
             raise WorkflowError("当前没有等待执行的原生角色动作。")
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("schema") != NATIVE_ACTION_SCHEMA:
@@ -1475,8 +1494,54 @@ class NativeWorkflowRelay:
         return payload
 
     def status(self, slug: str) -> WorkflowResult:
-        """Return the existing user-safe workflow status."""
-        return self.orchestrator.status(slug)
+        """Return the native relay phase in user language, not stale DB state."""
+        state = self._load_state(slug)
+        phase = str(state.get("phase") or "")
+        sequence_id = str(state.get("sequence_id") or "")
+        retries = int(state.get("technical_retry_count") or 0)
+        messages = {
+            "awaiting_writer": (
+                "等待 Writer 完成当前章节。执行 next-action 获取角色任务。"
+            ),
+            "awaiting_writer_planning": (
+                "等待 Writer 准备当前章节。执行 next-action 获取角色任务。"
+            ),
+            "awaiting_writer_session": "正在创建 Writer 会话。",
+            "awaiting_patch_writer_session": "正在创建修订 Writer 会话。",
+            "awaiting_blind_reader": (
+                "等待 Blind Reader 审稿。执行 next-action 获取角色任务。"
+            ),
+            "awaiting_chapter_editor": (
+                "等待 Chapter Editor 审稿。执行 next-action 获取角色任务。"
+            ),
+            "complete": (
+                f"第{int(state.get('chapter') or 0):02d}章完成。"
+                f"执行 next-action 开始第{int(state.get('chapter') or 0) + 1:02d}章。"
+            ),
+            "stopped": "任务已停止。",
+        }
+        if phase == "decision_required":
+            return WorkflowResult(
+                user_state="decision_required",
+                message=str(
+                    state.get("decision_message")
+                    or "自动修订后仍有问题，请选择下一步。"
+                ),
+                sequence_id=sequence_id,
+                technical_retry_count=retries,
+                options=USER_OPTIONS,
+            )
+        return WorkflowResult(
+            user_state=(
+                "chapter_complete"
+                if phase == "complete"
+                else "stopped" if phase == "stopped" else "running"
+            ),
+            message=messages.get(phase, "正在自动处理本章。"),
+            sequence_id=sequence_id,
+            technical_retry_count=retries,
+            git_checkpoint_succeeded=phase == "complete",
+        )
 
     def stop(self, slug: str) -> WorkflowResult:
         """Stop the workflow and retire any pending native action."""
@@ -2130,7 +2195,7 @@ class NativeWorkflowRelay:
             sequence_id,
             session.session_id,
             capsule_dir,
-            f"chapters/e01/ch-{chapter:02d}/正文.md",
+            _chapter_target_path(chapter),
         )
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
         action = {
@@ -3563,7 +3628,7 @@ class NativeWorkflowRelay:
             sequence_id,
             session.session_id,
             capsule_dir,
-            f"chapters/e01/ch-{chapter:02d}/正文.md",
+            _chapter_target_path(chapter),
             regeneration_authorization_id=authorization_id,
             patch_directive="\n".join(
                 f"- {item}" for item in must_findings

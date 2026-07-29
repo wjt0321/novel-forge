@@ -1,0 +1,19 @@
+{
+  "schema": "novel-forge-book-workflow-cleanup/v1",
+  "completed_on": "2026-07-29",
+  "removed": {
+    "book_projects": 10,
+    "external_local_git_directories": 9,
+    "external_guardian_directories": 11
+  },
+  "verified_remaining": {
+    "book_projects": 0,
+    "external_local_git_directories": 0,
+    "external_guardian_directories": 0
+  },
+  "retained": [
+    "books/README.md",
+    "docs/examples/book-workflow-samples/"
+  ],
+  "note": "The legacy library workflow was intentionally left outside this books-workspace cleanup."
+}

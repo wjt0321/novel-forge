@@ -150,3 +150,26 @@ DeepSeek v4 Flash 在第一次可恢复故障后没有停留在公开的
   对照测试证明稳定前，同样不作为默认 Lead。
 - 即使使用 GLM/Kimi，root 校验和角色所有权仍必须由代码保证；不能把系统正确性寄托在
   “模型恰好聪明地避开错误路径”上。
+
+## 2026-07-29：接力可靠性与上下文预算修复
+
+本轮把现场暴露出的“通用 Agent 看不懂下一步”和第二章接力故障，收敛为四条可测试规则：
+
+1. **相同产物的 seal 是幂等的。** 同一路径、同一内容、同一 kind 的既有签名 seal
+   直接复用；只有身份字段、内容或签名不一致才报完整性冲突。重试不会因为新的
+   `recorded_at` 再把有效审稿判成失败。
+2. **章节目标路径由章节号单点生成。** 第 N 章只能走
+   `chapters/eNN/ch-NN/正文.md`；任何 Writer capsule（初稿、Patch、严格审计
+   兼容路径）都复用同一函数，不能把第二章写入 `e01`。
+3. **原生 Relay 自己解释状态。** `status` 读当前 Relay phase，不再把活动角色笼统说成
+   “正在处理”；Writer、Blind Reader、Chapter Editor、停止和完成都有一致的人话。
+   完成章的 `next-action` 返回明确的下一章 handoff，而不是“缺少角色动作”。
+4. **人类默认不看技术 JSON。** CLI 的 `next-action` 输出一张只含角色、输入目录、唯一
+   输出和 `complete-role` 的交接卡；只有宿主程序显式 `--json` 才拿到完整机器动作。
+   `start <slug> --chapter N` 可从已持久化控制记录复用书籍元数据，避免让 Lead 重复填写
+   六个字段。
+
+上下文预算也作了收缩：根 `AGENTS.md` 从约 19,873 字符缩到约 3,876 字符，日常
+Novel Forge Skill 从约 6,269 字符缩到约 2,725 字符；两份扫描位置仍逐字节同步。角色
+提示词本身保持小于既有预算（Writer ≤1200 字符、Lean Blind Reader / Chapter Editor
+分别受 2200 字符上限），不再把哈希、Runtime、Guardian、Git、状态表作为日常角色输入。

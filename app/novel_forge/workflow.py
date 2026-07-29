@@ -2752,6 +2752,65 @@ def _print_result(result: WorkflowResult) -> None:
         print(option)
 
 
+def _start_request_from_args(
+    args: argparse.Namespace,
+    relay: Any,
+) -> WorkflowRequest:
+    """Resolve first-chapter metadata or reuse the persisted book request."""
+    values = {
+        "title": args.title,
+        "genre": args.genre,
+        "protagonist": args.protagonist,
+        "world": args.world,
+        "conflict": args.conflict,
+        "ending_hook": args.hook,
+    }
+    provided = {key: value for key, value in values.items() if value is not None}
+    if not provided and args.chapter > 1:
+        try:
+            return relay._request_from_state(relay._load_state(args.slug))
+        except WorkflowError as exc:
+            raise WorkflowError(
+                "开始后续章节时找不到第一章的书籍信息；请补齐全部元数据。"
+            ) from exc
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise WorkflowError(
+            "start 缺少书籍信息：" + ", ".join(missing)
+        )
+    return WorkflowRequest(**values)
+
+
+def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
+    """Render one host-neutral, human-readable native role handoff."""
+    if action.get("kind") == "start_next_chapter":
+        print(str(action.get("task") or "本章完成，请开始下一章。"))
+        return
+    role = str(action.get("role") or "角色")
+    labels = {
+        "writer": "Writer",
+        "writer-planning": "Writer",
+        "blind-reader": "Blind Reader",
+        "chapter-editor": "Chapter Editor",
+        "writer-session": "Writer 会话",
+    }
+    label = labels.get(role, role)
+    print(f"下一步：委派 {label}。")
+    print("使用宿主的独立角色/会话执行；Lead 不代写、不代审。")
+    capsule = action.get("capsule")
+    review_capsule = action.get("review_capsule")
+    if isinstance(capsule, dict):
+        print(f"输入目录：{capsule.get('path')}")
+        print(f"唯一允许写入：{capsule.get('output')}")
+    elif isinstance(review_capsule, dict):
+        print(f"只读输入目录：{review_capsule.get('path')}")
+        print(f"角色只写结论到：{action.get('result_file')}")
+    else:
+        print("按当前角色任务执行，不创建控制面或额外文件。")
+    print("等待宿主报告该角色已完成后，执行：")
+    print(f"complete-role {slug}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -2774,15 +2833,22 @@ def main(argv: list[str] | None = None) -> int:
     start = sub.add_parser("start")
     start.add_argument("slug")
     start.add_argument("--chapter", type=int, default=1)
-    start.add_argument("--title", required=True)
-    start.add_argument("--genre", required=True)
-    start.add_argument("--protagonist", required=True)
-    start.add_argument("--world", required=True)
-    start.add_argument("--conflict", required=True)
-    start.add_argument("--hook", required=True)
-    for name in ("status", "retry", "stop", "next-action"):
+    start.add_argument("--title")
+    start.add_argument("--genre")
+    start.add_argument("--protagonist")
+    start.add_argument("--world")
+    start.add_argument("--conflict")
+    start.add_argument("--hook")
+    for name in ("status", "retry", "stop"):
         command = sub.add_parser(name)
         command.add_argument("slug")
+    next_action = sub.add_parser("next-action")
+    next_action.add_argument("slug")
+    next_action.add_argument(
+        "--json",
+        action="store_true",
+        help="输出供宿主程序读取的完整动作 JSON；默认输出简明角色交接卡。",
+    )
     complete = sub.add_parser("complete-role")
     complete.add_argument("slug")
     complete.add_argument("--from-file", type=Path)
@@ -2811,7 +2877,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.operation == "next-action":
             action = relay.next_action(args.slug)
-            print(json.dumps(action, ensure_ascii=False, sort_keys=True))
+            if args.json:
+                print(json.dumps(action, ensure_ascii=False, sort_keys=True))
+            else:
+                _print_next_action_card(action, args.slug)
             return 0
         if args.operation == "complete-role":
             if not args.strict_audit:
@@ -2843,17 +2912,15 @@ def main(argv: list[str] | None = None) -> int:
         command_backend = bool(
             os.environ.get("NOVEL_FORGE_HARNESS_COMMAND", "").strip()
         )
+        request = (
+            _start_request_from_args(args, relay)
+            if args.operation == "start"
+            else None
+        )
         if args.operation == "start" and not command_backend:
             result = relay.start(
                 args.slug,
-                WorkflowRequest(
-                    title=args.title,
-                    genre=args.genre,
-                    protagonist=args.protagonist,
-                    world=args.world,
-                    conflict=args.conflict,
-                    ending_hook=args.hook,
-                ),
+                request,
                 chapter=args.chapter,
             )
             _print_result(result)
@@ -2879,14 +2946,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.operation == "start":
             result = orchestrator.start(
                 args.slug,
-                WorkflowRequest(
-                    title=args.title,
-                    genre=args.genre,
-                    protagonist=args.protagonist,
-                    world=args.world,
-                    conflict=args.conflict,
-                    ending_hook=args.hook,
-                ),
+                request,
                 chapter=args.chapter,
             )
         elif args.operation == "status":

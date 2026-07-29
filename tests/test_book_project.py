@@ -737,6 +737,24 @@ def test_advance_state_ready_requires_reviews(tmp_path: Path):
         )
 
 
+def test_sealing_an_unchanged_review_is_idempotent_across_timestamps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _make_book(tmp_path)
+    review = tmp_path / "books/demo/reviews/ch01-blind-reader.md"
+    review.parent.mkdir(parents=True, exist_ok=True)
+    review.write_text("# review\n", encoding="utf-8")
+
+    monkeypatch.setattr(artifact_integrity, "_now", lambda: "2026-07-28T00:00:00+00:00")
+    first = seal_artifact(tmp_path, "demo", review, kind="review")
+    monkeypatch.setattr(artifact_integrity, "_now", lambda: "2026-07-28T00:01:00+00:00")
+    second = seal_artifact(tmp_path, "demo", review, kind="review")
+
+    assert second == first
+    assert len(list((tmp_path / ".local-guardian/demo/artifact-seals").glob("*.json"))) == 1
+
+
+
 def test_immutable_review_history_cannot_be_resealed_after_mutation(
     tmp_path: Path,
 ):

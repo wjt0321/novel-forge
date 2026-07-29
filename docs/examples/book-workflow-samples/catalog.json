@@ -1,0 +1,240 @@
+{
+  "schema": "novel-forge-book-workflow-sample/v1",
+  "captured_on": "2026-07-29",
+  "purpose": "De-identified local-book workflow samples retained after clearing the active books workspace for a fresh test run.",
+  "classification_policy": {
+    "success": "K3-H, K3-L, and K3-M: user-confirmed examples of carrying the workflow principles through; prose is out of scope.",
+    "failure": "DS and M3: user-confirmed examples of incomplete workflow execution caused by looping or bypassing; prose is out of scope.",
+    "control": "All remaining books: incomplete test cases, not positive or negative benchmarks for either workflow or prose.",
+    "state_warning": "A stored state such as ready is not used as a label. It can coexist with a failure sample when the historical control plane allowed a bypass."
+  },
+  "retention_policy": "Only de-identified aggregate metadata is retained. No novel text, title, slug, planning text, evidence content, local Git history, Guardian data, session identifier, hash, or model/provider data is copied into this sample set.",
+  "cleanup_scope": {
+    "book_projects": 10,
+    "external_local_git_directories": 9,
+    "external_guardian_directories": 11,
+    "unmapped_guardian_directories": 1,
+    "preserved": [
+      "books/README.md",
+      "docs/examples/book-workflow-samples/"
+    ]
+  },
+  "summary": {
+    "control": 3,
+    "failure": 4,
+    "success": 3
+  },
+  "samples": [
+    {
+      "sample_id": "failure-ds-01",
+      "category": "failure",
+      "label_basis": "user-labeled suffix DS",
+      "workflow_interpretation": "Workflow execution was incomplete because it bypassed steps or looped; this does not rate prose style.",
+      "aggregate_snapshot": {
+        "book_file_count": 47,
+        "book_byte_count": 213981,
+        "formal_chapter_count": 0,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "scene_packaged": 1
+        },
+        "evidence_file_count": 0,
+        "staging_file_count": 5,
+        "local_git_present": true,
+        "local_git_commit_count": 1,
+        "guardian_file_count": 2
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "control-unclassified-01",
+      "category": "control",
+      "label_basis": "user-labeled non-success/non-failure control",
+      "workflow_interpretation": "Neither workflow execution nor prose quality is accepted as a benchmark result.",
+      "aggregate_snapshot": {
+        "book_file_count": 106,
+        "book_byte_count": 490897,
+        "formal_chapter_count": 2,
+        "chapter_state_count": 2,
+        "chapter_states": {
+          "ready": 1,
+          "surface_checked": 1
+        },
+        "evidence_file_count": 6,
+        "staging_file_count": 40,
+        "local_git_present": true,
+        "local_git_commit_count": 4,
+        "guardian_file_count": 31
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "failure-ds-02",
+      "category": "failure",
+      "label_basis": "user-labeled suffix DS",
+      "workflow_interpretation": "Workflow execution was incomplete because it bypassed steps or looped; this does not rate prose style.",
+      "aggregate_snapshot": {
+        "book_file_count": 64,
+        "book_byte_count": 285022,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 18,
+        "local_git_present": true,
+        "local_git_commit_count": 2,
+        "guardian_file_count": 9
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "success-k3-h-01",
+      "category": "success",
+      "label_basis": "user-labeled suffix K3-H",
+      "workflow_interpretation": "Workflow principles were carried through; this does not rate prose quality.",
+      "aggregate_snapshot": {
+        "book_file_count": 69,
+        "book_byte_count": 316209,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 19,
+        "local_git_present": true,
+        "local_git_commit_count": 3,
+        "guardian_file_count": 15
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "failure-ds-03",
+      "category": "failure",
+      "label_basis": "user-labeled suffix DS",
+      "workflow_interpretation": "Workflow execution was incomplete because it bypassed steps or looped; this does not rate prose style.",
+      "aggregate_snapshot": {
+        "book_file_count": 60,
+        "book_byte_count": 292001,
+        "formal_chapter_count": 0,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "scene_packaged": 1
+        },
+        "evidence_file_count": 2,
+        "staging_file_count": 14,
+        "local_git_present": true,
+        "local_git_commit_count": 1,
+        "guardian_file_count": 4
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "success-k3-l-02",
+      "category": "success",
+      "label_basis": "user-labeled suffix K3-L",
+      "workflow_interpretation": "Workflow principles were carried through; this does not rate prose quality.",
+      "aggregate_snapshot": {
+        "book_file_count": 55,
+        "book_byte_count": 246851,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 6,
+        "staging_file_count": 0,
+        "local_git_present": true,
+        "local_git_commit_count": 4,
+        "guardian_file_count": 27
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "control-unclassified-02",
+      "category": "control",
+      "label_basis": "user-labeled non-success/non-failure control",
+      "workflow_interpretation": "Neither workflow execution nor prose quality is accepted as a benchmark result.",
+      "aggregate_snapshot": {
+        "book_file_count": 57,
+        "book_byte_count": 265137,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "scene_packaged": 1
+        },
+        "evidence_file_count": 0,
+        "staging_file_count": 13,
+        "local_git_present": true,
+        "local_git_commit_count": 1,
+        "guardian_file_count": 2
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "success-k3-m-03",
+      "category": "success",
+      "label_basis": "user-labeled suffix K3-M",
+      "workflow_interpretation": "Workflow principles were carried through; this does not rate prose quality.",
+      "aggregate_snapshot": {
+        "book_file_count": 59,
+        "book_byte_count": 254164,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 5,
+        "staging_file_count": 0,
+        "local_git_present": true,
+        "local_git_commit_count": 3,
+        "guardian_file_count": 16
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "control-unclassified-03",
+      "category": "control",
+      "label_basis": "user-labeled non-success/non-failure control",
+      "workflow_interpretation": "Neither workflow execution nor prose quality is accepted as a benchmark result.",
+      "aggregate_snapshot": {
+        "book_file_count": 69,
+        "book_byte_count": 305998,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 19,
+        "local_git_present": true,
+        "local_git_commit_count": 3,
+        "guardian_file_count": 15
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "failure-m3-04",
+      "category": "failure",
+      "label_basis": "user-labeled suffix M3",
+      "workflow_interpretation": "Workflow execution was incomplete because it bypassed steps or looped; this does not rate prose style.",
+      "aggregate_snapshot": {
+        "book_file_count": 63,
+        "book_byte_count": 287940,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "surface_checked": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 18,
+        "local_git_present": false,
+        "local_git_commit_count": 0,
+        "guardian_file_count": 9
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    }
+  ]
+}

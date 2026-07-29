@@ -42,14 +42,29 @@ PYTHONPATH=. python -m app.novel_forge.lint <file>
 Windows 的 Git Bash/类 Bash 必须把根路径写成 `D:/path/to/repo`；未加引号的
 `D:\path\to\repo` 会被拒绝，避免在当前目录误建嵌套书库。
 
-没有命令 Backend 时，`start` 会签发宿主原生会话动作；Lead 只循环
-`next-action → 创建/运行角色 → 等官方终态 → complete-role`。Agent 不得先探索
-工作流源码、自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。
-默认 `lean_native` 下，首个 Writer 动作直接写 Capsule 内正文；两个审稿角色把简短
-JSON 写入动作的 `result_file`。Lead 无需填写技术表单或拼装会话 ID。哈希、Generation、
-Runtime、Guardian、stale、状态和 Git 全由 Python 自动处理，未知遥测保持 null，
-不会因为技术字段缺失重写有效正文。`--strict-audit` 仅用于明确的取证或基准。
-新书不生成 `.claude/agents`，协议不绑定宿主、供应商或模型。
+## 一眼可执行的正式流程
+
+默认模式是厂商、模型和宿主无关的 `lean_native`：
+
+```text
+start → next-action → 独立角色完成 → complete-role → 下一动作
+```
+
+1. 只在第一章执行 `start <slug>` 并给出书籍基本信息；章节 ready 后，按提示执行
+   `start <slug> --chapter N+1`，无需重复输入原始设定；
+2. `next-action` 默认只返回一张人类可执行的角色卡。每轮只完成卡上的一个角色，并用宿主
+   官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；
+3. Writer 只写暂存正文；Blind Reader 与 Chapter Editor 分别提交各自的简短审稿结果；
+4. `complete-role` 交回控制面。第一次 MUST 只集中修订一次；第二版仍有 MUST 就停在用户
+   决定处，绝不无限循环。双审通过后 Python 才自动晋升章节，并提示下一章或完成状态。
+
+没有命令 Backend 时，`start` 仍会签发宿主原生会话动作。Agent 不得先探索工作流源码、
+自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。默认 `lean_native` 下，
+首个 Writer 动作直接写 Capsule 内正文；两个审稿角色把简短 JSON 写入动作的 `result_file`。
+Lead 无需填写技术表单或拼装会话 ID。哈希、Generation、Runtime、Guardian、stale、状态和
+Git 全由 Python 自动处理，未知遥测保持 null，不会因为技术字段缺失重写有效正文。
+`--strict-audit` 仅用于明确的取证或基准。新书不生成 `.claude/agents`，协议不绑定宿主、
+供应商或模型。
 
 一本书的工作循环（详见 `.agents/skills/novel-forge/SKILL.md`）：
 
@@ -129,13 +144,25 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   project_templates.py # 新书骨架生成（规划、记忆、评测与薄壳工具）
 tests/               # pytest 回归测试
 docs/                # 里程碑与实验审计文档
-docs/examples/       # 人味解剖 + AI 味反模式（起草与审稿前必读）
+docs/examples/       # 人味解剖、AI 味反模式与脱敏工作流样本（起草与审稿前必读）
 books/               # 小说项目（一书一目录，项目级隔离；gitignored，仅存本地不上传）
 .local-book-git/     # 每书外置 Git 元数据（gitignored、本地、无 remote）
 library/             # legacy 审计资产（gitignore）
 data/                # SQLite 账本（gitignore，可重建）
 research/            # 前期调研
 ```
+
+## 本地书库重置与回归样本
+
+`books/`、`.local-book-git/` 与 `.local-guardian/` 是本地运行资产，默认不进主仓库。
+当前工作区已在 **2026-07-29** 清理为无书籍的干净起点；新测试应从 `start` 或
+`init-novel-project` 重新初始化，不能复用已删除项目的控制面或会话状态。
+
+历史书籍只保留脱敏的文件级汇总，位于
+`docs/examples/book-workflow-samples/`：其中 K3-H/K3-L/K3-M 是用户标注的流程理念成功
+样本，DS/M3 是流程绕过或循环的失败样本，其余是未定论的对照样本。该目录不含正文、
+标题、slug、规划内容、审稿正文、哈希、模型信息、Guardian 材料或本地 Git 对象；持久化
+的 `ready` 状态也不能单独证明历史流程正确。
 
 ## 文档地图
 

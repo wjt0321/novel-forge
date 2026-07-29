@@ -10,7 +10,7 @@ from pathlib import Path
 from app.novel_forge import book_project
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.native_relay import NativeWorkflowRelay
-from app.novel_forge.workflow import SessionIdentity, WorkflowRequest
+from app.novel_forge.workflow import SessionIdentity, WorkflowRequest, main
 from tests.test_workflow import (
     ScriptedBackend,
     _must_reviews,
@@ -2476,6 +2476,128 @@ def test_strict_audit_keeps_full_completion_contract(tmp_path: Path):
 
     assert action["role"] == "writer-planning"
     assert "completion_template" in action
+
+
+def _complete_lean_chapter_with_passes(
+    relay: NativeWorkflowRelay,
+    slug: str,
+    prose: str,
+) -> None:
+    writer_action = relay.next_action(slug)
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        prose,
+        encoding="utf-8",
+    )
+    relay.complete_minimal(slug)
+    for role, payload in (
+        (
+            "blind-reader",
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下明确余波。",
+                "next_chapter_pull": "下一章的代价仍未揭开。",
+                "summary": "空间、行动和情绪都可以重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+        ),
+        (
+            "chapter-editor",
+            {
+                "verdict": "pass",
+                "must": [],
+                "summary": "因果、选择、对白、肌理和连续性成立。",
+                "evidence_quote": "林舟握住门把",
+            },
+        ),
+    ):
+        action = relay.next_action(slug)
+        assert action["role"] == role
+        Path(action["result_file"]).write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        result = relay.complete_minimal(slug)
+    assert result.user_state == "chapter_complete"
+
+
+def test_second_chapter_uses_its_own_episode_target_path(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    _complete_lean_chapter_with_passes(relay, "demo", _prose("第一章完成"))
+
+    relay.start("demo", _request(), chapter=2)
+    state = relay._load_state("demo")
+    control = json.loads(
+        (
+            root
+            / "books/demo/planning/guardian-sessions"
+            / f"{state['capsule']['capsule_id']}.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert control["target_path"] == "chapters/e02/ch-02/正文.md"
+
+
+
+def test_cli_next_action_prints_a_compact_role_card_by_default(
+    tmp_path: Path, capsys
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+
+    exit_code = main(["--root", str(root), "next-action", "demo"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "下一步：委派 Writer。" in output
+    assert "complete-role demo" in output
+    assert '"schema"' not in output
+    assert "sha256" not in output.lower()
+
+
+
+def test_cli_can_start_the_next_chapter_without_repeating_book_metadata(
+    tmp_path: Path, capsys
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    _complete_lean_chapter_with_passes(relay, "demo", _prose("第一章元数据复用"))
+
+    exit_code = main(["--root", str(root), "start", "demo", "--chapter", "2"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "正在写作。" in output
+    assert relay.next_action("demo")["role"] == "writer"
+
+
+
+def test_native_status_and_next_action_explain_the_current_handoff(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+
+    status = relay.status("demo")
+
+    assert status.message == "等待 Writer 完成当前章节。执行 next-action 获取角色任务。"
+    _complete_lean_chapter_with_passes(relay, "demo", _prose("第一章已完成"))
+
+    handoff = relay.next_action("demo")
+
+    assert handoff["kind"] == "start_next_chapter"
+    assert handoff["chapter"] == 2
+    assert "start demo --chapter 2" in handoff["task"]
+
 
 
 def test_lean_native_unknown_telemetry_can_finish_double_review_and_ready(

@@ -228,6 +228,33 @@ def seal_artifact(
             raise ArtifactIntegrityError(
                 f"不可变产物已封印，不得重新封印不同内容：{relative}"
             )
+    if target.is_file():
+        try:
+            existing = json.loads(target.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise ArtifactIntegrityError(
+                f"完整性记录损坏：{target.name}"
+            ) from exc
+        identity = {
+            "schema": ARTIFACT_SEAL_SCHEMA,
+            "slug": slug,
+            "kind": kind,
+            "artifact_path": relative,
+            "artifact_sha256": content_hash,
+        }
+        if (
+            isinstance(existing, dict)
+            and all(existing.get(key) == value for key, value in identity.items())
+            and existing.get("signature") == _sign(root, slug, existing)
+        ):
+            return {
+                "artifact_path": relative,
+                "artifact_sha256": content_hash,
+                "seal_path": str(target),
+            }
+        raise ArtifactIntegrityError(
+            f"完整性记录已存在，不得覆盖：{target.name}"
+        )
     _write_immutable_json(target, payload)
     return {
         "artifact_path": relative,
