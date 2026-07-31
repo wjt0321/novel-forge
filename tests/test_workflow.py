@@ -1569,12 +1569,35 @@ def test_missing_command_backend_starts_native_relay(
         _prose("native completion without a host session id"),
         encoding="utf-8",
     )
+    telemetry_file = tmp_path / "writer-telemetry.json"
+    telemetry_file.write_text(
+        json.dumps(
+            {
+                "input_tokens": 1000,
+                "output_tokens": 6000,
+                "total_tokens": 7000,
+                "elapsed_seconds": 8.5,
+            }
+        ),
+        encoding="utf-8",
+    )
     code = workflow_module.main(
-        ["--root", str(tmp_path), "complete-role", "demo"]
+        [
+            "--root",
+            str(tmp_path),
+            "complete-role",
+            "demo",
+            "--telemetry-file",
+            str(telemetry_file),
+        ]
     )
 
     assert code == 0
     assert capsys.readouterr().out.strip() == "正在自动审稿。"
+    from app.novel_forge.workflow_observability import workflow_cost_summary
+
+    summary = workflow_cost_summary(tmp_path, "demo", chapter=1)
+    assert summary["chapters"][0]["phases"]["writer_draft"]["total_tokens"] == 7000
 
 
 def test_command_workflow_help_marks_native_relay_as_default(
@@ -2250,6 +2273,7 @@ def test_cli_wrapper_runs_without_pythonpath():
     assert "status" in completed.stdout
     assert "retry" in completed.stdout
     assert "stop" in completed.stdout
+    assert "cost-summary" in completed.stdout
 
 
 def test_workflow_cli_rejects_relative_root_before_creating_assets(
@@ -2286,3 +2310,73 @@ def test_workflow_cli_rejects_relative_root_before_creating_assets(
     visible = capsys.readouterr().out
     assert "D:/" in visible
     assert "加引号" in visible
+
+
+def test_cost_summary_cli_reports_json_and_human_view(tmp_path: Path, capsys):
+    from app.novel_forge.workflow_observability import record_call_observation
+
+    record_call_observation(
+        tmp_path,
+        "demo",
+        {
+            "action_id": "native-action-cost-01",
+            "chapter": 1,
+            "role": "writer",
+            "purpose": "draft",
+            "action_kind": "run_role",
+            "outcome": "completed",
+            "started_at": "2026-07-31T01:00:00+00:00",
+            "completed_at": "2026-07-31T01:00:10+00:00",
+            "provider": "provider",
+            "model": "model",
+            "technical_retry_index": 0,
+            "revision_round": 0,
+            "telemetry": {
+                "input_tokens": 100,
+                "output_tokens": 5000,
+                "total_tokens": 5100,
+                "elapsed_seconds": 10,
+            },
+            "body_before": None,
+            "body_after": {"sha256": "1" * 64, "cjk_chars": 5000},
+            "body_changed": True,
+            "must_scope_counts": {},
+            "workflow_effect": "none",
+        },
+    )
+
+    code = workflow_module.main(
+        [
+            "--root",
+            str(tmp_path),
+            "cost-summary",
+            "demo",
+            "--chapter",
+            "1",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["selected_chapters"] == [1]
+    assert payload["chapters"][0]["phases"]["writer_draft"]["total_tokens"] == 5100
+
+    code = workflow_module.main(
+        [
+            "--root",
+            str(tmp_path),
+            "cost-summary",
+            "demo",
+            "--chapter",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert code == 0
+    assert "第 1 章成本摘要" in output
+    assert "Writer 初稿" in output
+    assert "5100" in output
+    assert "100.0%" in output
+    assert "观测数据不参与质量路由" in output

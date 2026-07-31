@@ -9,11 +9,11 @@
 
 当前默认流程只有一条：
 
-`Lead 分发 -> Writer 暂存正文 -> Blind Reader -> Chapter Editor -> 必要时回写同一正文 -> 双审 -> Python 晋升 -> ready`
+`Python/宿主适配器分发 -> Writer 暂存正文 -> Blind Reader -> Chapter Editor -> 必要时局部精确替换或一次集中 Patch -> 双审 -> Python 晋升 -> ready`
 
-`docs/01`–`42` 是架构演进记录。当前默认行为以 `README.md`、`AGENTS.md`、两份
-Novel Forge Skill、`docs/43` 和本文为准。旧文档中的仓库外日常 Capsule、审稿前
-Generation、Lean 完整终态信封或强制分析表不再是默认要求。
+旧 01–42 里程碑已经压缩到 `docs/archive/history.md`。当前默认行为以 `README.md`、
+`AGENTS.md`、两份 Novel Forge Skill、`docs/43`、本文和 `docs/45` 为准。历史要求中的
+仓库外日常 Capsule、审稿前 Generation、Lean 完整终态信封或强制分析表不再是默认要求。
 
 ## 正文与控制面所有权
 
@@ -22,7 +22,7 @@ Generation、Lean 完整终态信封或强制分析表不再是默认要求。
 | 初稿 | `.novel-forge/diff/chNN/writer/draft/正文.md` | Writer 只写该文件 | 最小规划、动作、快照 |
 | 表面修订 | 同上 | Writer 继续修改同一文件 | 汇总 blocking、最多三轮 |
 | 双审 | 同上 | 两个审稿角色各写一个简短 `result_file` | Capsule、哈希、结果规范化 |
-| 文学修订 | 同上 | Writer 按合并 MUST 集中修订 | 冻结 `初稿.md`、立即生成 `修订.diff` |
+| 文学修订 | 同上 | 全部 local 且唯一可定位时只返回 replacements；否则 Writer 按合并 MUST 集中修订 | 冻结 `初稿.md`、Python 精确替换或记录 `修订.diff` |
 | 双审通过 | `chapters/eXX/ch-XX/正文.md` | 无 | CAS 晋升、Generation、Review、Guardian、状态、Git |
 
 双审通过前，正式章节、Generation、Guardian Receipt 和 draft Git checkpoint 都不得
@@ -197,3 +197,29 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 5. **技术重试只处理技术运输。** 规范化、缓存刷新、旧 MUST 清理和已存在 seal 的幂等
    处理必须在 Python 内完成；只有缺 JSON、无效引文、capsule/会话绑定不一致等角色可修复
    的交付问题才重开该角色。错误信息必须携带具体原因，而非笼统称为“审稿会话异常”。
+
+## 2026-07-31：阶段 1 成本观测，不参与质量路由
+
+45 号提案的第一阶段已经实现为本地控制面观测，产出路径和文学门禁保持不变：
+
+1. 每个 Native action 完成或进入技术重试时，写入一次性
+   `.local-guardian/<slug>/workflow-observations/chNN/<action-id>.json`。记录角色、模型、
+   调用目的、可得 token/请求数、耗时来源、重试序号、修订轮次、正文前后摘要和流程后果。
+2. 未知遥测保持 `null`；Relay 的墙钟耗时明确标记为 `relay_wall_clock`。可选
+   `complete-role --telemetry-file` 损坏时只留下 warning，不能触发正文或审稿重做。
+3. 审稿 MUST 可抽样标注 `local|structural|blocking`，旧字符串归为 `unclassified`。此标签
+   阶段 1 时尚不驱动局部 Patch；阶段 3 已将该字段接入真实路由，但只接受全部 local 且唯一可定位的连续段落。
+4. `cost-summary` 只向作者展示初稿、首轮双审、Patch、复审和重试成本。观测数据不进入
+   Writer/Reader/Editor capsule，不改变硬门、晋升、作者批准或发布资格。
+5. 观测文件由 Python 写入后会刷新下一动作的完整性基线；创作角色仍不得修改
+   `.local-guardian`，控制面新增记录不会被误报为角色越权。
+
+
+## 2026-07-31：阶段 2--5 路由审计
+
+1. Writer capsule 新增受保护 `writer-context.md`，默认 P0/P1/P2 有界装配；旧 handoff 仍被 Guardian 校验但不再默认作为 Writer 全量输入。
+2. 卷级 `voice-bible-vNN.md` 是作者可维护的声音覆盖；模型连续性由本地策略记录，角色不能自行决定或补造模型。
+3. 局部 Patch 必须同时满足：所有开放 MUST 为 `local`、证据位于唯一连续段落、正文 SHA 未变化、返回 target 集合与签发集合完全一致。Python 替换后重跑完整正文硬检和完整双审。
+4. 动作声明宿主能力档、Python/宿主适配器 dispatcher 和 `lead_involved=false`。Exploration 在双审后仍被 Python 阻止晋升，不能通过弱 Lead 自写自审获得 formal ready。
+5. 高风险确认发生在双审通过后、正式晋升前。硬预算只阻止首轮双审之后的自动追加 Patch/复审调用；正文、MUST 和双审绑定均保留，继续必须有作者依据。
+6. 以上路由均不改变 5000 CJK、硬禁令、核心双审、最多一次文学 Patch、Canon candidate/promotion、`author_approval=False` 或 `publication_eligibility=False`。

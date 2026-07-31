@@ -143,11 +143,52 @@ class WorkflowRequest:
     world: str
     conflict: str
     ending_hook: str
+    writer_context_mode: str = "minimal"
+    writer_model: str = "unknown"
+    volume: int = 1
+    host_capability: str = "native-isolated"
+    chapter_risk: str = "standard"
+    soft_token_budget: int | None = None
+    hard_token_budget: int | None = None
 
     def validate(self) -> None:
-        for name, value in asdict(self).items():
+        for name in (
+            "title", "genre", "protagonist", "world", "conflict", "ending_hook"
+        ):
+            value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise WorkflowError(f"{name} 不能为空。")
+        from .workflow_iteration import (
+            CHAPTER_RISK_LEVELS,
+            HOST_CAPABILITY_TIERS,
+            WRITER_CONTEXT_MODES,
+        )
+
+        if not isinstance(self.writer_model, str) or not self.writer_model.strip():
+            raise WorkflowError("writer_model 不能为空字符串。")
+        if self.writer_context_mode not in WRITER_CONTEXT_MODES:
+            raise WorkflowError("Writer 上下文模式必须是 minimal 或 full。")
+        if self.volume < 1:
+            raise WorkflowError("volume 必须大于等于 1。")
+        if self.host_capability not in HOST_CAPABILITY_TIERS:
+            raise WorkflowError("未知宿主能力档。")
+        if self.chapter_risk not in CHAPTER_RISK_LEVELS:
+            raise WorkflowError("未知章节风险等级。")
+        for name in ("soft_token_budget", "hard_token_budget"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                raise WorkflowError(f"{name} 必须为正整数。")
+        if (
+            self.soft_token_budget is not None
+            and self.hard_token_budget is not None
+            and self.soft_token_budget > self.hard_token_budget
+        ):
+            raise WorkflowError("soft_token_budget 不能大于 hard_token_budget。")
+
+    def validate_formal_production(self) -> None:
+        self.validate()
+        if self.host_capability == "exploration":
+            raise WorkflowError("宿主能力仅为 Exploration，不能进入正式生产。")
 
 
 @dataclass(frozen=True)
@@ -187,6 +228,7 @@ class ReviewFinding:
     reader_effect: str
     revision_intent: str
     status: str = "open"
+    scope: str = "unclassified"
 
 
 @dataclass(frozen=True)
@@ -2756,7 +2798,7 @@ def _start_request_from_args(
     args: argparse.Namespace,
     relay: Any,
 ) -> WorkflowRequest:
-    """Resolve first-chapter metadata or reuse the persisted book request."""
+    """Resolve first-chapter metadata and optional workflow policy overrides."""
     values = {
         "title": args.title,
         "genre": args.genre,
@@ -2765,20 +2807,31 @@ def _start_request_from_args(
         "conflict": args.conflict,
         "ending_hook": args.hook,
     }
+    policy_values = {
+        "writer_context_mode": args.writer_context_mode,
+        "writer_model": args.writer_model,
+        "volume": args.volume,
+        "host_capability": args.host_capability,
+        "chapter_risk": args.chapter_risk,
+        "soft_token_budget": args.soft_token_budget,
+        "hard_token_budget": args.hard_token_budget,
+    }
     provided = {key: value for key, value in values.items() if value is not None}
+    policy_overrides = {
+        key: value for key, value in policy_values.items() if value is not None
+    }
     if not provided and args.chapter > 1:
         try:
-            return relay._request_from_state(relay._load_state(args.slug))
+            persisted = relay._request_from_state(relay._load_state(args.slug))
         except WorkflowError as exc:
             raise WorkflowError(
                 "开始后续章节时找不到第一章的书籍信息；请补齐全部元数据。"
             ) from exc
+        return replace(persisted, **policy_overrides)
     missing = [key for key, value in values.items() if not value]
     if missing:
-        raise WorkflowError(
-            "start 缺少书籍信息：" + ", ".join(missing)
-        )
-    return WorkflowRequest(**values)
+        raise WorkflowError("start 缺少书籍信息：" + ", ".join(missing))
+    return WorkflowRequest(**values, **policy_overrides)
 
 
 def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
@@ -2796,7 +2849,7 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
     }
     label = labels.get(role, role)
     print(f"下一步：委派 {label}。")
-    print("使用宿主的独立角色/会话执行；Lead 不代写、不代审。")
+    print("由 Python/宿主适配器调度独立角色；Lead 不接触状态机细节。")
     capsule = action.get("capsule")
     review_capsule = action.get("review_capsule")
     if isinstance(capsule, dict):
@@ -2809,6 +2862,58 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
         print("按当前角色任务执行，不创建控制面或额外文件。")
     print("等待宿主报告该角色已完成后，执行：")
     print(f"complete-role {slug}")
+
+
+def _print_cost_summary(summary: dict[str, Any]) -> None:
+    """Render a compact author-facing cost summary."""
+    labels = {
+        "planning": "规划",
+        "writer_draft": "Writer 初稿",
+        "initial_review": "首轮双审",
+        "patch": "集中修订",
+        "re_review": "复审",
+        "control_plane": "控制面",
+        "other": "其他",
+    }
+    chapters = summary.get("chapters")
+    if not isinstance(chapters, list) or not chapters:
+        print("当前没有可汇总的调用观测。")
+        print("观测数据不参与质量路由、作者批准或发布资格判断。")
+        return
+    for chapter in chapters:
+        print(f"第 {chapter['chapter']} 章成本摘要")
+        phases = chapter.get("phases")
+        phases = phases if isinstance(phases, dict) else {}
+        for name, label in labels.items():
+            metrics = phases.get(name)
+            if not isinstance(metrics, dict) or not metrics.get("call_count"):
+                continue
+            unknown = int(metrics.get("unknown_token_calls") or 0)
+            token_text = str(metrics.get("total_tokens") or 0)
+            if unknown:
+                token_text += f"（{unknown} 次 token 未知）"
+            share = metrics.get("known_token_share")
+            share_text = (
+                f"，已知 token 占比 {float(share) * 100:.1f}%"
+                if isinstance(share, (int, float))
+                else ""
+            )
+            print(
+                f"- {label}: {metrics['call_count']} 次，"
+                f"{token_text} token，"
+                f"{metrics.get('elapsed_seconds', 0)} 秒"
+                f"{share_text}"
+            )
+        scopes = chapter.get("must_scope_counts")
+        if isinstance(scopes, dict) and any(scopes.values()):
+            print(
+                "- MUST 范围抽样: "
+                f"local={scopes.get('local', 0)}，"
+                f"structural={scopes.get('structural', 0)}，"
+                f"blocking={scopes.get('blocking', 0)}，"
+                f"unclassified={scopes.get('unclassified', 0)}"
+            )
+    print("观测数据不参与质量路由、作者批准或发布资格判断。")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2839,6 +2944,24 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--world")
     start.add_argument("--conflict")
     start.add_argument("--hook")
+    start.add_argument(
+        "--writer-context-mode", choices=("minimal", "full")
+    )
+    start.add_argument("--writer-model")
+    start.add_argument("--volume", type=int)
+    start.add_argument(
+        "--host-capability",
+        choices=("native-isolated", "managed-relay", "exploration"),
+    )
+    start.add_argument(
+        "--chapter-risk",
+        choices=(
+            "standard", "volume_start", "volume_end", "major_turn",
+            "character_death", "core_reveal",
+        ),
+    )
+    start.add_argument("--soft-token-budget", type=int)
+    start.add_argument("--hard-token-budget", type=int)
     for name in ("status", "retry", "stop"):
         command = sub.add_parser(name)
         command.add_argument("slug")
@@ -2857,6 +2980,30 @@ def main(argv: list[str] | None = None) -> int:
     complete.add_argument("--provider", default="unknown")
     complete.add_argument("--model", default="unknown")
     complete.add_argument("--agent-harness", default="native-host")
+    complete.add_argument(
+        "--telemetry-file",
+        type=Path,
+        help="宿主可选调用遥测 JSON；无效或缺失不会触发角色重做。",
+    )
+    cost_summary = sub.add_parser("cost-summary")
+    cost_summary.add_argument("slug")
+    cost_summary.add_argument("--chapter", type=int)
+    cost_summary.add_argument("--recent", type=int, default=5)
+    cost_summary.add_argument("--json", action="store_true")
+    approve_model = sub.add_parser("approve-writer-model")
+    approve_model.add_argument("slug")
+    approve_model.add_argument("--volume", type=int, required=True)
+    approve_model.add_argument("--model", required=True)
+    approve_model.add_argument("--reference", required=True)
+    approve_risk = sub.add_parser("approve-high-risk")
+    approve_risk.add_argument("slug")
+    approve_risk.add_argument("--reference", required=True)
+    continue_budget = sub.add_parser("continue-budget")
+    continue_budget.add_argument("slug")
+    continue_budget.add_argument("--reference", required=True)
+    capability = sub.add_parser("capability")
+    capability.add_argument("slug")
+    capability.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if args.root is None:
         args.root = Path.cwd().resolve()
@@ -2869,12 +3016,68 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args.root = args.root.resolve()
     try:
+        if args.operation == "approve-writer-model":
+            from .workflow_iteration import approve_writer_model_switch
+
+            approved = approve_writer_model_switch(
+                args.root, args.slug, volume=args.volume, model=args.model,
+                decision_reference=args.reference,
+            )
+            print(f"Writer 模型已批准：{approved['model']}")
+            return 0
+        if args.operation == "cost-summary":
+            from .workflow_observability import workflow_cost_summary
+
+            summary = workflow_cost_summary(
+                args.root,
+                args.slug,
+                chapter=args.chapter,
+                recent_chapters=args.recent,
+            )
+            if args.json:
+                print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+            else:
+                _print_cost_summary(summary)
+            return 0
+
         from .native_relay import NativeWorkflowRelay
 
         relay = NativeWorkflowRelay(
             args.root,
             strict_audit=args.strict_audit,
         )
+        if args.operation == "approve-high-risk":
+            result = relay.approve_high_risk(
+                args.slug, decision_reference=args.reference
+            )
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        if args.operation == "continue-budget":
+            result = relay.continue_after_budget(
+                args.slug, decision_reference=args.reference
+            )
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        if args.operation == "capability":
+            state = relay._load_state(args.slug)
+            tier = str(state.get("host_capability") or "native-isolated")
+            payload = {
+                "tier": tier,
+                "formal_ready_allowed": bool(
+                    state.get("formal_ready_allowed", tier != "exploration")
+                ),
+                "lead_involved": False,
+                "role_dispatch": "python_or_host_adapter",
+                "publication_eligibility": False,
+            }
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            else:
+                print(
+                    f"宿主能力档：{tier}；"
+                    f"正式 ready：{'允许' if payload['formal_ready_allowed'] else '禁止'}。"
+                )
+            return 0
         if args.operation == "next-action":
             action = relay.next_action(args.slug)
             if args.json:
@@ -2883,6 +3086,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print_next_action_card(action, args.slug)
             return 0
         if args.operation == "complete-role":
+            telemetry: Any = None
+            if args.telemetry_file is not None:
+                try:
+                    telemetry = json.loads(
+                        args.telemetry_file.read_text(encoding="utf-8-sig")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    telemetry = {"warnings": ["telemetry_file_invalid"]}
             if not args.strict_audit:
                 result = relay.complete_minimal(
                     args.slug,
@@ -2892,6 +3103,7 @@ def main(argv: list[str] | None = None) -> int:
                     model=args.model,
                     agent_harness=args.agent_harness,
                     result_file=args.from_file,
+                    telemetry=telemetry,
                 )
             else:
                 if args.from_file is None:
@@ -2903,6 +3115,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if not isinstance(completion, dict):
                     raise WorkflowError("原生角色终态必须是 JSON 对象。")
+                if telemetry is not None:
+                    completion["telemetry"] = telemetry
                 result = relay.complete_role(
                     args.slug,
                     completion,

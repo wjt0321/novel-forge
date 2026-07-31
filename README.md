@@ -50,12 +50,21 @@ Windows 的 Git Bash/类 Bash 必须把根路径写成 `D:/path/to/repo`；未�
 start → next-action → 独立角色完成 → complete-role → 下一动作
 ```
 
+只读成本观测不会进入角色上下文或质量路由。作者可查看：
+
+```powershell
+PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> cost-summary <slug> --chapter 1
+```
+
+宿主若掌握真实 token/耗时，可在 `complete-role` 时附加 `--telemetry-file <json>`；
+缺失或无效遥测保持未知，不得触发正文或审稿重做。
+
 1. 只在第一章执行 `start <slug>` 并给出书籍基本信息；章节 ready 后，按提示执行
    `start <slug> --chapter N+1`，无需重复输入原始设定；
 2. `next-action` 默认只返回一张人类可执行的角色卡。每轮只完成卡上的一个角色，并用宿主
    官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；
 3. Writer 只写暂存正文；Blind Reader 与 Chapter Editor 分别提交各自的简短审稿结果；
-4. `complete-role` 交回控制面。第一次 MUST 只集中修订一次；第二版仍有 MUST 就停在用户
+4. `complete-role` 交回控制面。第一次 MUST 若全部为可唯一定位的 `local` 问题，则只返回 replacement fragments 由 Python 精确替换；否则集中修订一次。局部替换或整章修订后都重新跑完整硬门和双审；第二版仍有 MUST 就停在用户
    决定处，绝不无限循环。双审通过后 Python 才自动晋升章节，并提示下一章或完成状态。
 
 没有命令 Backend 时，`start` 仍会签发宿主原生会话动作。Agent 不得先探索工作流源码、
@@ -143,7 +152,7 @@ app/novel_forge/     # 核心代码（lint / gates / templates / service / adapt
   guardian.py        #   Writer capsule、原子晋升、不可变回执与会话失效
   project_templates.py # 新书骨架生成（规划、记忆、评测与薄壳工具）
 tests/               # pytest 回归测试
-docs/                # 里程碑与实验审计文档
+docs/                # 当前工作流、聚焦参考与压缩后的历史索引
 docs/examples/       # 人味解剖、AI 味反模式与脱敏工作流样本（起草与审稿前必读）
 books/               # 小说项目（一书一目录，项目级隔离；gitignored，仅存本地不上传）
 .local-book-git/     # 每书外置 Git 元数据（gitignored、本地、无 remote）
@@ -166,29 +175,15 @@ research/            # 前期调研
 
 ## 文档地图
 
-- 快速开始：`docs/01-getting-started.md`
-- 数据模型与状态机：`docs/02`
-- 质量门控：`docs/03`、`docs/05`、`docs/06`、`docs/12`、`docs/14`
-- books/ 工作流与 Skill 化：`docs/13`、`docs/15`
-- 外置 Harness 护栏：`docs/24-external-harness-guardrails.md`
-- 章节独立会话：`docs/25-chapter-session-orchestration.md`
-- 文学防过拟合与序列真实性：`docs/26-literary-anti-overfit-and-sequence-truth.md`
-- 每书本地版本历史：`docs/27-per-book-local-git.md`
-- 读者追读与运行真相：`docs/28-reader-pull-and-runtime-truth.md`
-- 隔离 Writer Capsule：`docs/29-isolated-writer-capsule.md`
-- 编译 Writer Prompt：`docs/30-compiled-writer-prompt.md`
-- 自动三角色工作流：`docs/31-automatic-three-role-workflow.md`
-- 文学生产闭环与控制面隔离：`docs/32-literary-production-loop.md`
-- 异步终态、证据封存与 Harness 信任：`docs/33`、`docs/34`、`docs/36`、`docs/37`、`docs/38`
-- 文学短规则与完整解释：`docs/35-literary-rule-manual.md`
-- Python 确定性控制与零污染：`docs/39-deterministic-native-control-and-workspace-hygiene.md`
-- 原生 Relay 双保证模式：`docs/40-native-relay-and-assurance-modes.md`
-- 完成补交与封存 Review Capsule：`docs/41-completion-repair-and-sealed-review-capsules.md`
-- 硬锚、会话与 ready 完整性：`docs/42-hard-anchor-session-and-ready-integrity.md`
+- 总入口与维护规则：`docs/README.md`
 - 正文优先 Lean 原生工作流：`docs/43-fiction-first-lean-native-workflow.md`
 - 现行逻辑审计与恢复矩阵：`docs/44-current-workflow-logic-audit.md`
+- 45 号迭代实现记录：`docs/45-workflow-iteration-proposal.md`
+- 控制面、隔离、证据与恢复：`docs/architecture-reference.md`
+- Voice、场景合同与文学规则：`docs/literary-quality-reference.md`
+- Legacy `library/` 与 SQLite 兼容维护：`docs/legacy-library-reference.md`
+- 历史里程碑、计划和实验结论：`docs/archive/history.md`
 - 写作证据（**写作者必读**）：`docs/examples/human-flavor-anatomy.md`、`docs/examples/ai-flavor-antipatterns.md`
-- 阶段交接（语域配比下一阶段）：`docs/16-register-mixing-handover.md`
 
 ## 边界
 
@@ -201,3 +196,13 @@ research/            # 前期调研
 ## 技术栈
 
 Python 3.12+，仅四个依赖（fastapi、uvicorn、pydantic v2、pytest）；SQLite 用标准库，无 ORM；Pandoc 可选（DOCX/EPUB/PDF 导出）。
+
+
+### 45 号迭代：最小 Writer 包、能力档与风险路由
+
+- Lean Writer 默认读取 capsule 内受保护的 `writer-context.md`（P0/P1/P2）；可用 `start --writer-context-mode full` 做旧完整 handoff 对照。
+- 同卷可用 `--writer-model <name>` 固定 Writer；切换前执行 `approve-writer-model <slug> --volume N --model <name> --reference <作者校准依据>`。
+- `--host-capability native-isolated|managed-relay|exploration` 明确宿主能力；`exploration` 永远不能晋升 formal `ready`。运行 `capability <slug>` 查看当前档。
+- 高风险章用 `--chapter-risk volume_start|volume_end|major_turn|character_death|core_reveal` 标记；双审通过后需 `approve-high-risk <slug> --reference <作者决定依据>`。
+- 可用 `--soft-token-budget N --hard-token-budget N` 设置调用预算。硬预算达到后保留暂存稿和审稿证据，作者可运行 `continue-budget <slug> --reference <继续依据>`。
+- `ready`、高风险确认、预算继续授权均不等于作者批准或可发布；`publication_eligibility` 始终为 `False`。

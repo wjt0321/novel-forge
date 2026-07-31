@@ -37,7 +37,8 @@ python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug>
 - `book_project.py`、`book_gates.py`、`book_git.py`：状态、门禁、本地恢复历史；
 - `book_memory.py`：每书 Markdown Canon 与可重建索引；
 - `planning_spec.py`：章节状态、角色与场景包规则的唯一来源；
-- `review_prompt.py`、`writer_prompt.py`：有字符预算的角色提示词。
+- `review_prompt.py`、`writer_prompt.py`：有字符预算的角色提示词；
+- `workflow_iteration.py`、`workflow_observability.py`：P0/P1/P2 Writer 包、局部 Patch、能力/风险/预算策略与本地成本观测。
 
 修改 books/ 状态、场景包、审稿角色或必填小节时，只改规则单源并补相应测试。代码注释/docstring 英文；面向作者的文档和两份 Novel Forge Skill 主要中文。
 
@@ -45,13 +46,15 @@ python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug>
 
 `Lead 分发 -> Writer 暂存正文 -> Blind Reader -> Chapter Editor -> 至多一次集中 Patch -> 双审 -> Python 晋升 -> ready`
 
-1. `start` 初始化项目并签发当前唯一角色动作；Lead 立即执行 `next-action`，不要先探索仓库、表格、哈希或控制面。
-2. Writer 只写 `books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`；正式章节至少 **5000 个 CJK**。正文禁止提示词、工作流标记、控制面语言、破折号、省略号与否定翻转机械句。
+1. `start` 初始化项目并由 Python/宿主适配器签发当前唯一角色动作；Lead 只发起任务、展示薄状态和转交作者决定，不读取或解释状态机。
+2. 初稿/结构修订 Writer 只写 `books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`；局部 Patch Writer 只写动作指定的 `local-patch/replacements.json`，Python 做精确替换。Writer 默认只读 capsule 的 `writer-context.md` P0/P1/P2 包；正式章节至少 **5000 个 CJK**。正文禁止提示词、工作流标记、控制面语言、破折号、省略号与否定翻转机械句。
 3. Blind Reader 只读当前暂存正文，写紧凑结论；必须给 `human_likeness`、`reader_desire`、余味、追读钩子和原文引句。Chapter Editor 只写 `pass|needs_revision`、完整 MUST、摘要和引句。
 4. 审稿角色只能写动作给定的 `result_file`；Lead 等待宿主官方 completed/failed/timed_out，再执行 `complete-role`。创建、accepted、progress、idle、available 或文件出现都不等于完成。
-5. MUST 回到同一暂存正文集中修订；第二版仍有 MUST 时进入用户决定，禁止无限循环。技术运输失败只重开当前审稿角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
+5. 全部开放 MUST 都是 `local` 且可唯一定位时，优先局部 replacement；否则回到同一暂存正文集中修订。两条路径都在修订后重跑全章硬检与双审；第二版仍有 MUST 时进入用户决定，禁止无限循环。技术运输失败只重开当前角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
 6. 双审通过前不得创建正式章节、Generation、Guardian Receipt、Review History 或 draft Git checkpoint。Python 才能 CAS 晋升、记录证据、推进 `ready`、创建本地 Git checkpoint。
 7. `ready` 不等于作者批准。第 N 章完成后，`next-action` 会明确交接到第 N+1 章；不得把“没有角色动作”解释成自行改 state 或补造证据。
+
+8. 同卷 SHOULD 固定主要 Writer 模型；`--writer-model` 变化必须先由作者用 `approve-writer-model` 记录小样校准。`native-isolated`/`managed-relay` 可正式生产；`exploration` 永远不能 formal ready。卷首卷末、重大转折、角色生死和核心揭示在双审通过后仍需 `approve-high-risk`。硬预算只阻断后续自动追加 Patch/复审调用，不取消首轮双审或放过质量问题。
 
 日常角色只需要作品任务和 capsule 路径。模型、Session、Guardian、Runtime、Git、哈希、表格与技术表单属于 Python 控制面；未知遥测保持 `null`，不得让创作角色猜测、补填或绕过它们。`--strict-audit` 只用于明确审计/基准实验。
 
@@ -68,4 +71,4 @@ python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug>
 
 - 从根目录使用 `PYTHONPATH=.` 跑 pytest；修改状态机、门禁、提示词或 recovery 必须写回归测试，并先跑定向测试再跑全量测试。
 - `books/` 工具必须是 `lint.py`/`book_gates.py` 的薄壳；模板不得复制规则。
-- 更新里程碑功能时同步更新对应 `docs/NN-*.md`。`.agents/skills/novel-forge/SKILL.md` 是 canonical，`.claude/skills/novel-forge/SKILL.md` 必须逐字节镜像。
+- 当前行为变化优先同步 `docs/43-*`、`docs/44-*`、`docs/45-*` 或三份聚焦 reference；不要再为每次里程碑新增编号文档。完成的一次性计划/实验只把耐久结论补入 `docs/archive/history.md`。`.agents/skills/novel-forge/SKILL.md` 是 canonical，`.claude/skills/novel-forge/SKILL.md` 必须逐字节镜像。

@@ -45,6 +45,17 @@ def test_lean_blind_reader_writes_only_the_compact_result_file():
     assert "不要填写技术终态" in prompt.text
     assert "Runtime" in prompt.text
     assert "宿主正式结果通道" not in prompt.text
+    assert "scope=local|structural|blocking" in prompt.text
+    assert "只用于成本观测" in prompt.text
+    assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
+
+
+def test_lean_editor_samples_must_scope_without_routing_the_patch():
+    prompt = render_review_instructions("chapter-editor", lean=True)
+
+    assert "scope=local|structural|blocking" in prompt.text
+    assert "只用于成本观测" in prompt.text
+    assert "Python 仍按现行章节级集中修订" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 

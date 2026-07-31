@@ -9,7 +9,7 @@ description: 在 S-Black Novel Forge 中以最小控制面完成通用、厂商�
 
 ## 只记住这条链
 
-`start -> next-action -> 独立角色完成 -> complete-role -> 下一动作`
+`start -> Python/宿主适配器签发受限角色 -> complete-role -> 下一动作/作者决定`
 
 ```text
 Writer 暂存正文
@@ -21,13 +21,21 @@ Writer 暂存正文
 
 不要先探索仓库、读旧会话、调表、计算哈希、补状态、改 capsule 或配置 Harness。Python 创建项目骨架、动作、证据、状态和本地恢复点；Lead 只分发、等待和调用命令。
 
-## 用户/Lead 的三个命令
+## 用户/Lead 的三个生产命令
 
 ```powershell
 python tools/novel-workflow.py --root <绝对根目录> start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 python tools/novel-workflow.py --root <绝对根目录> next-action <slug>
 python tools/novel-workflow.py --root <绝对根目录> complete-role <slug>
 ```
+
+作者需要查看成本时，另运行只读命令：
+
+```powershell
+python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--chapter N]
+```
+
+成本观测不进入角色上下文、不改变路由；未知 token/耗时保持 null，不能因此重做正文或审稿。
 
 - `next-action <slug>` 默认是简明角色交接卡，不显示 JSON、哈希、Session 或 Guardian。只有宿主程序集成使用 `--json`。
 - 每次只执行卡片上的一个角色。创建角色后必须使用宿主官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；created、accepted、progress、idle、available 或文件稳定都不算完成。
@@ -62,3 +70,12 @@ python tools/novel-workflow.py --root <绝对根目录> complete-role <slug>
 创作角色只允许写当前书的动作允许路径；不得创建、注册、修改或安装宿主专用 Agent 类型，不得写 `.claude/agents`、Harness、SessionBackend、`NOVEL_FORGE_HARNESS_COMMAND`、代码、测试、Skill、状态、证据或其他书。不要直接编辑 `.local-guardian`、SQLite、章节序列、Guardian session 或不可变 evidence。
 
 Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地恢复，禁止 remote/push。稳定叙事策略 ID：`no-deliberate-defects`、`single-winner-branch`、`model-score-not-approval`、`aesthetic-does-not-override-facts`、`exploration-not-ready`、`role-name-not-independence`、`world-not-protagonist-proof`、`expertise-must-be-executable`。需要细节时只打开当前书 capsule 和 `docs/43-fiction-first-lean-native-workflow.md` / `docs/44-current-workflow-logic-audit.md` 的相关段落。
+
+
+## 45 号迭代默认规则
+
+- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包；`full` 只作对照。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`。
+- 仅当全部开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；Python 精确替换后必须重跑完整硬门和 Blind Reader + Chapter Editor。
+- 同卷固定主要 Writer 模型；切换先执行 `approve-writer-model` 记录作者小样校准。模型、Session、哈希与 runtime 仍不交给创作角色猜。
+- `native-isolated` 与 `managed-relay` 可正式生产；`exploration` 只能保留暂存稿/双审结果，永远不能 formal ready。
+- 高风险章双审通过后仍停在作者确认；硬预算只在追加 Patch/复审前断路并保留全部暂存上下文。任何确认都不等于发布批准，`publication_eligibility=False`。

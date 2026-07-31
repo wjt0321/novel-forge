@@ -9,8 +9,9 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from . import book_project
 from .artifact_integrity import record_session_completion
@@ -21,6 +22,7 @@ from .chapter_sequence import (
     rotate_chapter_session,
 )
 from .lint import lint_file
+from .models import NovelForgeError
 from .guardian import (
     GuardianError,
     authorize_regeneration,
@@ -48,6 +50,18 @@ from .workspace_integrity import (
     snapshot_workspace,
     snapshot_workspace_paths,
     workspace_delta,
+)
+from .workflow_observability import (
+    record_call_observation,
+    sanitize_call_telemetry,
+)
+from .workflow_iteration import (
+    apply_local_replacements,
+    evaluate_budget_breaker,
+    evaluate_writer_model,
+    plan_local_patch,
+    require_high_risk_confirmation,
+    display_workflow_state,
 )
 from .workflow import (
     NovelWorkflowOrchestrator,
@@ -405,6 +419,266 @@ class NativeWorkflowRelay:
             prepared.get("draft_output") or "draft/正文.md"
         )
 
+    @staticmethod
+    def _cjk_char_count(text: str) -> int:
+        """Count CJK code points for a prose observation summary."""
+        return sum(
+            1
+            for char in text
+            if "\u3400" <= char <= "\u4dbf"
+            or "\u4e00" <= char <= "\u9fff"
+            or "\uf900" <= char <= "\ufaff"
+        )
+
+    def _body_observation_summary(
+        self,
+        slug: str,
+        state: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return a content-free digest summary of the current staged prose."""
+        candidates: list[Path] = []
+        prepared = state.get("capsule")
+        if isinstance(prepared, Mapping):
+            capsule_dir = str(prepared.get("capsule_dir") or "").strip()
+            if capsule_dir:
+                candidates.append(
+                    Path(capsule_dir)
+                    / str(prepared.get("draft_output") or "draft/正文.md")
+                )
+        chapter = state.get("chapter")
+        if isinstance(chapter, int) and not isinstance(chapter, bool):
+            candidates.append(
+                self.root / "books" / slug / _chapter_target_path(chapter)
+            )
+        for candidate in candidates:
+            try:
+                content = candidate.read_bytes()
+                text = content.decode("utf-8-sig")
+            except (OSError, UnicodeDecodeError):
+                continue
+            return {
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "cjk_chars": self._cjk_char_count(text),
+            }
+        return None
+
+    def _call_observation_context(
+        self,
+        slug: str,
+        state: Mapping[str, Any],
+        action: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Capture pre-call facts before a native role can mutate prose."""
+        role = self._phase_role(dict(state))
+        purpose = (
+            "planning"
+            if role == "writer-planning"
+            else "session_setup"
+            if role == "writer-session"
+            else str(action.get("stage") or "draft")
+            if role == "writer"
+            else "review"
+            if role in {"blind-reader", "chapter-editor"}
+            else "other"
+        )
+        counts = state.get("technical_retry_counts")
+        counts = counts if isinstance(counts, Mapping) else {}
+        retry_bucket = self._retry_bucket(dict(state))
+        return {
+            "action_id": str(action["action_id"]),
+            "chapter": int(state["chapter"]),
+            "role": role,
+            "purpose": purpose,
+            "action_kind": str(action.get("kind") or "run_role"),
+            "started_at": datetime.now(UTC).isoformat(),
+            "technical_retry_index": int(counts.get(retry_bucket) or 0),
+            "revision_round": int(state.get("patch_round") or 0),
+            "body_before": self._body_observation_summary(slug, state),
+        }
+
+    @staticmethod
+    def _completion_telemetry(
+        completion: Mapping[str, Any],
+        started_at: str,
+    ) -> dict[str, Any]:
+        """Read optional host telemetry and fall back to Relay wall time."""
+        raw = completion.get("telemetry")
+        if not isinstance(raw, Mapping):
+            runtime = completion.get("runtime_snapshot")
+            if isinstance(runtime, Mapping):
+                usage = runtime.get("usage")
+                timing = runtime.get("timing")
+                usage = usage if isinstance(usage, Mapping) else {}
+                timing = timing if isinstance(timing, Mapping) else {}
+                raw = {
+                    **{
+                        field: usage.get(field)
+                        for field in (
+                            "input_tokens",
+                            "output_tokens",
+                            "cached_input_tokens",
+                            "total_tokens",
+                            "request_count",
+                        )
+                    },
+                    "elapsed_seconds": timing.get("elapsed_seconds"),
+                }
+            else:
+                raw = {}
+        telemetry = sanitize_call_telemetry(raw)
+        if telemetry["elapsed_seconds"] is None:
+            try:
+                started = datetime.fromisoformat(started_at)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
+                elapsed = max(
+                    0.0,
+                    (datetime.now(UTC) - started).total_seconds(),
+                )
+            except (TypeError, ValueError):
+                elapsed = 0.0
+            telemetry["elapsed_seconds"] = round(elapsed, 3)
+            telemetry["elapsed_source"] = "relay_wall_clock"
+        return telemetry
+
+    @staticmethod
+    def _completion_scope_counts(
+        completion: Mapping[str, Any],
+    ) -> dict[str, int]:
+        """Sample review scope labels without using them for routing."""
+        counts = {
+            "local": 0,
+            "structural": 0,
+            "blocking": 0,
+            "unclassified": 0,
+        }
+        role_result = completion.get("role_result")
+        payload = (
+            role_result.get("payload")
+            if isinstance(role_result, Mapping)
+            else None
+        )
+        if not isinstance(payload, dict):
+            return counts
+        for finding in NativeWorkflowRelay._normalized_findings(payload):
+            if finding.severity.upper() != "MUST" or finding.status.lower() != "open":
+                continue
+            scope = (
+                finding.scope
+                if finding.scope in counts
+                else "unclassified"
+            )
+            counts[scope] += 1
+        return counts
+
+    def _observe_call(
+        self,
+        slug: str,
+        context: Mapping[str, Any] | None,
+        completion: Mapping[str, Any],
+        result: WorkflowResult,
+        *,
+        outcome: str,
+        failure_reason: str | None = None,
+        body_after: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist best-effort local metrics without affecting creative work."""
+        if not isinstance(context, Mapping):
+            return
+        try:
+            fresh_state = self._load_state(slug)
+            after = (
+                body_after
+                if body_after is not None
+                else self._body_observation_summary(slug, fresh_state)
+            )
+            before = context.get("body_before")
+            if before is None and after is None:
+                changed: bool | None = None
+            elif isinstance(before, Mapping) and isinstance(after, Mapping):
+                changed = before.get("sha256") != after.get("sha256")
+            else:
+                changed = True
+            effect = "none"
+            if result.user_state == "chapter_complete":
+                effect = "promotion"
+            elif result.user_state == "decision_required":
+                effect = "author_decision"
+            elif (
+                outcome == "completed"
+                and fresh_state.get("phase") == "awaiting_writer"
+                and fresh_state.get("must_findings")
+            ):
+                effect = "revision_requested"
+            session = completion.get("session")
+            session = session if isinstance(session, Mapping) else {}
+            completed_at = datetime.now(UTC).isoformat()
+            observation_path = (
+                self.root
+                / ".local-guardian"
+                / slug
+                / "workflow-observations"
+                / f"ch{int(context['chapter']):02d}"
+                / f"{context['action_id']}.json"
+            )
+            observation_existed = observation_path.is_file()
+            record_call_observation(
+                self.root,
+                slug,
+                {
+                    **dict(context),
+                    "outcome": outcome,
+                    "completed_at": completed_at,
+                    "provider": str(session.get("provider") or "unknown"),
+                    "model": str(session.get("model") or "unknown"),
+                    "telemetry": self._completion_telemetry(
+                        completion,
+                        str(context.get("started_at") or completed_at),
+                    ),
+                    "body_after": after,
+                    "body_changed": changed,
+                    "must_scope_counts": self._completion_scope_counts(
+                        completion
+                    ),
+                    "workflow_effect": effect,
+                    "failure_reason": failure_reason,
+                },
+            )
+            try:
+                self._refresh_active_action_integrity(slug)
+            except (NovelForgeError, OSError, TypeError, ValueError):
+                if not observation_existed:
+                    observation_path.unlink(missing_ok=True)
+                    for directory in (
+                        observation_path.parent,
+                        observation_path.parent.parent,
+                    ):
+                        try:
+                            directory.rmdir()
+                        except OSError:
+                            pass
+                raise
+        except (NovelForgeError, OSError, TypeError, ValueError):
+            return
+
+    def _refresh_active_action_integrity(self, slug: str) -> None:
+        """Rebase the pending action after a control-plane observation write."""
+        state = self._load_state(slug)
+        action_id = str(state.get("action_id") or "").strip()
+        if not action_id or not self._action_path(slug).is_file():
+            return
+        integrity_root = self._integrity_root(slug)
+        _atomic_json(
+            self._snapshot_path(slug, action_id),
+            snapshot_workspace(integrity_root),
+        )
+        create_workspace_backup(
+            integrity_root,
+            self._backup_path(slug, action_id),
+        )
+        if not self.strict_audit:
+            self._write_lean_control_snapshot(slug, action_id)
+
     def _review_result_path(
         self,
         slug: str,
@@ -618,6 +892,7 @@ class NativeWorkflowRelay:
         provider: str = "unknown",
         model: str = "unknown",
         agent_harness: str = "native-host",
+        telemetry: Any = None,
     ) -> WorkflowResult:
         """Complete the current Lean action without a technical envelope."""
         state = self._load_state(slug)
@@ -656,7 +931,7 @@ class NativeWorkflowRelay:
             result_file,
             repair_common_quotes=True,
         )
-        if role == "writer":
+        if role == "writer" and state.get("phase") != "awaiting_local_patch":
             payload = {"artifact_relative_path": "draft/正文.md"}
         completion: dict[str, Any] = {
             "schema": NATIVE_COMPLETION_SCHEMA,
@@ -689,6 +964,8 @@ class NativeWorkflowRelay:
                 session,
                 str(capsule["id"]),
             )
+        if telemetry is not None:
+            completion["telemetry"] = telemetry
         return self.complete_role(slug, completion)
 
     def _relay_dir(self, slug: str) -> Path:
@@ -1021,7 +1298,17 @@ class NativeWorkflowRelay:
             action.pop("completion_template", None)
             role = self._phase_role(state)
             action["result"] = _lean_result_contract(role)
-            if role in {
+            if state.get("phase") == "awaiting_local_patch":
+                action["result"] = {
+                    "schema": "novel-forge-local-patch-result/v1",
+                    "required": ["replacements"],
+                    "replacement_item": ["target", "replacement"],
+                }
+                action["delivery"] = (
+                    "只委派原 Writer 输出 replacement fragments；"
+                    "Lead 不改正文。完成后执行 complete-role。"
+                )
+            elif role in {
                 "writer-planning",
                 "blind-reader",
                 "chapter-editor",
@@ -1054,6 +1341,20 @@ class NativeWorkflowRelay:
                     "Lead 禁止亲自写正文；必须委派 Writer 角色。"
                     "Lead 等待正文落盘后执行 complete-role；无需填写技术表单。"
                 )
+        active_observation = state.get("active_call_observation")
+        if (
+            not isinstance(active_observation, dict)
+            or active_observation.get("action_id") != action["action_id"]
+        ):
+            state["active_call_observation"] = self._call_observation_context(
+                slug,
+                state,
+                action,
+            )
+        action["display_state"] = display_workflow_state(
+            str(state.get("phase") or ""),
+            patch_round=int(state.get("patch_round") or 0),
+        )
         state["action_id"] = action["action_id"]
         state["assurance_mode"] = self.assurance_mode
         _atomic_json(self._state_path(slug), state)
@@ -1286,6 +1587,8 @@ class NativeWorkflowRelay:
                 if must_findings
                 else None
             ),
+            writer_context_mode=request.writer_context_mode,
+            volume=request.volume,
         )
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
@@ -1297,8 +1600,21 @@ class NativeWorkflowRelay:
                 "mode": (
                     "reuse_preferred" if reuse_preferred else "new"
                 ),
-                "must_be_independent": True,
+                "must_be_independent": (
+                    request.host_capability != "exploration"
+                ),
+                "requested_model": (
+                    request.writer_model
+                    if request.writer_model != "unknown"
+                    else None
+                ),
             },
+            "host_capability": request.host_capability,
+            "formal_ready_allowed": (
+                request.host_capability != "exploration"
+            ),
+            "dispatcher": "python_or_host_adapter",
+            "lead_involved": False,
             "lead_must_delegate": True,
             "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
@@ -1308,6 +1624,7 @@ class NativeWorkflowRelay:
                 "operation": prepared["operation"],
                 "instructions": "instructions.md",
                 "handoff": "handoff.md",
+                "context": "writer-context.md",
                 "output": prepared["draft_output"],
             },
             "runtime": {
@@ -1365,6 +1682,32 @@ class NativeWorkflowRelay:
         request.validate()
         self.orchestrator._assert_project_is_managed(slug, chapter)
         book_dir = self.orchestrator._prepare_project(slug, request, chapter)
+        model_policy = evaluate_writer_model(
+            self.root,
+            slug,
+            volume=request.volume,
+            model=request.writer_model,
+        )
+        if model_policy["status"] == "calibration_required":
+            state = {
+                "schema": NATIVE_RELAY_SCHEMA,
+                "slug": slug,
+                "chapter": chapter,
+                "request": asdict(request),
+                "phase": "decision_required",
+                "decision_kind": "writer_model_calibration_required",
+                "writer_model_policy": model_policy,
+                "author_approval": False,
+                "publication_eligibility": False,
+            }
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return WorkflowResult(
+                user_state="decision_required",
+                message="Writer 模型发生变化，请先完成作者小样校准。",
+                sequence_id="",
+                options=("批准校准后重新 start", "保持原 Writer 模型", "停止"),
+            )
         if not self.strict_audit:
             planning = self.orchestrator._prose_first_control_planning(
                 book_dir,
@@ -1394,7 +1737,11 @@ class NativeWorkflowRelay:
                 self.root,
                 slug,
                 chapter,
-                "formal",
+                (
+                    "exploration"
+                    if request.host_capability == "exploration"
+                    else "formal"
+                ),
             )
             book_project.advance_state(
                 self.root,
@@ -1420,6 +1767,12 @@ class NativeWorkflowRelay:
                 "technical_retry_count": 0,
                 "technical_retry_counts": {},
                 "delivery_repair_counts": {},
+                "host_capability": request.host_capability,
+                "formal_ready_allowed": (
+                    request.host_capability != "exploration"
+                ),
+                "chapter_risk": request.chapter_risk,
+                "known_total_tokens": 0,
                 "author_approval": False,
                 "publication_eligibility": False,
             }
@@ -1824,6 +2177,9 @@ class NativeWorkflowRelay:
     ) -> WorkflowResult:
         """Accept one official native terminal and issue the next action."""
         state = self._load_state(slug)
+        telemetry = sanitize_call_telemetry(completion.get("telemetry"))
+        current_tokens = telemetry.get("total_tokens")
+        observation = state.get("active_call_observation")
         try:
             action_id = self._active_snapshot_action_id(slug) or str(
                 state.get("action_id") or ""
@@ -1833,26 +2189,34 @@ class NativeWorkflowRelay:
                 action_id,
             )
             state = self._load_state(slug)
+            if isinstance(current_tokens, int):
+                state["known_total_tokens"] = (
+                    int(state.get("known_total_tokens") or 0) + current_tokens
+                )
+                _atomic_json(self._state_path(slug), state)
             phase = state.get("phase")
-            if phase == "awaiting_writer":
-                return self._complete_writer(slug, state, completion)
-            if phase in {
+            if phase == "awaiting_local_patch":
+                result = self._complete_local_patch(slug, state, completion)
+            elif phase == "awaiting_writer":
+                result = self._complete_writer(slug, state, completion)
+            elif phase in {
                 "awaiting_patch_writer_session",
                 "awaiting_writer_session",
             }:
-                return self._complete_patch_writer_session(
+                result = self._complete_patch_writer_session(
                     slug,
                     state,
                     completion,
                 )
-            if phase in {
+            elif phase in {
                 "awaiting_blind_reader",
                 "awaiting_chapter_editor",
             }:
-                return self._complete_review(slug, state, completion)
-            if phase != "awaiting_writer_planning":
+                result = self._complete_review(slug, state, completion)
+            elif phase == "awaiting_writer_planning":
+                result = self._complete_planning(slug, state, completion)
+            else:
                 raise WorkflowError("当前没有等待中的可回传角色。")
-            return self._complete_planning(slug, state, completion)
         except NativeCompletionRepairError as exc:
             state = self._load_state(slug)
             return self._request_completion_repair(
@@ -1862,20 +2226,51 @@ class NativeWorkflowRelay:
             )
         except NativeWorkspaceMutationError as exc:
             state = self._load_state(slug)
+            failed_body = self._body_observation_summary(slug, state)
             self._remember_failed_completion_session(state, completion)
-            return self._recover_technical_failure(
+            result = self._recover_technical_failure(
                 slug,
                 state,
                 failure_reason=exc.reason,
             )
+            self._observe_call(
+                slug,
+                observation,
+                completion,
+                result,
+                outcome="failed",
+                failure_reason=exc.reason,
+                body_after=failed_body,
+            )
+            return result
         except (GuardianError, WorkflowError, OSError, ValueError) as exc:
             state = self._load_state(slug)
+            failed_body = self._body_observation_summary(slug, state)
             self._remember_failed_completion_session(state, completion)
-            return self._recover_technical_failure(
+            reason = f"{type(exc).__name__}: {exc}"
+            result = self._recover_technical_failure(
                 slug,
                 state,
-                failure_reason=f"{type(exc).__name__}: {exc}",
+                failure_reason=reason,
             )
+            self._observe_call(
+                slug,
+                observation,
+                completion,
+                result,
+                outcome="failed",
+                failure_reason=reason,
+                body_after=failed_body,
+            )
+            return result
+        self._observe_call(
+            slug,
+            observation,
+            completion,
+            result,
+            outcome="completed",
+        )
+        return result
 
     @staticmethod
     def _review_retry_message(failure_reason: str) -> str:
@@ -1894,7 +2289,7 @@ class NativeWorkflowRelay:
             return "blind-reader"
         if phase == "awaiting_chapter_editor":
             return "chapter-editor"
-        if phase == "awaiting_patch_writer_session":
+        if phase in {"awaiting_patch_writer_session", "awaiting_local_patch"}:
             return "patch-writer"
         if phase == "awaiting_writer" and state.get("must_findings"):
             return "patch-writer"
@@ -2924,6 +3319,12 @@ class NativeWorkflowRelay:
                         ),
                         revision_intent=note,
                         status=str(item.get("status") or "open"),
+                        scope=(
+                            str(item.get("scope") or "unclassified").lower()
+                            if str(item.get("scope") or "").lower()
+                            in {"local", "structural", "blocking"}
+                            else "unclassified"
+                        ),
                     )
                 )
             else:
@@ -2937,6 +3338,7 @@ class NativeWorkflowRelay:
                             reader_effect=note,
                             revision_intent=note,
                             status="open",
+                            scope="unclassified",
                         )
                     )
         return tuple(findings)
@@ -3291,6 +3693,193 @@ class NativeWorkflowRelay:
             must.append("Chapter Editor 判定需要修订，请按其审稿总结处理。")
         return tuple(dict.fromkeys(must))
 
+    @staticmethod
+    def _combined_open_must_findings(
+        blind: ReviewOutcome,
+        editor: ReviewOutcome,
+    ) -> tuple[ReviewFinding, ...]:
+        unique: list[ReviewFinding] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in (*blind.findings, *editor.findings):
+            if (
+                item.severity.upper() != "MUST"
+                or item.status.lower() != "open"
+            ):
+                continue
+            key = (item.location, item.evidence, item.revision_intent)
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        return tuple(unique)
+
+    def _request_local_patch(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        findings: tuple[ReviewFinding, ...],
+        plan: list[dict[str, str]],
+    ) -> WorkflowResult:
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        request = self._request_from_state(state)
+        patch_dir = self._diff_dir(slug, chapter) / "local-patch"
+        self._reset_transient_dir(patch_dir)
+        input_path = patch_dir / "input.json"
+        result_path = patch_dir / "replacements.json"
+        body_path = self._staged_body_path(state)
+        body_sha256 = hashlib.sha256(body_path.read_bytes()).hexdigest()
+        _atomic_json(
+            input_path,
+            {
+                "schema": "novel-forge-local-patch-input/v1",
+                "chapter": chapter,
+                "immutable_anchors": {
+                    "core_event": request.conflict,
+                    "chapter_end_goal": request.ending_hook,
+                    "body_sha256": body_sha256,
+                },
+                "instruction": (
+                    "只替换给定连续段落；不得改变核心事件、硬锚点或章末目标。"
+                    "每项返回原 target 与 replacement，不输出完整正文。"
+                ),
+                "targets": plan,
+            },
+        )
+        action = {
+            "schema": NATIVE_ACTION_SCHEMA,
+            "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
+            "kind": "run_role",
+            "role": "writer",
+            "stage": "local-patch",
+            "session": {
+                "mode": "reuse_preferred",
+                "must_be_independent": True,
+            },
+            "lead_must_delegate": True,
+            "lead_may_write_role_output": False,
+            "reasoning_effort": "medium",
+            "input_file": str(input_path),
+            "result_file": str(result_path),
+            "repository_exploration_forbidden": True,
+            "allowed_project_writes": [
+                result_path.relative_to(self._integrity_root(slug)).as_posix()
+            ],
+        }
+        state.update(
+            {
+                "phase": "awaiting_local_patch",
+                "patch_round": 1,
+                "must_findings": [
+                    self.orchestrator._patch_directive(item)
+                    for item in findings
+                ],
+                "local_patch_plan": plan,
+                "local_patch_body_sha256": body_sha256,
+            }
+        )
+        writer = state.get("writer_session")
+        if isinstance(writer, dict):
+            state["control_run_id"] = str(writer.get("session_id") or "")
+        self._reset_active_retry(state, "patch-writer")
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="patching",
+            retries=0,
+            must_findings=tuple(state["must_findings"]),
+        )
+        self._write_action(slug, state, action)
+        return WorkflowResult(
+            user_state="running",
+            message="发现局部问题，正在精确修订。",
+            sequence_id=sequence_id,
+        )
+
+    def _complete_local_patch(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        completion: dict[str, Any],
+    ) -> WorkflowResult:
+        session, role_result, _ = self._validate_completion(
+            state, completion, role="writer"
+        )
+        payload = role_result.get("payload")
+        replacements = payload.get("replacements") if isinstance(payload, dict) else None
+        if not isinstance(replacements, list) or not replacements:
+            raise WorkflowError("局部 Patch 必须返回 replacements 列表。")
+        body_path = self._staged_body_path(state)
+        before = body_path.read_text(encoding="utf-8-sig")
+        expected = str(state.get("local_patch_body_sha256") or "")
+        actual = hashlib.sha256(body_path.read_bytes()).hexdigest()
+        if not expected or actual != expected:
+            raise WorkflowError("局部 Patch 的正文基线已变化，不能替换。")
+        allowed_targets = {
+            str(item.get("target") or "")
+            for item in state.get("local_patch_plan", [])
+            if isinstance(item, dict)
+        }
+        supplied_targets = {
+            str(item.get("target") or "")
+            for item in replacements
+            if isinstance(item, dict)
+        }
+        if supplied_targets != allowed_targets:
+            raise WorkflowError("局部 Patch 返回的 target 与签发范围不一致。")
+        after = apply_local_replacements(before, replacements)
+        body_path.write_text(after, encoding="utf-8")
+        prepared = state.get("capsule")
+        if not isinstance(prepared, dict):
+            raise WorkflowError("局部 Patch 缺少 Writer Capsule 绑定。")
+        surface_findings = self._capsule_surface_findings(prepared)
+        if surface_findings:
+            request = self._request_from_state(state)
+            result = self.orchestrator._decision_result(
+                slug, request, int(state["chapter"]), str(state["sequence_id"]),
+                message="局部修订后硬检查仍有问题，请选择下一步。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="local_patch_hard_gate_failed",
+                must_findings=tuple(surface_findings),
+                parent_generation_id=None,
+            )
+            state["phase"] = "decision_required"
+            state["decision_kind"] = "local_patch_hard_gate_failed"
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return result
+        self._write_staged_diff(state)
+        body_sha256 = hashlib.sha256(body_path.read_bytes()).hexdigest()
+        state.update(
+            {
+                "phase": "awaiting_blind_reader",
+                "body_sha256": body_sha256,
+                "review_session_ids": [],
+                "review_session_instance_ids": [],
+            }
+        )
+        for key in (
+            "blind_outcome", "blind_outcome_source", "blind_session",
+            "editor_outcome", "editor_session", "local_patch_plan",
+            "local_patch_body_sha256",
+        ):
+            state.pop(key, None)
+        self._remember_session(state, session, role="writer", status="completed")
+        self._reset_active_retry(state, "blind-reader")
+        action = self._review_action(slug, state, "blind-reader")
+        request = self._request_from_state(state)
+        self.orchestrator._save_control(
+            slug, request=request, chapter=int(state["chapter"]),
+            sequence_id=str(state["sequence_id"]), phase="reviewing", retries=0,
+        )
+        self._write_action(slug, state, action)
+        return WorkflowResult(
+            user_state="running",
+            message="正在自动审稿。",
+            sequence_id=str(state["sequence_id"]),
+        )
+
     def _request_staged_literary_patch(
         self,
         slug: str,
@@ -3368,6 +3957,116 @@ class NativeWorkflowRelay:
             sequence_id=sequence_id,
         )
 
+    def _finalize_staged_chapter(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        editor_session: SessionIdentity,
+        editor_outcome: ReviewOutcome,
+    ) -> WorkflowResult:
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        request = self._request_from_state(state)
+        blind_payload = state.get("blind_outcome")
+        blind_session_payload = state.get("blind_session")
+        if not isinstance(blind_payload, dict) or not isinstance(
+            blind_session_payload, dict
+        ):
+            raise WorkflowError("正式晋升前缺少 Blind Reader 结果。")
+        blind = self._stored_outcome(blind_payload)
+        self._promote_staged_writer(slug, state)
+        self._record_native_review(
+            slug, state, "blind-reader",
+            SessionIdentity(**blind_session_payload), blind,
+        )
+        self._record_native_review(
+            slug, state, "chapter-editor", editor_session, editor_outcome
+        )
+        book_project.advance_state(
+            self.root, slug, chapter, "blind_read",
+            evidence=f"reviews/ch{chapter:02d}-blind-reader.md",
+        )
+        book_project.advance_state(
+            self.root, slug, chapter, "editorial_reviewed",
+            evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+        )
+        writer_payload = state.get("writer_session")
+        if not isinstance(writer_payload, dict):
+            raise WorkflowError("当前章节缺少 Writer 会话绑定。")
+        result = self.orchestrator._finish_chapter(
+            slug, request, chapter, sequence_id,
+            SessionIdentity(**writer_payload),
+            int(
+                (
+                    state.get("technical_retry_counts")
+                    if isinstance(state.get("technical_retry_counts"), dict)
+                    else {}
+                ).get("chapter-editor")
+                or 0
+            ),
+        )
+        state["phase"] = (
+            "complete"
+            if result.user_state == "chapter_complete"
+            else "decision_required"
+        )
+        _atomic_json(self._state_path(slug), state)
+        self._action_path(slug).unlink(missing_ok=True)
+        return result
+
+    def approve_high_risk(
+        self, slug: str, *, decision_reference: str
+    ) -> WorkflowResult:
+        state = self._load_state(slug)
+        if (
+            state.get("phase") != "decision_required"
+            or state.get("decision_kind") != "high_risk_author_confirmation"
+        ):
+            raise WorkflowError("当前没有待确认的高风险章节。")
+        if not str(decision_reference or "").strip():
+            raise WorkflowError("高风险确认必须提供作者决定依据。")
+        session_payload = state.get("pending_editor_session")
+        outcome_payload = state.get("pending_editor_outcome")
+        if not isinstance(session_payload, dict) or not isinstance(
+            outcome_payload, dict
+        ):
+            raise WorkflowError("高风险确认缺少已完成双审绑定。")
+        state["high_risk_approved"] = True
+        state["high_risk_decision_reference"] = str(decision_reference)
+        state.pop("decision_kind", None)
+        return self._finalize_staged_chapter(
+            slug, state, SessionIdentity(**session_payload),
+            self._stored_outcome(outcome_payload),
+        )
+
+    def continue_after_budget(
+        self, slug: str, *, decision_reference: str
+    ) -> WorkflowResult:
+        state = self._load_state(slug)
+        if (
+            state.get("phase") != "decision_required"
+            or state.get("decision_kind") != "hard_budget_reached"
+        ):
+            raise WorkflowError("当前没有待继续的硬预算断路。")
+        if not str(decision_reference or "").strip():
+            raise WorkflowError("继续调用必须提供作者决定依据。")
+        state["budget_override"] = True
+        state["budget_decision_reference"] = str(decision_reference)
+        findings_payload = state.get("pending_open_must")
+        findings = tuple(
+            ReviewFinding(**item) for item in findings_payload or []
+            if isinstance(item, dict)
+        )
+        must = tuple(str(item) for item in state.get("must_findings", []))
+        plan = plan_local_patch(
+            self._staged_body_path(state).read_text(encoding="utf-8-sig"),
+            findings,
+        )
+        state.pop("decision_kind", None)
+        if plan is not None:
+            return self._request_local_patch(slug, state, findings, plan)
+        return self._request_staged_literary_patch(slug, state, must)
+
     def _complete_staged_review(
         self,
         slug: str,
@@ -3426,6 +4125,7 @@ class NativeWorkflowRelay:
             "blind-reader",
             blind,
         )
+        open_must = self._combined_open_must_findings(blind, outcome)
         must = self._combined_must_findings(blind, outcome)
         if must:
             if int(state.get("patch_round") or 0) >= 1:
@@ -3446,64 +4146,86 @@ class NativeWorkflowRelay:
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
                 return result
+            budget_status = evaluate_budget_breaker(
+                int(state.get("known_total_tokens") or 0),
+                soft_limit=request.soft_token_budget,
+                hard_limit=request.hard_token_budget,
+            )
+            if budget_status == "soft":
+                state["optional_depth_checks_disabled"] = True
+            if budget_status == "hard" and not state.get("budget_override"):
+                state.update(
+                    {
+                        "phase": "decision_required",
+                        "decision_kind": "hard_budget_reached",
+                        "must_findings": list(must),
+                        "pending_open_must": [asdict(item) for item in open_must],
+                        "pending_editor_outcome": asdict(outcome),
+                        "pending_editor_session": asdict(session),
+                    }
+                )
+                _atomic_json(self._state_path(slug), state)
+                self._action_path(slug).unlink(missing_ok=True)
+                return self.orchestrator._decision_result(
+                    slug, request, chapter, sequence_id,
+                    message="已达到硬预算，正文与双审结果已保留，请由作者决定是否继续修订。",
+                    retries=int(state.get("technical_retry_count") or 0),
+                    decision_kind="hard_budget_reached",
+                    must_findings=must,
+                    parent_generation_id=None,
+                )
+            local_plan = plan_local_patch(
+                self._staged_body_path(state).read_text(encoding="utf-8-sig"),
+                open_must,
+            )
+            if local_plan is not None:
+                return self._request_local_patch(
+                    slug, state, open_must, local_plan
+                )
             return self._request_staged_literary_patch(slug, state, must)
 
-        self._promote_staged_writer(slug, state)
-        blind_session = SessionIdentity(**blind_session_payload)
-        self._record_native_review(
-            slug,
-            state,
-            "blind-reader",
-            blind_session,
-            blind,
+        if state.get("formal_ready_allowed") is False:
+            state.update(
+                {
+                    "phase": "decision_required",
+                    "decision_kind": "exploration_only",
+                    "pending_editor_outcome": asdict(outcome),
+                    "pending_editor_session": asdict(session),
+                }
+            )
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return self.orchestrator._decision_result(
+                slug, request, chapter, sequence_id,
+                message="当前宿主能力仅允许探索，草稿与双审结果已保留但不能进入 ready。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="exploration_only",
+                parent_generation_id=None,
+            )
+        if (
+            require_high_risk_confirmation(request.chapter_risk)
+            and not state.get("high_risk_approved")
+        ):
+            state.update(
+                {
+                    "phase": "decision_required",
+                    "decision_kind": "high_risk_author_confirmation",
+                    "pending_editor_outcome": asdict(outcome),
+                    "pending_editor_session": asdict(session),
+                }
+            )
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return self.orchestrator._decision_result(
+                slug, request, chapter, sequence_id,
+                message="本章属于高风险节点，双审已通过，请作者确认后再晋升。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="high_risk_author_confirmation",
+                parent_generation_id=None,
+            )
+        return self._finalize_staged_chapter(
+            slug, state, session, outcome
         )
-        self._record_native_review(
-            slug,
-            state,
-            "chapter-editor",
-            session,
-            outcome,
-        )
-        book_project.advance_state(
-            self.root,
-            slug,
-            chapter,
-            "blind_read",
-            evidence=f"reviews/ch{chapter:02d}-blind-reader.md",
-        )
-        book_project.advance_state(
-            self.root,
-            slug,
-            chapter,
-            "editorial_reviewed",
-            evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
-        )
-        writer_payload = state.get("writer_session")
-        if not isinstance(writer_payload, dict):
-            raise WorkflowError("当前章节缺少 Writer 会话绑定。")
-        result = self.orchestrator._finish_chapter(
-            slug,
-            request,
-            chapter,
-            sequence_id,
-            SessionIdentity(**writer_payload),
-            int(
-                (
-                    state.get("technical_retry_counts")
-                    if isinstance(state.get("technical_retry_counts"), dict)
-                    else {}
-                ).get("chapter-editor")
-                or 0
-            ),
-        )
-        state["phase"] = (
-            "complete"
-            if result.user_state == "chapter_complete"
-            else "decision_required"
-        )
-        _atomic_json(self._state_path(slug), state)
-        self._action_path(slug).unlink(missing_ok=True)
-        return result
 
     def _complete_review(
         self,

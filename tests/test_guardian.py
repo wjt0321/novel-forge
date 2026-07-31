@@ -1172,7 +1172,7 @@ def test_adapter_exposes_guardian_capsule_without_prose(
 def test_control_plane_bypass_sample_is_sanitized_and_actionable():
     sample_path = (
         Path(__file__).parents[1]
-        / "docs/examples/agent-demo-v43-claude-deepseek-control-plane-bypass.json"
+        / "tests/fixtures/agent-demo-v43-control-plane-bypass.json"
     )
     sample = json.loads(sample_path.read_text(encoding="utf-8"))
 

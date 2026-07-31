@@ -10,7 +10,14 @@ from pathlib import Path
 from app.novel_forge import book_project
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.native_relay import NativeWorkflowRelay
-from app.novel_forge.workflow import SessionIdentity, WorkflowRequest, main
+from app.novel_forge.workflow import (
+    NovelWorkflowOrchestrator,
+    ReviewFinding,
+    ReviewOutcome,
+    SessionIdentity,
+    WorkflowRequest,
+    main,
+)
 from tests.test_workflow import (
     ScriptedBackend,
     _must_reviews,
@@ -1567,6 +1574,25 @@ def test_lean_start_dispatches_prose_capsule_as_first_writer_action(
     assert "planning" not in action
 
 
+
+def test_lean_writer_capsule_contains_minimal_p0_p1_p2_package(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    capsule = Path(action["capsule"]["path"])
+    context = capsule / "writer-context.md"
+    manifest = json.loads((capsule / "capsule.json").read_text(encoding="utf-8"))
+
+    assert context.is_file()
+    assert "# P0 必须" in context.read_text(encoding="utf-8")
+    assert "# P1 重要" in context.read_text(encoding="utf-8")
+    assert "# P2 可裁剪参考" in context.read_text(encoding="utf-8")
+    assert action["capsule"]["context"] == "writer-context.md"
+    assert manifest["writer_context_mode"] == "minimal"
+    assert manifest["writer_context_tiers"]["P0"]["budget_cjk"] == 2000
+
 def test_lean_writer_completion_needs_only_the_existing_prose(
     tmp_path: Path,
 ):
@@ -1719,6 +1745,74 @@ def test_lean_mechanical_language_forces_one_consolidated_surface_patch(
     assert "ellipsis" in findings
     assert "not-is-flip" in findings
     assert staged.read_text(encoding="utf-8") == prose
+
+
+def test_lean_all_local_must_uses_fragment_replacement_then_full_rereview(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    prose = _prose("局部修订正文") + "\n\n林舟把铜扣放回左侧口袋，这句解释只出现一次。\n"
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(prose, encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    finding = ReviewFinding(
+        severity="MUST",
+        location="开场段",
+        evidence="林舟把铜扣放回左侧口袋，这句解释只出现一次。",
+        reader_effect="局部解释停顿",
+        revision_intent="只压缩当前段，不改变核心事件",
+        scope="local",
+    )
+    reviews = _must_reviews()
+    local_reviews = (
+        ReviewOutcome(**{**asdict(reviews[0]), "findings": (finding,)}),
+        ReviewOutcome(**{**asdict(reviews[1]), "findings": (finding,)}),
+    )
+    backend = ScriptedBackend([], [local_reviews])
+    for role, outcome in zip(("blind-reader", "chapter-editor"), local_reviews):
+        action = relay.next_action("demo")
+        produced = backend.run_review(
+            SessionIdentity(
+                session_id=f"{role}-session",
+                session_instance_id=f"{role}-session",
+                provider="unknown", model="unknown",
+                agent_harness="native-host", role=role,
+            ),
+            role=role,
+            context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(produced), ensure_ascii=False), encoding="utf-8"
+        )
+        result = relay.complete_minimal("demo")
+
+    patch = relay.next_action("demo")
+    assert result.message == "发现局部问题，正在精确修订。"
+    assert patch["role"] == "writer"
+    assert patch["stage"] == "local-patch"
+    assert patch["result_file"].endswith("replacements.json")
+    payload = json.loads(Path(patch["input_file"]).read_text(encoding="utf-8"))
+    target = payload["targets"][0]["target"]
+    Path(patch["result_file"]).write_text(
+        json.dumps(
+            {"replacements": [{"target": target, "replacement": "林舟把铜扣塞回左侧口袋。"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    completed = relay.complete_minimal("demo")
+
+    assert completed.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"
+    assert "铜扣塞回左侧口袋" in staged.read_text(encoding="utf-8")
+    assert not (root / "books/demo/chapters/e01/ch-01/正文.md").exists()
 
 
 def test_lean_must_findings_return_directly_to_writer_for_one_patch(
@@ -2523,6 +2617,192 @@ def _complete_lean_chapter_with_passes(
     assert result.user_state == "chapter_complete"
 
 
+def _complete_lean_reviews_without_assert(
+    relay: NativeWorkflowRelay, slug: str
+) -> WorkflowResult:
+    result = None
+    for role, payload in (
+        (
+            "blind-reader",
+            {
+                "verdict": "pass", "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "人物选择留下明确余波。",
+                "next_chapter_pull": "下一章的代价仍未揭开。",
+                "summary": "空间、行动和情绪都可以重建。",
+                "evidence_quote": "林舟握住门把",
+            },
+        ),
+        (
+            "chapter-editor",
+            {
+                "verdict": "pass", "must": [],
+                "summary": "因果、选择、对白、肌理和连续性成立。",
+                "evidence_quote": "林舟握住门把",
+            },
+        ),
+    ):
+        action = relay.next_action(slug)
+        assert action["role"] == role
+        Path(action["result_file"]).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        result = relay.complete_minimal(slug)
+    assert result is not None
+    return result
+
+
+def test_high_risk_chapter_waits_for_author_before_promotion(tmp_path: Path):
+    root = tmp_path / "repo"
+    request = WorkflowRequest(
+        **{**asdict(_request()), "chapter_risk": "volume_end"}
+    )
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", request, chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("高风险章"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+
+    decision = _complete_lean_reviews_without_assert(relay, "demo")
+
+    assert decision.user_state == "decision_required"
+    assert relay._load_state("demo")["decision_kind"] == (
+        "high_risk_author_confirmation"
+    )
+    assert not (root / "books/demo/chapters/e01/ch-01/正文.md").exists()
+
+    completed = relay.approve_high_risk(
+        "demo", decision_reference="author-confirmed-volume-end"
+    )
+    assert completed.user_state == "chapter_complete"
+    assert (root / "books/demo/chapters/e01/ch-01/正文.md").is_file()
+
+
+def test_exploration_capability_never_reaches_formal_ready(tmp_path: Path):
+    root = tmp_path / "repo"
+    request = WorkflowRequest(
+        **{**asdict(_request()), "host_capability": "exploration"}
+    )
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", request, chapter=1)
+    action = relay.next_action("demo")
+    assert action["formal_ready_allowed"] is False
+    assert action["lead_involved"] is False
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("探索章"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+
+    result = _complete_lean_reviews_without_assert(relay, "demo")
+
+    assert result.user_state == "decision_required"
+    assert relay._load_state("demo")["decision_kind"] == "exploration_only"
+    assert not (root / "books/demo/chapters/e01/ch-01/正文.md").exists()
+
+
+def test_hard_budget_preserves_double_review_then_waits_before_patch(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    request = WorkflowRequest(
+        **{**asdict(_request()), "hard_token_budget": 100}
+    )
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", request, chapter=1)
+    writer = relay.next_action("demo")
+    (Path(writer["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("预算章"), encoding="utf-8"
+    )
+    relay.complete_minimal(
+        "demo", telemetry={"total_tokens": 150}
+    )
+    backend = ScriptedBackend([], [_must_reviews()])
+    for role in ("blind-reader", "chapter-editor"):
+        action = relay.next_action("demo")
+        outcome = backend.run_review(
+            SessionIdentity(
+                session_id=f"{role}-budget",
+                session_instance_id=f"{role}-budget",
+                provider="unknown", model="unknown",
+                agent_harness="native-host", role=role,
+            ),
+            role=role, context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(outcome), ensure_ascii=False), encoding="utf-8"
+        )
+        result = relay.complete_minimal("demo")
+
+    assert result.user_state == "decision_required"
+    state = relay._load_state("demo")
+    assert state["decision_kind"] == "hard_budget_reached"
+    assert state["known_total_tokens"] == 150
+    assert not (root / "books/demo/chapters/e01/ch-01/正文.md").exists()
+
+    resumed = relay.continue_after_budget(
+        "demo", decision_reference="author-allows-one-patch"
+    )
+    assert resumed.user_state == "running"
+    assert relay.next_action("demo")["stage"] == "patch"
+
+
+def test_writer_model_switch_stops_before_new_writer_until_author_calibrates(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    first = WorkflowRequest(
+        **{**asdict(_request()), "writer_model": "writer-a"}
+    )
+    switched = WorkflowRequest(
+        **{**asdict(_request()), "writer_model": "writer-b"}
+    )
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", first, chapter=1)
+    _complete_lean_chapter_with_passes(
+        relay, "demo", _prose("模型基线章")
+    )
+
+    decision = relay.start("demo", switched, chapter=2)
+
+    assert decision.user_state == "decision_required"
+    assert relay._load_state("demo")["decision_kind"] == (
+        "writer_model_calibration_required"
+    )
+    assert not relay._action_path("demo").exists()
+
+    from app.novel_forge.workflow_iteration import approve_writer_model_switch
+
+    approve_writer_model_switch(
+        root, "demo", volume=1, model="writer-b",
+        decision_reference="author-approved-switch-sample",
+    )
+    resumed = relay.start("demo", switched, chapter=2)
+    assert resumed.user_state == "running"
+    assert relay.next_action("demo")["session"]["requested_model"] == "writer-b"
+
+
+def test_writer_action_exposes_requested_model_without_model_self_selection(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    request = WorkflowRequest(
+        **{**asdict(_request()), "writer_model": "writer-a"}
+    )
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", request, chapter=1)
+
+    action = relay.next_action("demo")
+
+    assert action["session"]["requested_model"] == "writer-a"
+    assert action["dispatcher"] == "python_or_host_adapter"
+    assert action["lead_involved"] is False
+
+
 def test_second_chapter_uses_its_own_episode_target_path(
     tmp_path: Path,
 ):
@@ -2849,3 +3129,234 @@ def test_lean_review_retry_message_exposes_the_invalid_rating_value(
 
     assert "当前值=11" in result.message
     assert "0-10" in result.message
+
+
+def test_lean_records_writer_observation_with_optional_host_telemetry(
+    tmp_path: Path,
+):
+    from app.novel_forge.workflow_observability import workflow_cost_summary
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("观测写作调用"),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        telemetry={
+            "input_tokens": 1200,
+            "output_tokens": 6100,
+            "cached_input_tokens": 300,
+            "total_tokens": 7600,
+            "request_count": 1,
+            "elapsed_seconds": 12.5,
+        },
+    )
+
+    summary = workflow_cost_summary(root, "demo", chapter=1)
+    writer = summary["chapters"][0]["phases"]["writer_draft"]
+    assert result.user_state == "running"
+    assert writer["call_count"] == 1
+    assert writer["total_tokens"] == 7600
+    assert writer["elapsed_seconds"] == 12.5
+    assert writer["body_change_count"] == 1
+
+
+def test_lean_malformed_telemetry_is_observational_not_a_retry_trigger(
+    tmp_path: Path,
+):
+    from app.novel_forge.workflow_observability import workflow_cost_summary
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("坏遥测不重写"),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        telemetry={"input_tokens": "not-a-number", "elapsed_seconds": -4},
+    )
+
+    summary = workflow_cost_summary(root, "demo", chapter=1)
+    chapter = summary["chapters"][0]
+    assert result.user_state == "running"
+    assert result.technical_retry_count == 0
+    assert chapter["phases"]["writer_draft"]["unknown_token_calls"] == 1
+    observation = json.loads(
+        next(
+            (
+                root
+                / ".local-guardian/demo/workflow-observations/ch01"
+            ).glob("*.json")
+        ).read_text(encoding="utf-8")
+    )
+    assert observation["telemetry"]["warnings"] == [
+        "input_tokens_invalid",
+        "elapsed_seconds_invalid",
+    ]
+
+
+def test_lean_failed_writer_call_is_recorded_before_technical_retry(
+    tmp_path: Path,
+):
+    from app.novel_forge.workflow_observability import workflow_cost_summary
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    first_action = relay.next_action("demo")
+
+    result = relay.complete_minimal("demo")
+
+    summary = workflow_cost_summary(root, "demo", chapter=1)
+    chapter = summary["chapters"][0]
+    recorded = json.loads(
+        (
+            root
+            / ".local-guardian/demo/workflow-observations/ch01"
+            / f"{first_action['action_id']}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert result.technical_retry_count == 1
+    assert recorded["outcome"] == "failed"
+    assert recorded["failure_reason"]
+    assert chapter["retry_overlay"]["call_count"] == 1
+
+
+def test_review_scope_is_sampled_without_changing_patch_routing(tmp_path: Path):
+    finding = NativeWorkflowRelay._normalized_findings(
+        {
+            "verdict": "needs_revision",
+            "must": [
+                {
+                    "location": "第九段",
+                    "evidence": "门闩响了一声",
+                    "reader_effect": "动作重复",
+                    "revision_intent": "删去重复动作",
+                    "scope": "local",
+                },
+                "人物选择缺少代价",
+            ],
+        }
+    )
+
+    assert [item.scope for item in finding] == ["local", "unclassified"]
+    assert "scope" not in NovelWorkflowOrchestrator._patch_directive(finding[0])
+
+
+def test_lean_review_observation_counts_sampled_must_scope(tmp_path: Path):
+    from app.novel_forge.workflow_observability import workflow_cost_summary
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    prose = _prose("局部范围抽样")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        prose,
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    blind_action = relay.next_action("demo")
+    quote = "局部范围抽样"
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "needs_revision",
+                "must": [
+                    {
+                        "scope": "local",
+                        "location": "开头",
+                        "evidence": quote,
+                        "reader_effect": "动作重复",
+                        "revision_intent": "删去重复动作",
+                    }
+                ],
+                "human_likeness": "uncertain",
+                "reader_desire": "conditional",
+                "emotional_residue": "紧张感仍在",
+                "next_chapter_pull": "想知道门后是谁",
+                "summary": "存在一处局部重复。",
+                "evidence_quote": quote,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = relay.complete_minimal(
+        "demo",
+        session_id="blind-scope-01",
+        session_instance_id="blind-scope-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        telemetry={"input_tokens": 5200, "output_tokens": 220},
+    )
+
+    summary = workflow_cost_summary(root, "demo", chapter=1)
+    chapter = summary["chapters"][0]
+    assert result.user_state == "running"
+    assert chapter["phases"]["initial_review"]["call_count"] == 1
+    assert chapter["must_scope_counts"]["local"] == 1
+
+
+def test_observation_refresh_failure_rolls_back_local_record_without_breaking_next_role(
+    tmp_path: Path,
+    monkeypatch,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("观测失败回滚"),
+        encoding="utf-8",
+    )
+    original_refresh = relay._refresh_active_action_integrity
+    monkeypatch.setattr(
+        relay,
+        "_refresh_active_action_integrity",
+        lambda slug: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    writer_result = relay.complete_minimal("demo")
+
+    assert writer_result.user_state == "running"
+    observation_root = root / ".local-guardian/demo/workflow-observations"
+    assert not observation_root.exists()
+
+    monkeypatch.setattr(relay, "_refresh_active_action_integrity", original_refresh)
+    blind_action = relay.next_action("demo")
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(
+            {
+                "verdict": "pass",
+                "must": [],
+                "human_likeness": "convincing",
+                "reader_desire": "continue",
+                "emotional_residue": "门后的敲击声仍压在耳边。",
+                "next_chapter_pull": "想知道失踪者是否还活着。",
+                "summary": "现场与人物选择均成立。",
+                "evidence_quote": "观测失败回滚",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    blind_result = relay.complete_minimal(
+        "demo",
+        session_id="blind-after-observation-failure",
+        session_instance_id="blind-after-observation-failure-instance",
+    )
+
+    assert blind_result.technical_retry_count == 0
+    assert relay.next_action("demo")["role"] == "chapter-editor"

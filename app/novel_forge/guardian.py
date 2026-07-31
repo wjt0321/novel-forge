@@ -28,6 +28,7 @@ from .session_audit import (
     evaluate_session_budget,
 )
 from .writer_prompt import render_formal_writer_instructions
+from .workflow_iteration import compile_writer_package
 
 
 CAPSULE_SCHEMA = "novel-forge-writer-capsule/v1"
@@ -46,6 +47,7 @@ _CAPSULE_ALLOWED_FILES = frozenset(
         "guardian-contract.json",
         "handoff.md",
         "instructions.md",
+        "writer-context.md",
         "draft/正文.md",
     }
 )
@@ -378,6 +380,8 @@ def prepare_writer_capsule(
     *,
     regeneration_authorization_id: str | None = None,
     patch_directive: str | None = None,
+    writer_context_mode: str | None = None,
+    volume: int = 1,
 ) -> dict[str, Any]:
     """Create one guarded writer capsule for a claimed session."""
     root = Path(root).resolve()
@@ -487,6 +491,25 @@ def prepare_writer_capsule(
     if target_file.is_file():
         (capsule / "draft/正文.md").write_bytes(target_file.read_bytes())
     (capsule / "handoff.md").write_bytes(handoff_path.read_bytes())
+    writer_package: dict[str, Any] | None = None
+    if writer_context_mode is not None:
+        writer_package = compile_writer_package(
+            root,
+            slug,
+            chapter=chapter,
+            volume=volume,
+            handoff_path=handoff_path,
+            mode=writer_context_mode,
+        )
+        (capsule / "writer-context.md").write_text(
+            str(writer_package["text"]),
+            encoding="utf-8",
+        )
+        manifest["writer_context_mode"] = writer_package["mode"]
+        manifest["writer_context_tiers"] = writer_package["tiers"]
+        manifest["writer_context_sha256"] = _sha256(
+            capsule / "writer-context.md"
+        )
     (capsule / "guardian-contract.json").write_text(
         json.dumps(
             guardian_contract(),
@@ -507,9 +530,12 @@ def prepare_writer_capsule(
         + "\n",
         encoding="utf-8",
     )
+    protected_names = list(_CAPSULE_PROTECTED_FILES)
+    if (capsule / "writer-context.md").is_file():
+        protected_names.append("writer-context.md")
     protected_hashes = {
         name: _sha256(capsule / name)
-        for name in _CAPSULE_PROTECTED_FILES
+        for name in protected_names
     }
     control = {
         **manifest,

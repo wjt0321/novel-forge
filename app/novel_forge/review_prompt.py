@@ -60,8 +60,10 @@ def render_review_instructions(
         delivery = (
             "只把简短 JSON 结论写入动作指定的 result_file：verdict、must、"
             "human_likeness、reader_desire、emotional_residue、"
-            "next_chapter_pull、summary 和 evidence_quote。不要填写技术终态、"
-            "哈希、Session、Runtime、Guardian、Git 或其他表格。"
+            "next_chapter_pull、summary 和 evidence_quote。每条 MUST 用紧凑对象"
+            "标注 scope=local|structural|blocking，并保留位置、原文和理由；该分类"
+            "只用于成本观测，不决定修订路径。不要填写技术终态、哈希、Session、"
+            "Runtime、Guardian、Git 或其他表格。"
             if lean
             else (
                 "通过宿主正式结果通道返回结构化判断，不直接写 reviews、状态或"
@@ -107,9 +109,11 @@ Canon，只判断本章是否成立。检查因果、主角选择与私人代价
 {micro_rules}
 
 若存在不改就会破坏人物选择、逻辑、可读性或核心钩子的问题，返回
-`verdict=needs_revision`，并在 `must` 一次列全。风格偏好不要放进 MUST。若本章成立，
-直接返回 `verdict=pass`。另写一段简短 `summary` 和一条正文原句 `evidence_quote` 即可。
-不填写 hard anchor、分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
+`verdict=needs_revision`，并在 `must` 一次列全。每条 MUST 用紧凑对象标注
+scope=local|structural|blocking，并保留位置、原文和理由；该分类只用于成本观测，
+Python 仍按现行章节级集中修订。风格偏好不要放进 MUST。若本章成立，直接返回
+`verdict=pass`。另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写 hard anchor、
+分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
 """,
             )
         return _prompt(

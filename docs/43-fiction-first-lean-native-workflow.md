@@ -176,11 +176,12 @@ reason to reject a completed chapter.
 
 ## Documentation authority
 
-`README.md`, `AGENTS.md`, both mirrored Novel Forge Skills, this document, and
-`docs/44-current-workflow-logic-audit.md` describe the current default. Earlier
-milestone documents remain useful design history, but old requirements for an
-external daily Writer Capsule, pre-review Generation creation, complete Lean
-terminal envelopes, or mandatory analysis tables do not override v5.4.
+`README.md`, `AGENTS.md`, both mirrored Novel Forge Skills, this document,
+`docs/44-current-workflow-logic-audit.md`, and `docs/45-workflow-iteration-proposal.md`
+describe the current default. Superseded milestones and experiment reports are
+condensed in `docs/archive/history.md`; historical requirements for an external
+daily Writer Capsule, pre-review Generation creation, complete Lean terminal
+envelopes, or mandatory analysis tables do not override the current workflow.
 
 ## Relay handoff and context budget (2026-07-29)
 
@@ -201,3 +202,27 @@ Canonical final-prose paths are derived solely from the chapter number:
 signed artifact identity, preventing a transport retry from turning an already
 valid review into an integrity collision. A changed artifact or invalid
 signature remains a hard failure.
+
+## Phase 1 local cost observations
+
+Lean Native records one local, write-once call observation per Native action under
+`.local-guardian/<slug>/workflow-observations/chNN/`. The record contains nullable host
+tokens, request count, elapsed-time source, technical retry index, revision round, and
+content-free before/after prose summaries. Review MUST scope labels are sampled as
+`local`, `structural`, `blocking`, or `unclassified`, but they do not change the existing
+chapter-level Patch route.
+
+Authors may inspect these records through `cost-summary <slug> [--chapter N]`; host
+integrations may provide actual metrics through `complete-role --telemetry-file`. Missing
+or malformed telemetry is never a reason to regenerate compliant prose or redo an
+accepted review. Cost observations are diagnostic only: they do not change gates,
+promotion, author approval, or `publication_eligibility=False`.
+
+
+## 2026-07-31 iteration 45 routing
+
+Lean Writer capsules now contain a protected `writer-context.md`. Minimal mode compiles bounded P0/P1/P2 context; full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
+
+Review MUST findings affect routing only when every open finding is marked `local` and maps to one unique paragraph. The Writer then returns replacement fragments only; Python performs exact replacement, runs whole-body hard checks, and restarts the complete Blind Reader and Chapter Editor pair. All other findings retain the single chapter-level Patch path.
+
+Host capability is explicit: `native-isolated` and `managed-relay` may run formal production; `exploration` may keep staged prose and review results but cannot promote or reach formal `ready`. High-risk chapter classes stop after the full double review and before promotion for author confirmation. Optional token budgets never waive a quality failure: a hard limit preserves the staged body and review context and stops before additional Patch/re-review calls.
