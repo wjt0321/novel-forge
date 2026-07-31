@@ -117,9 +117,9 @@ Python 编译 Writer 包，而不是把资料目录、长规则或整个历史�
 
 | 层 | 内容 | 建议预算 | 原则 |
 |---|---|---:|---|
-| P0 必须 | 本章场景契约、必须保持的硬锚、章末目标、上章承接片段 | 1,200–2,000 CJK | 缺失即无法写 |
-| P1 重要 | 本章出场角色状态卡、与场景直接有关的 canon、最多两条伏笔 | 600–1,200 CJK | 只保留当章会影响选择的事实 |
-| P2 风格 | 本卷声音卡和 1–2 段作者已认可的正例摘要 | 300–800 CJK | 定义叙事功能，不复制句法外壳 |
+| P0 必须 | 本章场景压力、人物选择与代价、硬锚、章末目标、上章结尾 | ≤1,500 CJK | 缺失即无法写 |
+| P1 重要 | 人物状态、直接 canon、最多两条伏笔、关系摩擦与感知偏差 | ≤850 CJK | 只保留当章会影响选择的事实 |
+| P2 风格 | 书级声音基础与卷级覆盖的功能摘要 | ≤450 CJK | 定义叙事功能，不复制句法外壳 |
 
 上章承接应默认是“结尾片段 + 可靠摘要”，不是整章全文；只有 Chapter Editor 或作者明确标记为高连续性风险时，才扩大到更长上下文。
 
@@ -389,8 +389,8 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 
 ### 阶段 2：最小 Writer 包与声音资产
 
-- Guardian 在 Lean Writer capsule 中生成受保护的 `writer-context.md`。默认 `minimal` 模式由 Python 编译 P0/P1/P2：P0 不超过 2000 CJK，P1 不超过 1200 CJK，P2 不超过 800 CJK；`full` 保留旧 handoff 作为对照开关。
-- P0 带当前场景契约、硬锚点、章末目标与上一章结尾；P1 带直接人物/Canon 与最多两个承诺；P2 带书级声音基础和卷级覆盖。
+- Guardian 在 Lean Writer capsule 中生成受保护的 `writer-context.md`。默认 `minimal` 模式由 Python 编译 P0/P1/P2：上限分别为 1500/850/450 CJK，总预算不超过 2800 CJK；`full` 保留旧 handoff 作为对照开关。
+- P0 优先当前场景压力、人物选择与私人代价、硬锚点、章末目标和上一章结尾；P1 带直接人物/Canon、最多两个承诺，以及原 Scene Package 中的私人欲望、关系摩擦和感知偏差；P2 只带书级声音基础和卷级覆盖。编辑专用替代解释不进入 Writer 核心。
 - 当前卷按需创建 `memory/voice-bible-vNN.md`，记录叙事距离、信息释放、对白/沉默、选择与私人代价、认可范例及 Writer 模型切换。模型基线存于本地控制面；不同模型未经 `approve-writer-model` 校准不能无声进入该卷。
 
 ### 阶段 3：局部 Patch
@@ -410,3 +410,13 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 - `volume_start`、`volume_end`、`major_turn`、`character_death`、`core_reveal` 在完整双审通过后、正式晋升前进入作者确认；`approve-high-risk` 才允许 Python 晋升。普通章仍保持标准双审，不增加无限角色。
 - 可选软/硬 token 预算由 `start` 参数保存。软预算只关闭 optional 深度检查；硬预算不取消已经要求的首轮双审，只在准备追加 Patch/复审调用时保存正文、MUST 和双审结果并进入作者决定。`continue-budget` 可由作者明确授权继续一次。
 - 所有新状态继续写明 `author_approval=False`、`publication_eligibility=False`；高风险确认和预算继续授权也不等于发布批准。
+
+## 2026-07-31 文学核心压缩实施结果
+
+本轮不增加角色、状态、模型调用或规划文件，只压缩现有 Writer、双审和本地观测：
+
+1. **Writer 核心**：默认上下文从 4000 CJK 上限压到 2800 CJK；Scene Package 在原文件内加入私人欲望、关系摩擦、感知偏差。Writer 只读 `writer-context.md`，写完后在同一次调用中静默删去重复解释和最机械的一处重复反应，不输出检查过程。
+2. **零调用纹理提示**：纯 Python 统计段首重复、延迟反应套语、解释回声、句长方差和重复短语。结果只进入 `narrative_report`、Lean Editor 的至多 160 字提示及成本摘要，`blocking=False`、`routing_affected=False`；它不判断作者身份，也不认证文学价值。
+3. **双审阈值**：Blind Reader 的 `uncertain` 默认不触发修订；`synthetic` 必须引用正文证据，并返回 `needs_revision` 与恰好一条 `structural` MUST。Chapter Editor 独立检查逻辑，只在问题分布广、值得唯一一次修订时确认。
+4. **调用不扩张**：默认角色仍只有 Writer、Blind Reader、Chapter Editor；章节状态不变，`MAX_AUTOMATIC_GENERATIONS=2`，即初稿加至多一次文学修订。局部 replacement 和章节级 Patch 均沿用现有路由。
+5. **省 token**：先减少 Writer 输入，再用确定性提示帮助现有 Editor 聚焦；不增设“去味 Agent”、评分矩阵、全文第三审或自动循环。

@@ -39,6 +39,7 @@ _EFFECT_NAMES = (
     "promotion",
     "author_decision",
 )
+_TEXTURE_RISK_NAMES = ("low", "medium", "high", "unknown")
 
 
 class WorkflowObservabilityError(NovelForgeError):
@@ -184,7 +185,16 @@ def _body_summary(value: Any, field: str) -> dict[str, Any] | None:
     cjk_chars = _nonnegative_int(value.get("cjk_chars"))
     if not re.fullmatch(r"[0-9a-f]{64}", digest) or cjk_chars is None:
         raise WorkflowObservabilityError(f"{field} 正文摘要无效。")
-    return {"sha256": digest, "cjk_chars": cjk_chars}
+    texture_risk = str(
+        value.get("literary_texture_risk") or "unknown"
+    ).strip()
+    if texture_risk not in _TEXTURE_RISK_NAMES:
+        texture_risk = "unknown"
+    return {
+        "sha256": digest,
+        "cjk_chars": cjk_chars,
+        "literary_texture_risk": texture_risk,
+    }
 
 
 def _scope_counts(value: Any) -> dict[str, int]:
@@ -353,6 +363,7 @@ def _chapter_summary(chapter: int, records: list[dict[str, Any]]) -> dict[str, A
     retry_overlay = _empty_metrics()
     scopes = {name: 0 for name in _SCOPE_NAMES}
     effects = {name: 0 for name in _EFFECT_NAMES}
+    texture_risks = {name: 0 for name in _TEXTURE_RISK_NAMES}
     for record in records:
         _add_record(phases[_phase(record)], record)
         _add_record(totals, record)
@@ -366,6 +377,15 @@ def _chapter_summary(chapter: int, records: list[dict[str, Any]]) -> dict[str, A
                 scopes[name] += _nonnegative_int(source_scopes.get(name)) or 0
         effect = str(record.get("workflow_effect") or "none")
         effects[effect if effect in effects else "none"] += 1
+        body_after = record.get("body_after")
+        texture_risk = (
+            str(body_after.get("literary_texture_risk") or "unknown")
+            if isinstance(body_after, Mapping)
+            else "unknown"
+        )
+        texture_risks[
+            texture_risk if texture_risk in texture_risks else "unknown"
+        ] += 1
     known_total = int(totals["total_tokens"] or 0)
     if known_total > 0:
         totals["known_token_share"] = 1.0
@@ -386,6 +406,7 @@ def _chapter_summary(chapter: int, records: list[dict[str, Any]]) -> dict[str, A
         "retry_overlay": retry_overlay,
         "must_scope_counts": scopes,
         "workflow_effect_counts": effects,
+        "literary_texture_risk_counts": texture_risks,
     }
 
 

@@ -78,7 +78,7 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     literary_rules = (
         book_dir / "evaluation" / "literary-micro-rules.md"
     ).read_text(encoding="utf-8")
-    assert "literary-micro-rules/v4" in literary_rules
+    assert "literary-micro-rules/v5" in literary_rules
     assert "可以写：" in literary_rules
     assert "绝对禁止：" in literary_rules
     assert "用户硬锚漂移" in literary_rules
@@ -87,6 +87,9 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "不对称" in literary_rules
     assert "完美证据链" in literary_rules
     assert "解释性修补" in literary_rules
+    assert "当前人物会注意的事物" in literary_rules
+    assert "动作已经表达" in literary_rules
+    assert "synthetic" in literary_rules
     assert len(literary_rules) < 2200
     assert (book_dir / "evaluation" / "degraded-run-template.md").exists()
     assert (book_dir / "evaluation" / "branch-decision-template.md").exists()
@@ -179,6 +182,10 @@ def test_init_book_project_creates_expected_structure(tmp_path: Path):
     assert "## 1e. 规划反证与常识检查" in scene_template
     assert "## 3c. 因果归属账本" in scene_template
     assert "## 5b. 专业判断审计" in scene_template
+    assert "## 6. 人物性呼吸段" in scene_template
+    assert "私人欲望" in scene_template
+    assert "关系摩擦" in scene_template
+    assert "感知偏差" in scene_template
     assert "可推翻证据" in scene_template
     assert "后果承担者" in scene_template
     assert "物理动作机制" in scene_template
@@ -533,7 +540,7 @@ def test_skill_documents_v54_fiction_first_native_workflow():
     assert "human_likeness" in text
     assert "reader_desire" in text
     assert "idle、available" in text
-    assert "literary-micro-rules/v4" in text
+    assert "literary-micro-rules/v5" in text
     assert "用户硬锚" in text
     assert len(text) < 9000
 

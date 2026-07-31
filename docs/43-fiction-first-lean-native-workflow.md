@@ -221,8 +221,16 @@ promotion, author approval, or `publication_eligibility=False`.
 
 ## 2026-07-31 iteration 45 routing
 
-Lean Writer capsules now contain a protected `writer-context.md`. Minimal mode compiles bounded P0/P1/P2 context; full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
+Lean Writer capsules contain a protected `writer-context.md`. Minimal mode compiles P0/P1/P2 at 1500/850/450 CJK, with a total ceiling of 2800 CJK; full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
 
 Review MUST findings affect routing only when every open finding is marked `local` and maps to one unique paragraph. The Writer then returns replacement fragments only; Python performs exact replacement, runs whole-body hard checks, and restarts the complete Blind Reader and Chapter Editor pair. All other findings retain the single chapter-level Patch path.
 
 Host capability is explicit: `native-isolated` and `managed-relay` may run formal production; `exploration` may keep staged prose and review results but cannot promote or reach formal `ready`. High-risk chapter classes stop after the full double review and before promotion for author confirmation. Optional token budgets never waive a quality failure: a hard limit preserves the staged body and review context and stops before additional Patch/re-review calls.
+
+## 2026-07-31 literary-core compression
+
+The default chain, states, and call count are unchanged. The existing Scene Package now carries three compact human-pressure fields in the same file: private desire, relationship friction, and viewpoint-specific perceptual bias. Writer reads only `writer-context.md`, then silently removes redundant explanation and its most mechanical repeated reaction before returning final prose.
+
+A deterministic `literary_texture` analyzer records repeated paragraph openings, delayed-reaction formulas, explanatory echoes, sentence-length variance, and repeated short phrases. It is advisory only: `blocking=False`, `routing_affected=False`, and it cannot establish AI authorship or literary value. A high-risk result may add at most a 160-character hint to the existing Lean Chapter Editor capsule; it never creates another role or call. Cost summaries aggregate `low`, `medium`, `high`, and `unknown` counts without feeding them back into routing.
+
+Blind Reader treats `uncertain` as non-triggering by default. A `synthetic` verdict is accepted only with an exact prose quote, `needs_revision`, and exactly one `structural` MUST. Chapter Editor independently decides whether the issue is distributed and worth the single allowed literary revision. `MAX_AUTOMATIC_GENERATIONS=2`, the complete double review after any revision, and the author decision after a second reviewed failure remain unchanged.

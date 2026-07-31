@@ -223,3 +223,12 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 4. 动作声明宿主能力档、Python/宿主适配器 dispatcher 和 `lead_involved=false`。Exploration 在双审后仍被 Python 阻止晋升，不能通过弱 Lead 自写自审获得 formal ready。
 5. 高风险确认发生在双审通过后、正式晋升前。硬预算只阻止首轮双审之后的自动追加 Patch/复审调用；正文、MUST 和双审绑定均保留，继续必须有作者依据。
 6. 以上路由均不改变 5000 CJK、硬禁令、核心双审、最多一次文学 Patch、Canon candidate/promotion、`author_approval=False` 或 `publication_eligibility=False`。
+
+## 2026-07-31：文学核心压缩审计
+
+1. 默认状态仍为 `planned -> context_collected -> scene_packaged -> drafted -> surface_checked -> blind_read -> editorial_reviewed -> ready`，默认审稿角色仍只有 Blind Reader 与 Chapter Editor；没有新增调用环节。
+2. Writer 最小包固定为 P0/P1/P2 1500/850/450 CJK，总上限 2800。Scene Package 的私人欲望、关系摩擦、感知偏差只是原文件字段，不是新 artifact 或新 gate。
+3. `literary-micro-rules/v5` 将视角注意力、选择的私人代价、动作后不重复解释和关系不对称放入短规则；Writer 在同一次生成内完成静默删改。
+4. `literary_texture` 是内容外泄为零的确定性摘要。高风险只向现有 Chapter Editor 注入至多 160 字提示，并在 `cost-summary` 聚合 `low|medium|high|unknown`；旧记录缺失该字段时归 `unknown`。该指标不阻断、不改变路由、不证明 AI 来源。
+5. Blind Reader 的 `uncertain` 可以直接 `pass`；`synthetic` 若没有逐字证据、`needs_revision` 和恰好一条 `structural` MUST，会被控制面拒收并仅重试当前审稿交付。Chapter Editor 仍决定该结构问题是否真正值得一次修订。
+6. `MAX_AUTOMATIC_GENERATIONS=2`、5000 CJK 硬门、双审、至多一次文学 Patch、Canon candidate/promotion、`author_approval=False` 和 `publication_eligibility=False` 全部保持不变。

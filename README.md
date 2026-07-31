@@ -11,7 +11,7 @@ Chapter Editor 审，有问题就回到同一份暂存正文修，双审通过�
 - **少禁令，多示范，但不把范文变成配方。** 硬禁令只处理机器可证的破绽；Voice
   exemplar 只向 writer 传递叙事距离、信息释放与节奏功能，数值风格指标留给编辑器
   诊断，避免模型把句长、物件和动作学成新的模板。
-- **每个字都为人物此刻的选择服务。** 物件是筹码，对白是权力，数字是赌注。八种 AI 味反模式（均匀碎句、术语堆叠、数值监控、机械观察链、感官轰炸开篇、比喻过密、危机中背景卸货、对白真空）各有对应的门拦截——证据见 `docs/examples/`。
+- **每个字都为人物此刻的选择服务。** 物件是筹码，对白是权力，数字是赌注。可机器证明的格式与机械句由硬门拦截；重复开头、解释回声、节奏过匀等只生成不阻断的文学纹理提示，最终仍由双审依据原文判断——证据见 `docs/examples/`。
 - **规划是编辑控制面，不是正文提纲。** Writer 只接收过滤后的 Story Brief；替代
   解释、可证伪假设、因果归属和专业审计留给 Chapter Editor，避免人物在正文中
   逐项证明检查表。
@@ -57,7 +57,7 @@ PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> cost-
 ```
 
 宿主若掌握真实 token/耗时，可在 `complete-role` 时附加 `--telemetry-file <json>`；
-缺失或无效遥测保持未知，不得触发正文或审稿重做。
+缺失或无效遥测保持未知，不得触发正文或审稿重做。成本摘要同时聚合 `low|medium|high|unknown` 文学纹理风险，但该字段始终 `routing_affected=false`，不是 AI 检测或文学认证。
 
 1. 只在第一章执行 `start <slug>` 并给出书籍基本信息；章节 ready 后，按提示执行
    `start <slug> --chapter N+1`，无需重复输入原始设定；
@@ -200,7 +200,8 @@ Python 3.12+，仅四个依赖（fastapi、uvicorn、pydantic v2、pytest）；S
 
 ### 45 号迭代：最小 Writer 包、能力档与风险路由
 
-- Lean Writer 默认读取 capsule 内受保护的 `writer-context.md`（P0/P1/P2）；可用 `start --writer-context-mode full` 做旧完整 handoff 对照。
+- Lean Writer 默认只读取 capsule 内受保护的 `writer-context.md`：P0/P1/P2 上限为 1500/850/450 CJK，总预算不超过 2800 CJK；`full` 仅作旧完整 handoff 对照。默认 Scene Package 在原文件内补充私人欲望、关系摩擦和感知偏差，不增加规划阶段。
+- Blind Reader 的 `uncertain` 默认不触发修订；只有带原文引句的 `synthetic` 才允许提出且必须只提出一条 `structural` MUST。Chapter Editor 只在该问题分布性、值得唯一一次修订时确认。
 - 同卷可用 `--writer-model <name>` 固定 Writer；切换前执行 `approve-writer-model <slug> --volume N --model <name> --reference <作者校准依据>`。
 - `--host-capability native-isolated|managed-relay|exploration` 明确宿主能力；`exploration` 永远不能晋升 formal `ready`。运行 `capability <slug>` 查看当前档。
 - 高风险章用 `--chapter-risk volume_start|volume_end|major_turn|character_death|core_reveal` 标记；双审通过后需 `approve-high-risk <slug> --reference <作者决定依据>`。

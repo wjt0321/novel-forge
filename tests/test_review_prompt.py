@@ -18,6 +18,10 @@ def test_planning_task_separates_editor_reasoning_from_writer_story_material():
     assert "完整 Scene Package 是编辑控制面" in prompt.text
     assert "不要预写正文句子" in prompt.text
     assert "替代解释和反证留在编辑专用小节" in prompt.text
+    assert "私人欲望" in prompt.text
+    assert "关系摩擦" in prompt.text
+    assert "感知偏差" in prompt.text
+    assert "不增加额外规划文件" in prompt.text
     assert "high" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
@@ -35,6 +39,11 @@ def test_blind_reader_task_judges_life_not_only_clarity_or_mystery():
     assert "漂亮结论替代现场余波" in prompt.text
     assert "身体、物件和位置" in prompt.text
     assert "解释性修补" in prompt.text
+    assert "convincing" in prompt.text
+    assert "uncertain 默认不触发修订" in prompt.text
+    assert "synthetic" in prompt.text
+    assert "最多一条 structural MUST" in prompt.text
+    assert "人工编排感" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 
@@ -56,6 +65,10 @@ def test_lean_editor_samples_must_scope_without_routing_the_patch():
     assert "scope=local|structural|blocking" in prompt.text
     assert "只用于成本观测" in prompt.text
     assert "Python 仍按现行章节级集中修订" in prompt.text
+    assert "只确认 Blind Reader 指出的问题是否遍布全章" in prompt.text
+    assert "机器纹理提示" in prompt.text
+    assert "不是文学结论" in prompt.text
+    assert "最多一条 structural MUST" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 

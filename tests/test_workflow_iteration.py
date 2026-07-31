@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from app.novel_forge.planning_spec import (
+    CHAPTER_STATES,
+    DEFAULT_REVIEW_ROLES,
+    MAX_AUTOMATIC_GENERATIONS,
+)
 from app.novel_forge.project_templates import init_book_project
 from app.novel_forge.workflow import ReviewFinding, WorkflowError, WorkflowRequest
 from app.novel_forge.workflow_iteration import (
@@ -16,6 +21,7 @@ from app.novel_forge.workflow_iteration import (
     evaluate_writer_model,
     plan_local_patch,
     require_high_risk_confirmation,
+    WRITER_CONTEXT_BUDGETS,
 )
 
 
@@ -66,14 +72,62 @@ def test_minimal_writer_package_is_tiered_bounded_and_uses_previous_ending(
 
     text = package["text"]
     assert package["mode"] == "minimal"
-    assert package["tiers"]["P0"]["cjk"] <= 2000
-    assert package["tiers"]["P1"]["cjk"] <= 1200
-    assert package["tiers"]["P2"]["cjk"] <= 800
+    assert WRITER_CONTEXT_BUDGETS == {"P0": 1500, "P1": 850, "P2": 450}
+    assert package["tiers"]["P0"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P0"]
+    assert package["tiers"]["P1"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P1"]
+    assert package["tiers"]["P2"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P2"]
+    assert sum(tier["cjk"] for tier in package["tiers"].values()) <= 2800
     assert "结尾的铜铃响了三次" in text
     assert "开头不应进入最小包" not in text
     assert "完整旧包" not in text
     assert (book / "memory/voice-bible-v01.md").is_file()
 
+
+
+def test_minimal_writer_package_prioritizes_story_and_human_pressure_sections(
+    tmp_path: Path,
+):
+    book = _book(tmp_path)
+    scene = book / "planning/scene-package-ch02.md"
+    scene.write_text(
+        "# Scene Package\n\n"
+        "## 0. 边界\n- 开始动作 / 停止动作：推门 / 听见名字。\n"
+        "## 1d. 认知与可证伪假设\n"
+        + ("编辑专用替代解释，不应进入 Writer 核心。" * 300)
+        + "\n\n## 1. 场景压力\n"
+        "- 视角角色要什么：拿回母亲留下的录音。\n"
+        "- 对手/世界独立要什么：老许要保住自己的谎言。\n"
+        "- 选择与即时成本：承认自己曾经出卖同伴。\n"
+        "## 1c. 决策问题\n"
+        "- 角色拒绝承认什么：他更怕同伴真的记得自己。\n"
+        "- 角色误读了谁或什么：把老许的回避当成遗忘。\n"
+        "- 哪句话不能说出口：那天是我报的信。\n"
+        "## 2. 在场者状态\n"
+        "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
+        "|---|---|---|---|\n"
+        "| 周既 | 取回录音 | 隐瞒告密 | 被迫承认 |\n"
+        "## 6. 人物性呼吸段\n"
+        "- 私人欲望：希望老许仍记得两人一起值过夜班。\n"
+        "- 关系摩擦：老许只承认工作记录，不承认共同经历。\n"
+        "- 感知偏差：周既先记物件位置，后辨认人的神情。\n"
+        "## 7. 场景余波\n"
+        "- 关系：即使拿到录音，他也失去向老许求证过去的机会。\n",
+        encoding="utf-8",
+    )
+    handoff = book / "handoff.md"
+    handoff.write_text("legacy" * 1000, encoding="utf-8")
+
+    package = compile_writer_package(
+        tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
+    )
+
+    text = package["text"]
+    assert "拿回母亲留下的录音" in text
+    assert "希望老许仍记得" in text
+    assert "周既先记物件位置" in text
+    assert "失去向老许求证过去的机会" in text
+    assert "编辑专用替代解释" not in text
+    assert "完整旧包" not in text
 
 def test_full_writer_package_keeps_legacy_handoff_as_comparison_mode(tmp_path: Path):
     book = _book(tmp_path)
@@ -184,3 +238,18 @@ def test_capability_risk_budget_and_display_policies_are_explicit():
     assert display_workflow_state("awaiting_writer", patch_round=0) == "写作中"
     assert display_workflow_state("awaiting_writer", patch_round=1) == "待局部修订"
     assert display_workflow_state("decision_required", patch_round=1) == "待作者决定"
+
+
+def test_literary_iteration_does_not_expand_default_control_flow():
+    assert CHAPTER_STATES == (
+        "planned",
+        "context_collected",
+        "scene_packaged",
+        "drafted",
+        "surface_checked",
+        "blind_read",
+        "editorial_reviewed",
+        "ready",
+    )
+    assert DEFAULT_REVIEW_ROLES == ("blind-reader", "chapter-editor")
+    assert MAX_AUTOMATIC_GENERATIONS == 2

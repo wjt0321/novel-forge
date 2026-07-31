@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from . import book_project
 
 WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
+WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 450}
 HOST_CAPABILITY_TIERS = frozenset(
     {"native-isolated", "managed-relay", "exploration"}
 )
@@ -91,6 +92,34 @@ def _read_if_file(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig") if path.is_file() else ""
 
 
+def _heading_key(value: str) -> str:
+    return re.sub(r"[\s#：:（）()]+", "", value).lower()
+
+
+def _extract_markdown_sections(text: str, selectors: tuple[str, ...]) -> str:
+    """Return selected level-two sections in source order."""
+    wanted = tuple(_heading_key(item) for item in selectors)
+    chunks: list[str] = []
+    current: list[str] = []
+    selected = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if selected and current:
+                chunks.append("\n".join(current).strip())
+            heading = line[3:].strip()
+            key = _heading_key(heading)
+            selected = any(
+                key == item or key.startswith(item)
+                for item in wanted
+            )
+            current = [line] if selected else []
+        elif selected:
+            current.append(line)
+    if selected and current:
+        chunks.append("\n".join(current).strip())
+    return "\n\n".join(chunk for chunk in chunks if chunk)
+
+
 def compile_writer_package(
     root: Path,
     slug: str,
@@ -131,42 +160,83 @@ def compile_writer_package(
             )
         except Exception:
             previous = ""
-    previous_ending = _bounded(previous, 900, tail=True)
+    previous_ending = _bounded(previous, 500, tail=True)
+    story_obligations = _extract_markdown_sections(
+        scene,
+        (
+            "0. 边界",
+            "0a. 用户硬锚合同",
+            "0b. 章际交接",
+            "1. 场景压力",
+            "3. Beat 因果链",
+            "4. 信息账本",
+            "场景契约",
+            "硬锚点",
+            "章末目标",
+        ),
+    )
+    if not story_obligations:
+        story_obligations = scene
     p0 = _bounded(
-        "## 当前场景契约、硬锚点与章末目标\n"
-        + scene
-        + "\n\n## 上一章结尾片段\n"
+        "## 当前故事义务\n"
+        + _bounded(story_obligations, 1000)
+        + "\n\n## 上一章必要结尾\n"
         + (previous_ending or "不适用或尚无可靠上一章正文。"),
-        2000,
+        WRITER_CONTEXT_BUDGETS["P0"],
     )
 
+    human_pressure = _extract_markdown_sections(
+        scene,
+        (
+            "1c. 决策问题",
+            "2. 在场者状态",
+            "6. 人物性呼吸段",
+            "7. 场景余波",
+        ),
+    )
     memory_parts = []
-    for name in ("characters.md", "worldbuilding.md", "canon.md"):
+    for name in ("characters.md", "canon.md", "worldbuilding.md"):
         value = _read_if_file(book_dir / "memory" / name)
         if value:
             memory_parts.append(value)
+    direct_memory = _bounded("\n\n".join(memory_parts), 220)
     story = _read_if_file(book_dir / "planning" / "story-engine.md")
     promise_lines = [
         line for line in story.splitlines()
         if any(key in line for key in ("承诺", "promise", "伏笔"))
     ][:2]
     p1 = _bounded(
-        "## 当前人物与直接 Canon\n"
-        + "\n\n".join(memory_parts)
-        + "\n\n## 当前最多两个未解承诺\n"
+        "## 当前人物私欲、关系摩擦与感知偏差\n"
+        + (_bounded(human_pressure, 560) or "- 未登记，按现场行动保守推断。")
+        + "\n\n## 直接 Canon\n"
+        + (direct_memory or "- 未登记。")
+        + "\n\n## 最多两个未解承诺\n"
         + ("\n".join(promise_lines) or "- 未登记。"),
-        1200,
+        WRITER_CONTEXT_BUDGETS["P1"],
     )
 
     volume_voice = ensure_volume_voice_bible(root, slug, volume=volume)
-    base_voice = _read_if_file(book_dir / "memory" / "voice-bible.md")
-    p2 = _bounded(
-        "## 书级声音基础（可裁剪参考）\n"
-        + base_voice
-        + "\n\n## 本卷声音覆盖与认可范例\n"
-        + _read_if_file(volume_voice),
-        800,
+    voice_source = (
+        _read_if_file(book_dir / "memory" / "voice-bible.md")
+        + "\n\n"
+        + _read_if_file(volume_voice)
     )
+    voice_fingerprint = _extract_markdown_sections(
+        voice_source,
+        (
+            "叙事距离",
+            "信息释放顺序",
+            "对白与沉默",
+            "场景选择与私人代价",
+            "作者认可范例",
+        ),
+    )
+    p2 = _bounded(
+        "## 声音指纹\n"
+        + (voice_fingerprint or "- 贴近当前视角；让动作先于解释。"),
+        WRITER_CONTEXT_BUDGETS["P2"],
+    )
+
     text = (
         "# Writer Context — Minimal P0/P1/P2\n\n"
         "Writer 只执行作品任务；不得猜测控制面、模型、会话、哈希或发布资格。\n\n"
@@ -180,9 +250,9 @@ def compile_writer_package(
         "chapter": chapter,
         "volume": volume,
         "tiers": {
-            "P0": {"cjk": _count_cjk(p0), "budget_cjk": 2000},
-            "P1": {"cjk": _count_cjk(p1), "budget_cjk": 1200},
-            "P2": {"cjk": _count_cjk(p2), "budget_cjk": 800},
+            "P0": {"cjk": _count_cjk(p0), "budget_cjk": WRITER_CONTEXT_BUDGETS["P0"]},
+            "P1": {"cjk": _count_cjk(p1), "budget_cjk": WRITER_CONTEXT_BUDGETS["P1"]},
+            "P2": {"cjk": _count_cjk(p2), "budget_cjk": WRITER_CONTEXT_BUDGETS["P2"]},
         },
         "text": text,
     }

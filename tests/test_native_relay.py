@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+
+import pytest
 from dataclasses import asdict
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from app.novel_forge.workflow import (
     ReviewOutcome,
     SessionIdentity,
     WorkflowRequest,
+    WorkflowError,
     main,
 )
 from tests.test_workflow import (
@@ -1591,7 +1594,10 @@ def test_lean_writer_capsule_contains_minimal_p0_p1_p2_package(tmp_path: Path):
     assert "# P2 可裁剪参考" in context.read_text(encoding="utf-8")
     assert action["capsule"]["context"] == "writer-context.md"
     assert manifest["writer_context_mode"] == "minimal"
-    assert manifest["writer_context_tiers"]["P0"]["budget_cjk"] == 2000
+    assert {
+        name: tier["budget_cjk"]
+        for name, tier in manifest["writer_context_tiers"].items()
+    } == {"P0": 1500, "P1": 850, "P2": 450}
 
 def test_lean_writer_completion_needs_only_the_existing_prose(
     tmp_path: Path,
@@ -2259,7 +2265,11 @@ def test_lean_editor_ignores_legacy_hard_anchor_prose(
     relay.start("demo", _request(), chapter=1)
     writer_action = relay.next_action("demo")
     staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
-    staged.write_text(_prose("旧表兼容"), encoding="utf-8")
+    mechanical = "他停了一下，看向门口。这意味着他已经作出决定。"
+    staged.write_text(
+        "# 第一章\n\n" + "\n\n".join(mechanical for _ in range(420)),
+        encoding="utf-8",
+    )
     relay.complete_minimal("demo")
 
     blind_action = relay.next_action("demo")
@@ -2273,7 +2283,7 @@ def test_lean_editor_ignores_legacy_hard_anchor_prose(
                 "emotional_residue": "人物选择留下了后果。",
                 "next_chapter_pull": "门后的人将要求什么代价？",
                 "summary": "现场、关系和行动均可重建。",
-                "evidence_quote": "林舟握住门把",
+                "evidence_quote": "他停了一下",
             },
             ensure_ascii=False,
         ),
@@ -2282,6 +2292,10 @@ def test_lean_editor_ignores_legacy_hard_anchor_prose(
     relay.complete_minimal("demo")
 
     editor_action = relay.next_action("demo")
+    editor_context = _review_capsule_context(editor_action)
+    assert "machine_diagnostics" in editor_context
+    assert "机器纹理提示" in editor_context["machine_diagnostics"]
+    assert len(editor_context["machine_diagnostics"]) <= 160
     Path(editor_action["result_file"]).write_text(
         json.dumps(
             {
@@ -2289,7 +2303,7 @@ def test_lean_editor_ignores_legacy_hard_anchor_prose(
                 "findings": [],
                 "summary": "本章成立。",
                 "hard_anchor_coverage": "五项用户硬锚均已交付。",
-                "evidence_quote": "林舟握住门把",
+                "evidence_quote": "他停了一下",
             },
             ensure_ascii=False,
         ),
@@ -3360,3 +3374,90 @@ def test_observation_refresh_failure_rolls_back_local_record_without_breaking_ne
 
     assert blind_result.technical_retry_count == 0
     assert relay.next_action("demo")["role"] == "chapter-editor"
+
+
+def test_blind_synthetic_requires_one_structural_must():
+    session = SessionIdentity(
+        session_id="blind",
+        session_instance_id="blind-instance",
+        provider="provider",
+        model="model",
+        agent_harness="host",
+        role="blind-reader",
+    )
+    terminal = {
+        "value": "operation",
+        "kind": "operation_id",
+        "result_transport": "result_file",
+    }
+    payload = {
+        "verdict": "pass",
+        "must": [],
+        "human_likeness": "synthetic",
+        "reader_desire": "stop",
+        "emotional_residue": "人物只在完成任务。",
+        "next_chapter_pull": "没有形成追读。",
+        "summary": "重复反应遍布全文。",
+        "evidence_quote": "他停了一下",
+    }
+
+    with pytest.raises(WorkflowError, match="synthetic.*structural MUST"):
+        NativeWorkflowRelay._review_outcome(
+            payload, role="blind-reader", session=session, terminal=terminal
+        )
+
+    invalid_verdict = {
+        **payload,
+        "verdict": "ready_for_editor_decision",
+        "must": [
+            {
+                "severity": "MUST",
+                "location": "全文",
+                "evidence": "他停了一下",
+                "reader_effect": "人物反应趋同",
+                "revision_intent": "让反应由具体欲望和关系决定",
+                "scope": "structural",
+            }
+        ],
+    }
+    with pytest.raises(WorkflowError, match="synthetic.*needs_revision"):
+        NativeWorkflowRelay._review_outcome(
+            invalid_verdict,
+            role="blind-reader",
+            session=session,
+            terminal=terminal,
+        )
+
+
+def test_blind_uncertain_does_not_require_a_revision_finding():
+    session = SessionIdentity(
+        session_id="blind",
+        session_instance_id="blind-instance",
+        provider="provider",
+        model="model",
+        agent_harness="host",
+        role="blind-reader",
+    )
+    terminal = {
+        "value": "operation",
+        "kind": "operation_id",
+        "result_transport": "result_file",
+    }
+    payload = {
+        "verdict": "pass",
+        "must": [],
+        "human_likeness": "uncertain",
+        "reader_desire": "conditional",
+        "emotional_residue": "局部仍然工整。",
+        "next_chapter_pull": "人物后果仍可追问。",
+        "summary": "可以继续但不自动修订。",
+        "evidence_quote": "雨水落在票根上",
+    }
+
+    outcome = NativeWorkflowRelay._review_outcome(
+        payload, role="blind-reader", session=session, terminal=terminal
+    )
+
+    assert outcome.verdict == "pass"
+    assert outcome.findings == ()
+    assert outcome.human_likeness == "uncertain"

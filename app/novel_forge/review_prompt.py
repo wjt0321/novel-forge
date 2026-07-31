@@ -42,9 +42,10 @@ def render_planning_instructions() -> RolePrompt:
 说出的推理。只保留一个主选择和少量真正会改变行动的信息，不要预写正文句子、漂亮
 收尾、比喻、固定动作或可复制句法。
 
-人物必须有不肯承认的压力、与他人不对称的关系和可能出错的判断。专业信息只规划
-实际操作、限制、成本与风险，不用术语证明人物聪明。规划可使用 high 推理，但输出
-只交付允许列表内的 Markdown 文件，不创作证据、审稿或状态。
+人物必须有任务之外的私人欲望、不会自动配合的关系摩擦，以及影响观察顺序的感知偏差；
+这些内容写入现有 Scene Package，不增加额外规划文件。人物仍可有不肯承认的压力和可能
+出错的判断。专业信息只规划实际操作、限制、成本与风险，不用术语证明人物聪明。规划可
+使用 high 推理，但输出只交付允许列表内的 Markdown 文件，不创作证据、审稿或状态。
 """,
     )
 
@@ -88,11 +89,12 @@ def render_review_instructions(
 钩子很多但人物没有不可替代的损失。也要允许真正属于人物的克制、职业语言、仪式复沓和
 纯对白，不按固定句数判错。
 
-只有正文同时具有可重建现场、人物特异性、关系摩擦、主动选择及其余波，并让你自愿继续
-阅读，才能给 convincing + continue + pass。`human_likeness` 必须是 JSON 字符串
-`convincing`、`uncertain` 或 `synthetic` 之一；`reader_desire` 必须是 JSON 字符串
-`continue`、`conditional` 或 `stop` 之一，不能填写 0-10 数字。MUST 只用于不改就会破坏
-人物选择、逻辑、可读性或核心钩子的问题，不为显得严格而制造。{delivery}
+`human_likeness` 只用 `convincing|uncertain|synthetic`：具体人物的私欲、关系和不整齐
+余波成立才是 convincing；好读但仍有通用、工整或解释充分的段落是 uncertain，uncertain 默认不触发修订；
+人物主要执行规划、对白主要解释、重复反应或旁白持续替读者总结时是 synthetic。synthetic 必须引用最能
+代表人工编排感的正文原句，并最多一条 structural MUST；convincing 则引用最具人物特异性的原句。
+`reader_desire` 只用 `continue|conditional|stop`，不能填数字。其他 MUST 仍只用于不改就会破坏人物
+选择、逻辑、可读性或核心钩子的问题，不为显得严格而制造。{delivery}
 """,
         )
     if role == "chapter-editor":
@@ -108,12 +110,13 @@ Canon，只判断本章是否成立。检查因果、主角选择与私人代价
 短规则：
 {micro_rules}
 
-若存在不改就会破坏人物选择、逻辑、可读性或核心钩子的问题，返回
-`verdict=needs_revision`，并在 `must` 一次列全。每条 MUST 用紧凑对象标注
-scope=local|structural|blocking，并保留位置、原文和理由；该分类只用于成本观测，
-Python 仍按现行章节级集中修订。风格偏好不要放进 MUST。若本章成立，直接返回
-`verdict=pass`。另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写 hard anchor、
-分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
+先独立检查因果与连续性；文学纹理上只确认 Blind Reader 指出的问题是否遍布全章、是否值得消耗
+唯一一次修订。机器纹理提示只是低成本抽样，不是文学结论，不得据此单独判错。若存在不改就会破坏
+人物选择、逻辑、可读性或核心钩子的问题，返回 `verdict=needs_revision` 并一次列全；分布式人工编排
+最多一条 structural MUST。每条 MUST 标注 scope=local|structural|blocking，并保留位置、原文和理由；
+该分类只用于成本观测，Python 仍按现行章节级集中修订。风格偏好不要放进 MUST。本章成立则直接
+`verdict=pass`，另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写 hard anchor、分析维度、
+哈希、状态、Session、Runtime、Guardian 或 Git 表格。
 """,
             )
         return _prompt(

@@ -50,6 +50,10 @@ A formal chapter package must make the following usable by a Writer without expo
 
 Planning is not proof that prose achieved the event. Reviewers reconstruct the chapter from prose first, then compare the package.
 
+## Writer input
+
+The default Writer capsule exposes only `writer-context.md`: P0/P1/P2 are capped at 1500/850/450 CJK, with a total ceiling of 2800 CJK. P0 prioritizes immediate pressure, choice, private cost, hard anchors, the chapter-end target, and the previous ending. P1 carries directly relevant character/Canon facts, at most two promises, private desire, relationship friction, and perceptual bias. P2 carries compact voice functions. Editor-only alternative explanations stay out of the Writer core.
+
 ## Writer rules
 
 ### Must do
@@ -92,7 +96,7 @@ The Blind Reader first sees only the current complete staged prose. The role rec
 - residue after the final line;
 - desire to read the next chapter and the concrete source of that pull.
 
-Required outputs include `human_likeness`, `reader_desire`, emotional residue, next-chapter pull, evidence quote, and bounded findings. The Blind Reader cannot infer success from planning, state, score, or author intent.
+Required outputs include `human_likeness`, `reader_desire`, emotional residue, next-chapter pull, evidence quote, and bounded findings. The Blind Reader cannot infer success from planning, state, score, or author intent. `uncertain` is not a revision trigger by default. `synthetic` requires an exact artificiality quote, `needs_revision`, and exactly one `structural` MUST; it is a reading judgment, not an authorship detector.
 
 A local issue may be marked `scope=local`; a causal/scene-level defect is `structural`; a fact, safety, or process-stopping issue is `blocking`. If uncertain, do not label it local merely to reduce cost.
 
@@ -119,6 +123,8 @@ The verdict is `pass`/ready-for-editor-decision or `needs_revision`, with comple
 - “Human-like” means situated choice, uneven but purposeful rhythm, private cost, selective attention, and independent world resistance—not injected defects.
 
 ## Revision convergence
+
+A deterministic literary-texture hint may point to repeated openings, reaction formulas, explanatory echoes, unusually even rhythm, or repeated short phrases. It is advisory, never an AI-authorship or literary-value judgment, and the Chapter Editor must verify the prose directly.
 
 Only open MUST findings trigger literary revision. MAY findings remain advisory. Local Patch is allowed only for uniquely locatable paragraph-scale defects; otherwise one concentrated whole-chapter Patch is used. Every revised body is read in full by both review roles. A second reviewed body with MUST stops for the author.
 

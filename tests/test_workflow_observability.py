@@ -26,9 +26,18 @@ def _observation(
     changed: bool | None = False,
     effect: str = "none",
     scopes: dict[str, int] | None = None,
+    texture_risk: str = "low",
 ) -> dict:
-    before = {"sha256": "1" * 64, "cjk_chars": 5000}
-    after = {"sha256": "2" * 64, "cjk_chars": 5100}
+    before = {
+        "sha256": "1" * 64,
+        "cjk_chars": 5000,
+        "literary_texture_risk": "low",
+    }
+    after = {
+        "sha256": "2" * 64,
+        "cjk_chars": 5100,
+        "literary_texture_risk": texture_risk,
+    }
     if changed is False:
         after = dict(before)
     if changed is None:
@@ -154,6 +163,8 @@ def test_workflow_cost_summary_aggregates_phases_retries_and_scope_samples(
             retry_index=1,
             scopes={"local": 0, "structural": 1, "blocking": 0, "unclassified": 0},
             effect="revision_requested",
+            texture_risk="high",
+            changed=True,
         ),
         _observation(
             "patch",
@@ -197,8 +208,45 @@ def test_workflow_cost_summary_aggregates_phases_retries_and_scope_samples(
         "unclassified": 0,
     }
     assert chapter["workflow_effect_counts"]["revision_requested"] == 1
+    assert chapter["literary_texture_risk_counts"] == {
+        "low": 4,
+        "medium": 0,
+        "high": 1,
+        "unknown": 0,
+    }
+    assert summary["totals"]["literary_texture_risk_counts"] == {
+        "low": 4,
+        "medium": 0,
+        "high": 1,
+        "unknown": 0,
+    }
     assert summary["author_approval"] is False
     assert summary["publication_eligibility"] is False
+
+
+def test_invalid_texture_risk_is_normalized_to_unknown(tmp_path: Path):
+    observation = _observation(
+        "draft-texture-unknown",
+        role="writer",
+        purpose="draft",
+        input_tokens=1,
+        output_tokens=1,
+        elapsed_seconds=1,
+        changed=True,
+        texture_risk="not-a-risk",
+    )
+
+    stored = record_call_observation(tmp_path, "demo", observation)
+    summary = workflow_cost_summary(tmp_path, "demo", chapter=1)
+
+    assert stored["body_after"]["literary_texture_risk"] == "unknown"
+    assert summary["chapters"][0]["literary_texture_risk_counts"] == {
+        "low": 0,
+        "medium": 0,
+        "high": 0,
+        "unknown": 1,
+    }
+
 
 
 def test_workflow_cost_summary_defaults_to_most_recent_chapters(tmp_path: Path):

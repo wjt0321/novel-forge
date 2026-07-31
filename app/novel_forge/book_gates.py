@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .literary_texture import analyze_literary_texture
 from .planning_spec import (
     BEAT_CHAIN_SECTION,
     CAUSAL_RESPONSIBILITY_SECTION,
@@ -582,7 +583,14 @@ def narrative_report(
             "降级运行：工具或沙箱能力受限；本稿仅作探索样本，"
             "必须记录 tool_capabilities/tool_failures，且不得进入 ready。"
         )
-    return {"blocking": blocking, "advisory": advisory}
+    literary_texture = analyze_literary_texture(chapter)
+    if literary_texture["hint"]:
+        advisory.append(str(literary_texture["hint"]))
+    return {
+        "blocking": blocking,
+        "advisory": advisory,
+        "literary_texture": literary_texture,
+    }
 
 
 def narrative_gate_main(argv: list[str] | None = None) -> int:

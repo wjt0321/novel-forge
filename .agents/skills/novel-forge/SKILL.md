@@ -48,15 +48,15 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 只读取卡片给出的 capsule；只写 `draft/正文.md`。正式稿至少 5000 个 CJK 汉字。不得写脚本、规划表、状态、证据、审稿、runtime 或控制面；不得把提示词、技术表单、用户硬锚或审稿结论写进正文。
 
-提交前全文检索并改掉破折号、省略号和“不是 X，而是 Y / 不是 X，是 Y”机械句。`literary-micro-rules/v4` 只要求具体压力、选择、代价、物件/身体/位置的连续因果；不要求数值风格目标或职业证明。
+只读 capsule 的 `writer-context.md`；默认 P0/P1/P2 上限为 1500/850/450 CJK。按视角人物会注意什么来写，让私人欲望、关系摩擦和感知偏差进入动作。提交前全文检索并改掉破折号、省略号和“不是 X，而是 Y / 不是 X，是 Y”机械句，并在同一次调用内静默删去重复解释和最机械的一处重复反应。`literary-micro-rules/v5` 不要求数值风格目标或职业证明。
 
 ### Blind Reader
 
-只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。
+只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。`uncertain` 默认不触发修订；若判 `synthetic`，必须给逐字证据、`needs_revision` 和恰好一条 `structural` MUST。
 
 ### Chapter Editor
 
-只读 capsule；只写 result_file。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句。不要输出分析矩阵、hard-anchor 表或技术字段。
+只读 capsule；只写 result_file。独立核对逻辑，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理提示只是核对线索，不是文学结论。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句。不要输出分析矩阵、hard-anchor 表或技术字段。
 
 ## 自动处理与停止点
 
@@ -74,7 +74,7 @@ Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地�
 
 ## 45 号迭代默认规则
 
-- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包；`full` 只作对照。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`。
+- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/450 CJK，总计不超过 2800）；`full` 只作对照。Scene Package 的私人欲望、关系摩擦和感知偏差仍在原文件，不新增步骤。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`。
 - 仅当全部开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；Python 精确替换后必须重跑完整硬门和 Blind Reader + Chapter Editor。
 - 同卷固定主要 Writer 模型；切换先执行 `approve-writer-model` 记录作者小样校准。模型、Session、哈希与 runtime 仍不交给创作角色猜。
 - `native-isolated` 与 `managed-relay` 可正式生产；`exploration` 只能保留暂存稿/双审结果，永远不能 formal ready。

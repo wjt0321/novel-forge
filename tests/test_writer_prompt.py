@@ -18,7 +18,8 @@ def test_formal_writer_prompt_is_short_complete_and_vendor_neutral():
     assert prompt.template_id == FORMAL_WRITER_PROMPT_ID
     assert prompt.template_id == "formal-writer/v1"
     assert "第 01 章" in prompt.text
-    assert "handoff.md" in prompt.text
+    assert "writer-context.md" in prompt.text
+    assert "只读取 handoff.md" not in prompt.text
     assert "draft/正文.md" in prompt.text
     assert "5000" in prompt.text
     assert "场景压力" in prompt.text
@@ -41,6 +42,12 @@ def test_formal_writer_prompt_is_short_complete_and_vendor_neutral():
     assert "不是 X，而是 Y" in prompt.text
     assert "提交前全文检索" in prompt.text
     assert "直接陈述" in prompt.text
+    assert "以当前人物会注意的事物" in prompt.text
+    assert "人物不必立即理解选择的意义" in prompt.text
+    assert "各自目的" in prompt.text
+    assert "静默复读" in prompt.text
+    assert "只输出最终正文" in prompt.text
+    assert "删除动作已经表达、旁白又重复解释" in prompt.text
     assert len(prompt.text) <= MAX_FORMAL_WRITER_PROMPT_CHARS
 
     lowered = prompt.text.lower()
@@ -70,7 +77,7 @@ def test_formal_writer_patch_prompt_preserves_unaffected_prose():
 
     assert prompt.template_id == "formal-writer/v1"
     assert "第 03 章" in prompt.text
-    assert "读取 handoff.md 与已预置的 draft/正文.md" in prompt.text
+    assert "读取 writer-context.md 与已预置的 draft/正文.md" in prompt.text
     assert "集中修订" in prompt.text
     assert "保留未受影响的正文" in prompt.text
     assert "重写整章" in prompt.text

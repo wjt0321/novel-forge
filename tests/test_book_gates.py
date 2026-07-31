@@ -336,3 +336,33 @@ def test_formal_materials_reject_unfilled_story_engine(tmp_path: Path):
     blocking, _ = check_project_materials(tmp_path, 1)
 
     assert any("planning/story-engine.md 未填写" in item for item in blocking)
+
+
+def test_narrative_report_exposes_high_texture_risk_as_advisory_only(tmp_path: Path):
+    chapter = tmp_path / "books/demo/chapters/e01/ch-01/正文.md"
+    chapter.parent.mkdir(parents=True)
+    paragraph = "他停了一下，看向门口。这意味着他已经作出决定。"
+    chapter.write_text(
+        "# 第一章\n\n" + "\n\n".join(paragraph for _ in range(420)),
+        encoding="utf-8",
+    )
+    package = tmp_path / "books/demo/planning/scene-package-ch01.md"
+    package.parent.mkdir(parents=True)
+    package.write_text(_scene_package(), encoding="utf-8")
+    memory = tmp_path / "books/demo/memory"
+    memory.mkdir()
+    (memory / "worldbuilding.md").write_text("# 世界\n\n- 无需：现实。", encoding="utf-8")
+    (memory / "voice-bible.md").write_text("# Voice\n\n- 贴身视角。", encoding="utf-8")
+    (tmp_path / "books/demo/planning/research-boundaries.md").write_text(
+        "# 研究\n\n- 无需：虚构。", encoding="utf-8"
+    )
+    (tmp_path / "books/demo/planning/story-engine.md").write_text(
+        "# 故事发动机\n\n## 欲望\n- 主角要开门。", encoding="utf-8"
+    )
+
+    report = narrative_report(chapter, package, mode="formal")
+
+    assert report["literary_texture"]["risk_level"] == "high"
+    assert report["literary_texture"]["blocking"] is False
+    assert any("机器纹理提示" in item for item in report["advisory"])
+    assert not any("机器纹理提示" in item for item in report["blocking"])

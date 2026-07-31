@@ -36,6 +36,7 @@ from .review_prompt import (
     render_planning_instructions,
     render_review_instructions,
 )
+from .literary_texture import analyze_literary_texture
 from .review_capsule import (
     ReviewCapsuleError,
     prepare_review_capsule,
@@ -456,9 +457,13 @@ class NativeWorkflowRelay:
                 text = content.decode("utf-8-sig")
             except (OSError, UnicodeDecodeError):
                 continue
+            texture = analyze_literary_texture(text)
             return {
                 "sha256": hashlib.sha256(content).hexdigest(),
                 "cjk_chars": self._cjk_char_count(text),
+                "literary_texture_risk": str(
+                    texture.get("risk_level") or "unknown"
+                ),
             }
         return None
 
@@ -2416,6 +2421,7 @@ class NativeWorkflowRelay:
             )[:12000],
             "blind_review": blind_review,
         }
+        texture_hint = str(analyze_literary_texture(prose).get("hint") or "")
         if self.strict_audit:
             inputs["machine_diagnostics"] = (
                 self.orchestrator._machine_diagnostics(
@@ -2427,6 +2433,8 @@ class NativeWorkflowRelay:
                     )
                 )
             )
+        elif texture_hint:
+            inputs["machine_diagnostics"] = texture_hint[:160]
         if chapter > 1:
             previous = book_project.find_chapter_file(
                 book_dir,
@@ -3439,19 +3447,44 @@ class NativeWorkflowRelay:
         verdict = str(payload.get("verdict") or "").strip()
         if role == "chapter-editor" and verdict == "pass":
             verdict = "ready_for_editor_decision"
-        return ReviewOutcome(
-            verdict=verdict,
-            findings=findings,
-            human_likeness=NativeWorkflowRelay._review_enum_value(
+        human_likeness = (
+            NativeWorkflowRelay._review_enum_value(
                 payload.get("human_likeness"),
                 field="human_likeness",
                 allowed=("convincing", "uncertain", "synthetic"),
-            ) if role == "blind-reader" else "not_applicable",
-            reader_desire=NativeWorkflowRelay._review_enum_value(
+            )
+            if role == "blind-reader"
+            else "not_applicable"
+        )
+        reader_desire = (
+            NativeWorkflowRelay._review_enum_value(
                 payload.get("reader_desire"),
                 field="reader_desire",
                 allowed=("continue", "conditional", "stop"),
-            ) if role == "blind-reader" else "not_applicable",
+            )
+            if role == "blind-reader"
+            else "not_applicable"
+        )
+        if role == "blind-reader" and human_likeness == "synthetic":
+            open_must = tuple(
+                item
+                for item in findings
+                if item.severity.upper() == "MUST"
+                and item.status.lower() == "open"
+            )
+            if (
+                verdict != "needs_revision"
+                or len(open_must) != 1
+                or open_must[0].scope != "structural"
+            ):
+                raise WorkflowError(
+                    "Blind Reader synthetic 必须返回 needs_revision 和恰好一条 structural MUST。"
+                )
+        return ReviewOutcome(
+            verdict=verdict,
+            findings=findings,
+            human_likeness=human_likeness,
+            reader_desire=reader_desire,
             emotional_residue=NativeWorkflowRelay._result_text(
                 payload.get("emotional_residue") or "not_applicable"
             ),
