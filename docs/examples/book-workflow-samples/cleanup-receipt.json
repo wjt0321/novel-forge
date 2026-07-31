@@ -1,11 +1,33 @@
 {
-  "schema": "novel-forge-book-workflow-cleanup/v1",
-  "completed_on": "2026-07-29",
+  "schema": "novel-forge-book-workflow-cleanup/v2",
+  "completed_on": "2026-07-31",
   "removed": {
-    "book_projects": 10,
-    "external_local_git_directories": 9,
-    "external_guardian_directories": 11
+    "book_projects": 12,
+    "external_local_git_directories": 12,
+    "external_guardian_directories": 15
   },
+  "latest_run": {
+    "completed_on": "2026-07-31",
+    "book_projects": 2,
+    "external_local_git_directories": 3,
+    "external_guardian_directories": 4,
+    "unmapped_local_git_directories": 1,
+    "unmapped_guardian_directories": 2
+  },
+  "run_history": [
+    {
+      "completed_on": "2026-07-29",
+      "book_projects": 10,
+      "external_local_git_directories": 9,
+      "external_guardian_directories": 11
+    },
+    {
+      "completed_on": "2026-07-31",
+      "book_projects": 2,
+      "external_local_git_directories": 3,
+      "external_guardian_directories": 4
+    }
+  ],
   "verified_remaining": {
     "book_projects": 0,
     "external_local_git_directories": 0,
@@ -15,5 +37,5 @@
     "books/README.md",
     "docs/examples/book-workflow-samples/"
   ],
-  "note": "The legacy library workflow was intentionally left outside this books-workspace cleanup."
+  "note": "Only de-identified aggregate samples were retained. Raw prose and project-local recovery material were removed. The legacy library workflow was intentionally left outside this books-workspace cleanup."
 }

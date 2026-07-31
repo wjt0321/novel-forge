@@ -1,28 +1,29 @@
 {
   "schema": "novel-forge-book-workflow-sample/v1",
-  "captured_on": "2026-07-29",
-  "purpose": "De-identified local-book workflow samples retained after clearing the active books workspace for a fresh test run.",
+  "captured_on": "2026-07-31",
+  "purpose": "De-identified local-book workflow samples retained across books workspace cleanup runs for fresh test and production starts.",
   "classification_policy": {
-    "success": "K3-H, K3-L, and K3-M: user-confirmed examples of carrying the workflow principles through; prose is out of scope.",
+    "success": "K3-H, K3-L, K3-M, and the 2026-07-31 latest Lean sample: user-confirmed examples where the workflow principles were carried through or had no material workflow problem; prose is out of scope.",
     "failure": "DS and M3: user-confirmed examples of incomplete workflow execution caused by looping or bypassing; prose is out of scope.",
     "control": "All remaining books: incomplete test cases, not positive or negative benchmarks for either workflow or prose.",
     "state_warning": "A stored state such as ready is not used as a label. It can coexist with a failure sample when the historical control plane allowed a bypass."
   },
   "retention_policy": "Only de-identified aggregate metadata is retained. No novel text, title, slug, planning text, evidence content, local Git history, Guardian data, session identifier, hash, or model/provider data is copied into this sample set.",
   "cleanup_scope": {
-    "book_projects": 10,
-    "external_local_git_directories": 9,
-    "external_guardian_directories": 11,
-    "unmapped_guardian_directories": 1,
+    "book_projects": 12,
+    "external_local_git_directories": 12,
+    "external_guardian_directories": 15,
+    "unmapped_local_git_directories": 1,
+    "unmapped_guardian_directories": 3,
     "preserved": [
       "books/README.md",
       "docs/examples/book-workflow-samples/"
     ]
   },
   "summary": {
-    "control": 3,
+    "control": 4,
     "failure": 4,
-    "success": 3
+    "success": 4
   },
   "samples": [
     {
@@ -235,6 +236,64 @@
         "guardian_file_count": 9
       },
       "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "success-lean-native-04",
+      "category": "success",
+      "label_basis": "user-confirmed latest workflow iteration had no material workflow problem",
+      "workflow_interpretation": "The current Lean workflow completed a formal chapter through the expected review and promotion path; this label does not rate prose style.",
+      "aggregate_snapshot": {
+        "book_file_count": 72,
+        "book_byte_count": 343692,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "ready": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 21,
+        "local_git_present": true,
+        "local_git_commit_count": 3,
+        "guardian_file_count": 25
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded."
+    },
+    {
+      "sample_id": "control-unclassified-04",
+      "category": "control",
+      "label_basis": "no explicit user success/failure classification in this cleanup",
+      "workflow_interpretation": "Incomplete active test case retained only as a control; it is not a positive or negative benchmark for workflow execution or prose.",
+      "aggregate_snapshot": {
+        "book_file_count": 61,
+        "book_byte_count": 279408,
+        "formal_chapter_count": 1,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "surface_checked": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 15,
+        "local_git_present": true,
+        "local_git_commit_count": 2,
+        "guardian_file_count": 9
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded."
+    }
+  ],
+  "capture_history": [
+    {
+      "captured_on": "2026-07-29",
+      "book_projects": 10,
+      "external_local_git_directories": 9,
+      "external_guardian_directories": 11,
+      "note": "Initial de-identified workflow sample cleanup."
+    },
+    {
+      "captured_on": "2026-07-31",
+      "book_projects": 2,
+      "external_local_git_directories": 3,
+      "external_guardian_directories": 4,
+      "note": "Latest Lean attempt plus one unclassified active project were reduced to aggregates; stale unmapped local support directories were also removed."
     }
   ]
 }
