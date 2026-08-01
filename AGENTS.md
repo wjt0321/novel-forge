@@ -23,6 +23,8 @@ $env:PYTHONPATH='app'; python -m novel_forge.cli init-novel-project my-novel --t
 python tools/novel-workflow.py --root D:/s-black-novel start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 python tools/novel-workflow.py --root D:/s-black-novel next-action <slug>
 python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug>
+# 第二版仍有 MUST、停在作者决定时（替代越权修改状态）
+python tools/novel-workflow.py --root D:/s-black-novel authorize-revision <slug> --reference <作者决定依据>
 ```
 
 `next-action` 默认输出简明角色交接卡；仅宿主程序集成使用 `next-action --json`。后续章节可用 `start <slug> --chapter N` 复用已保存的书籍元数据。
@@ -49,8 +51,8 @@ python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug>
 1. `start` 初始化项目并由 Python/宿主适配器签发当前唯一角色动作；Lead 只发起任务、展示薄状态和转交作者决定，不读取或解释状态机。
 2. 初稿/结构修订 Writer 只写 `books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`；局部 Patch Writer 只写动作指定的 `local-patch/replacements.json`，Python 做精确替换。Writer 默认只读 capsule 的 `writer-context.md` P0/P1/P2 包（1500/850/450 CJK，总计不超过 2800）；Scene Package 在原文件内给私人欲望、关系摩擦和感知偏差，不新增规划阶段。正式章节至少 **5000 个 CJK**。正文禁止提示词、工作流标记、控制面语言、破折号、省略号与否定翻转机械句；提交前在同一次调用内静默删掉重复解释和最机械的重复反应，只输出正文。
 3. Blind Reader 只读当前暂存正文，写紧凑结论；必须给 `human_likeness`、`reader_desire`、余味、追读钩子和原文引句。`uncertain` 默认不触发修订；`synthetic` 必须有原文证据且恰好一条 `structural` MUST。Chapter Editor 只写 `pass|needs_revision`、完整 MUST、摘要和引句，并独立确认该问题是否分布广、值得唯一一次修订。纯 Python 文学纹理只作 advisory，不认证 AI 来源或文学价值。
-4. 审稿角色只能写动作给定的 `result_file`；Lead 等待宿主官方 completed/failed/timed_out，再执行 `complete-role`。创建、accepted、progress、idle、available 或文件出现都不等于完成。
-5. 全部开放 MUST 都是 `local` 且可唯一定位时，优先局部 replacement；否则回到同一暂存正文集中修订。两条路径都在修订后重跑全章硬检与双审；第二版仍有 MUST 时进入用户决定，禁止无限循环。技术运输失败只重开当前角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
+4. 审稿角色只能写动作给定的 `result_file`；Lead 等待宿主官方 completed/failed/timed_out，再执行 `complete-role`。创建、accepted、progress、idle、available 或文件出现都不等于完成。所有角色（Writer/Blind Reader/Chapter Editor/Patch）一律经 Agent 子代理等独立会话执行；Lead 不得亲自写任何角色文件，包括 `draft/正文.md`、`local-patch/replacements.json` 和各 `result_file`。Lead 直接写出角色结果的章节按 `exploration` 处理，永远不能 formal ready。
+5. 全部开放 MUST 都是 `local` 且可唯一定位时，优先局部 replacement；否则回到同一暂存正文集中修订。两条路径都在修订后重跑全章硬检与双审；第二版仍有 MUST 时进入用户决定，禁止无限循环。作者续修必须走官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策并恢复一次集中修订 + 完整双审），禁止 python -c 调内部函数或豁免状态文件。技术运输失败只重开当前角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
 6. 双审通过前不得创建正式章节、Generation、Guardian Receipt、Review History 或 draft Git checkpoint。Python 才能 CAS 晋升、记录证据、推进 `ready`、创建本地 Git checkpoint。
 7. `ready` 不等于作者批准。第 N 章完成后，`next-action` 会明确交接到第 N+1 章；不得把“没有角色动作”解释成自行改 state 或补造证据。
 

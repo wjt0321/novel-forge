@@ -1250,7 +1250,9 @@ def test_control_plane_mutation_is_restored_before_writer_retry(
     )
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
 
-    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert result.message.startswith(
+        "写作会话异常，已自动换新会话重试。"
+    )
     assert protected.read_text(encoding="utf-8") == "用户原始内容\n"
     assert "control_plane_mutation" in receipt["reasons"]
     assert relay.next_action("demo")["kind"] == "create_session"
@@ -1891,7 +1893,10 @@ def test_lean_must_findings_return_directly_to_writer_for_one_patch(
     assert patch_action["capsule"]["output"] == "draft/正文.md"
 
     staged_body = Path(patch_action["capsule"]["path"]) / "draft/正文.md"
-    initial_body = root / "books/demo/.novel-forge/diff/ch01/初稿.md"
+    initial_body = (
+        root
+        / "books/demo/.novel-forge/diff/ch01/控制面冻结稿.md"
+    )
     chapter_body = root / "books/demo/chapters/e01/ch-01/正文.md"
     original = staged_body.read_text(encoding="utf-8")
     revised = _prose("审核后在同一暂存正文上修订")
@@ -2494,7 +2499,9 @@ def test_lean_integrity_restores_protected_source_changes(
 
     result = relay.complete_minimal("demo")
 
-    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert result.message.startswith(
+        "写作会话异常，已自动换新会话重试。"
+    )
     assert source.read_text(encoding="utf-8") == "# original control plane\n"
     retry = relay.next_action("demo")
     assert retry["role"] == "writer"
@@ -2530,7 +2537,9 @@ def test_lean_action_tampering_cannot_expand_book_write_scope(
 
     result = relay.complete_minimal("demo")
 
-    assert result.message == "写作会话异常，已自动换新会话重试。"
+    assert result.message.startswith(
+        "写作会话异常，已自动换新会话重试。"
+    )
     assert protected.read_text(encoding="utf-8") == original
     retry = relay.next_action("demo")
     assert "planning/story-engine.md" not in retry[
@@ -3461,3 +3470,374 @@ def test_blind_uncertain_does_not_require_a_revision_finding():
     assert outcome.verdict == "pass"
     assert outcome.findings == ()
     assert outcome.human_likeness == "uncertain"
+
+
+def _drive_lean_reviews_to_must(
+    relay: NativeWorkflowRelay,
+    slug: str,
+) -> WorkflowResult:
+    """Run both reviewers with MUST findings and return the last result."""
+    backend = ScriptedBackend([], [_must_reviews()])
+    result = None
+    for role in ("blind-reader", "chapter-editor"):
+        action = relay.next_action(slug)
+        outcome = backend.run_review(
+            SessionIdentity(
+                session_id=f"{role}-must",
+                session_instance_id=f"{role}-must",
+                provider="unknown",
+                model="unknown",
+                agent_harness="native-host",
+                role=role,
+            ),
+            role=role,
+            context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(outcome), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        result = relay.complete_minimal(slug)
+    return result
+
+
+def _reach_literary_revision_decision(
+    relay: NativeWorkflowRelay,
+) -> WorkflowResult:
+    """Drive a lean chapter into decision_required(literary_revision_required)."""
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("初稿"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    _drive_lean_reviews_to_must(relay, "demo")
+    patch = relay.next_action("demo")
+    (Path(patch["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("修订稿"),
+        encoding="utf-8",
+    )
+    relay.complete_minimal("demo")
+    result = _drive_lean_reviews_to_must(relay, "demo")
+    assert result.user_state == "decision_required"
+    assert relay._load_state("demo")["decision_kind"] == (
+        "literary_revision_required"
+    )
+    return result
+
+
+def test_authorize_revision_resumes_staged_literary_patch(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+    must = list(relay._load_state("demo")["must_findings"])
+
+    result = relay.authorize_revision(
+        "demo", decision_reference="author-allows-one-more-round"
+    )
+
+    assert result.user_state == "running"
+    assert result.message == "发现问题，正在自动修订。"
+    patch = relay.next_action("demo")
+    assert patch["kind"] == "run_role"
+    assert patch["role"] == "writer"
+    assert patch["stage"] == "patch"
+    assert patch["must_findings"] == must
+    state = relay._load_state("demo")
+    assert state["phase"] == "awaiting_writer"
+    assert state["author_revision_authorized"] is True
+    assert state["author_revision_reference"] == (
+        "author-allows-one-more-round"
+    )
+    records = list(
+        (root / ".local-guardian/demo/native-relay/author-revisions").glob(
+            "*.json"
+        )
+    )
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["schema"] == "novel-forge-author-revision/v1"
+    assert record["chapter"] == 1
+    assert record["decision_kind"] == "literary_revision_required"
+    assert record["decision_reference"] == "author-allows-one-more-round"
+    assert record["must_findings"] == must
+
+
+def test_authorize_revision_requires_reference_and_revision_decision(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    with pytest.raises(WorkflowError, match="续修授权必须提供作者决定依据"):
+        relay.authorize_revision("demo", decision_reference="  ")
+
+    relay.stop("demo")
+    with pytest.raises(WorkflowError, match="当前没有等待作者授权的续修决策"):
+        relay.authorize_revision("demo", decision_reference="not-allowed")
+
+
+def test_lean_retry_after_second_revision_skips_receipt_gate(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    result = relay.retry("demo")
+
+    assert result.user_state == "running"
+    action = relay.next_action("demo")
+    assert action["kind"] == "run_role"
+    assert action["role"] == "writer"
+    assert not relay._load_state("demo").get("author_revision_authorized")
+
+
+def test_decision_required_options_and_message_reflect_revision_round(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    status = relay.status("demo")
+
+    assert status.user_state == "decision_required"
+    assert "第 1 轮集中修订后仍有 MUST" in status.message
+    assert any(
+        option.startswith("D. 授权一次集中修订后重新双审")
+        for option in status.options
+    )
+    assert not any(
+        option.startswith("B. 重新生成") for option in status.options
+    )
+
+    relay.stop("demo")
+    stopped = relay.status("demo")
+    assert stopped.user_state == "stopped"
+
+
+def test_next_action_returns_user_decision_card_in_decision_phase(
+    tmp_path: Path,
+):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    action = relay.next_action("demo")
+
+    assert action["kind"] == "user_decision"
+    assert action["decision_kind"] == "literary_revision_required"
+    assert action["options"][0].startswith("D. 授权一次集中修订后重新双审")
+    assert action["must_findings"]
+
+
+def test_complete_minimal_rejected_in_decision_phase(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    with pytest.raises(WorkflowError, match="可达命令"):
+        relay.complete_minimal("demo")
+
+
+def test_writer_action_marks_frozen_draft_read_only(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+
+    action = relay.next_action("demo")
+
+    assert action["kind"] == "run_role"
+    assert action["role"] == "writer"
+    read_only = action["read_only_project_files"]
+    assert read_only == [
+        ".novel-forge/diff/ch01/控制面冻结稿.md"
+    ]
+
+
+def test_authorize_revision_after_local_patch_hard_gate_uses_surface_findings(
+    tmp_path: Path,
+):
+    """K1 regression: authorize-revision after a local-patch hard-gate failure
+    must carry the real surface findings, not the stale review MUSTs."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    prose = _prose("局部修订正文") + "\n\n林舟把铜扣放回左侧口袋，这句解释只出现一次。\n"
+    staged = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    staged.write_text(prose, encoding="utf-8")
+    relay.complete_minimal("demo")
+
+    finding = ReviewFinding(
+        severity="MUST",
+        location="开场段",
+        evidence="林舟把铜扣放回左侧口袋，这句解释只出现一次。",
+        reader_effect="局部解释停顿",
+        revision_intent="只压缩当前段，不改变核心事件",
+        scope="local",
+    )
+    reviews = _must_reviews()
+    local_reviews = (
+        ReviewOutcome(**{**asdict(reviews[0]), "findings": (finding,)}),
+        ReviewOutcome(**{**asdict(reviews[1]), "findings": (finding,)}),
+    )
+    backend = ScriptedBackend([], [local_reviews])
+    for role, outcome in zip(("blind-reader", "chapter-editor"), local_reviews):
+        action = relay.next_action("demo")
+        produced = backend.run_review(
+            SessionIdentity(
+                session_id=f"{role}-session",
+                session_instance_id=f"{role}-session",
+                provider="unknown", model="unknown",
+                agent_harness="native-host", role=role,
+            ),
+            role=role,
+            context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(produced), ensure_ascii=False), encoding="utf-8"
+        )
+        relay.complete_minimal("demo")
+
+    patch = relay.next_action("demo")
+    assert patch["stage"] == "local-patch"
+    payload = json.loads(Path(patch["input_file"]).read_text(encoding="utf-8"))
+    target = payload["targets"][0]["target"]
+    # replacement 引入阻塞 lint：破折号
+    Path(patch["result_file"]).write_text(
+        json.dumps(
+            {
+                "replacements": [
+                    {
+                        "target": target,
+                        "replacement": "林舟把铜扣塞回口袋——他不想被看见。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal("demo")
+
+    assert result.user_state == "decision_required"
+    state = relay._load_state("demo")
+    assert state["decision_kind"] == "local_patch_hard_gate_failed"
+    assert any("em-dash" in item for item in state["must_findings"])
+
+    resumed = relay.authorize_revision(
+        "demo", decision_reference="author-fixes-lint-after-patch"
+    )
+
+    assert resumed.user_state == "running"
+    patch = relay.next_action("demo")
+    assert patch["stage"] == "patch"
+    revision = Path(patch["revision_file"]).read_text(encoding="utf-8")
+    assert "em-dash" in revision
+    assert "铜扣放回左侧口袋" not in revision
+
+
+def test_retry_regeneration_clears_stale_must_findings(tmp_path: Path):
+    """A user-requested regenerate is a fresh draft: stale MUSTs and the
+    revision round must not be re-routed as a patch after a technical retry."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    result = relay.retry("demo")
+
+    assert result.user_state == "running"
+    state = relay._load_state("demo")
+    assert "must_findings" not in state
+    assert "patch_round" not in state
+    action = relay.next_action("demo")
+    assert action["stage"] == "draft"
+
+
+def test_decision_options_reflect_each_decision_kind(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("选项章"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+    _drive_lean_reviews_to_must(relay, "demo")
+    patch = relay.next_action("demo")
+    (Path(patch["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("修订稿"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+    backend = ScriptedBackend([], [_must_reviews()])
+    result = None
+    for role in ("blind-reader", "chapter-editor"):
+        action = relay.next_action("demo")
+        outcome = backend.run_review(
+            SessionIdentity(
+                session_id=f"{role}-opt",
+                session_instance_id=f"{role}-opt",
+                provider="unknown", model="unknown",
+                agent_harness="native-host", role=role,
+            ),
+            role=role,
+            context=_review_capsule_context(action),
+            instructions=_review_capsule_instructions(action),
+            reasoning_effort="medium",
+        )
+        Path(action["result_file"]).write_text(
+            json.dumps(asdict(outcome), ensure_ascii=False), encoding="utf-8"
+        )
+        result = relay.complete_minimal("demo")
+    assert result.user_state == "decision_required"
+    state = relay._load_state("demo")
+    state["decision_kind"] = "hard_budget_reached"
+    _atomic_write_json(relay._state_path("demo"), state)
+    status = relay.status("demo")
+    assert any(
+        option.startswith("E. 作者授权继续一次修订")
+        for option in status.options
+    )
+    state["decision_kind"] = "high_risk_author_confirmation"
+    _atomic_write_json(relay._state_path("demo"), state)
+    status = relay.status("demo")
+    assert any(
+        option.startswith("F. 作者确认后晋升")
+        for option in status.options
+    )
+    state["decision_kind"] = "writer_model_calibration_required"
+    _atomic_write_json(relay._state_path("demo"), state)
+    status = relay.status("demo")
+    assert any(
+        option.startswith("G. 批准 Writer 模型校准")
+        for option in status.options
+    )
+
+
+def test_user_decision_card_message_matches_status(tmp_path: Path):
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    _reach_literary_revision_decision(relay)
+
+    card = relay.next_action("demo")
+    status = relay.status("demo")
+
+    assert card["message"] == status.message
+    assert "第 1 轮集中修订后仍有 MUST" in card["message"]
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    temp = path.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temp.replace(path)

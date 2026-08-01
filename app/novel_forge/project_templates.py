@@ -170,7 +170,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 ## 闭环
 1. Python 直接签发 Writer 的正文动作；Writer 可在写作过程中做必要规划或最多 5 次
    题材、事实边界、重名检索，但不回传规划表。正式章至少 5000 CJK。
-2. Python 跑表面门并冻结 `初稿.md`；双审前正文仍留在 diff 区，不创建 Generation。
+2. Python 跑表面门并冻结 `控制面冻结稿.md`；双审前正文仍留在 diff 区，不创建 Generation。
 3. 新 Blind Reader Session 只读暂存正文；通过后才创建新 Chapter Editor Session。
 4. 两审通过后 Python 晋升正文，再建立 Generation、Guardian、Review、状态和本地 Git。
 5. 有 MUST 时直接签发 Writer 的 patch 动作，优先复用当前宿主 Writer 会话，只集中修一次 MUST，
@@ -1530,7 +1530,7 @@ description: "Coordinate the deterministic Novel Forge three-role workflow witho
    过滤后的 Story Brief；完整 Scene Package 的决策审计只供 Chapter Editor 使用。
    Writer 的正式 `role_result` 只返回 capsule 内相对路径 `draft/正文.md`；宿主绝对
    路径由确定性控制面掌握，不要求角色发现或回报。
-5. Writer 结束后先在 diff 区跑表面检查并冻结 `初稿.md`，不导入正式章节、不创建
+5. Writer 结束后先在 diff 区跑表面检查并冻结 `控制面冻结稿.md`，不导入正式章节、不创建
    Generation。额外脚本、路径逃逸、保护输入变化或越界修改会退役当前 Writer。
 6. 破折号、省略号和否定翻转命中时在同一暂存正文集中修订，最多三轮；普通 MAY 与
    advisory 不触发额外写作。

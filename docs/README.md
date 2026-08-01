@@ -9,8 +9,9 @@ S-Black Novel Forge documentation is intentionally split into a small current se
 | Run the current `books/` workflow | `43-fiction-first-lean-native-workflow.md` |
 | Understand current states, retries, recovery, and truth boundaries | `44-current-workflow-logic-audit.md` |
 | Understand the P0/P1/P2, local Patch, capability, risk, and budget iteration | `45-workflow-iteration-proposal.md` |
+| Read the production-blocker review and the next iteration proposal | `46-workflow-iteration-blockers-liangu.md`、`47-workflow-iteration-proposal.md` |
 
-Daily chapter work should normally stop after these three documents. Do not read historical milestones before executing `next-action`.
+Daily chapter work should normally stop after these documents. Do not read historical milestones before executing `next-action`.
 
 ## Focused references
 

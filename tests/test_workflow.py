@@ -2380,3 +2380,63 @@ def test_cost_summary_cli_reports_json_and_human_view(tmp_path: Path, capsys):
     assert "5100" in output
     assert "100.0%" in output
     assert "观测数据不参与质量路由" in output
+
+
+def test_quote_matches_accepts_exact_and_normalized_variants():
+    prose = "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头。"
+    assert workflow_module._quote_matches(
+        "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头。",
+        prose,
+    ) == (True, "")
+    # 去空白与标点后的变体仍视为匹配
+    assert workflow_module._quote_matches(
+        "林舟握住门把 听见走廊尽头的脚步逼近",
+        prose,
+    ) == (True, "")
+    # 全半角差异：全角括号被归一为标点并忽略
+    assert workflow_module._quote_matches(
+        "林舟握住门把，听见走廊尽头（的脚步）逼近",
+        prose,
+    ) == (True, "")
+
+
+def test_quote_matches_accepts_prefix_with_length_tolerance():
+    prose = "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头，只是把掌心压得更紧。"
+    # 前 20 字一致、整体长度差在容差内的截断/改写
+    matched, _ = workflow_module._quote_matches(
+        "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头。",
+        prose,
+    )
+    assert matched is True
+
+
+def test_quote_matches_reports_first_mismatch_and_rejects_unrelated():
+    prose = "林舟握住门把，听见走廊尽头的脚步逼近。"
+    matched, detail = workflow_module._quote_matches(
+        "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头，"
+        "只是把掌心压得更紧。他知道钥匙一直挂在门后。",
+        prose,
+    )
+    assert matched is False
+    assert "首个不匹配" in detail
+    assert workflow_module._quote_matches("", prose) == (
+        False,
+        "引文为空或正文为空。",
+    )
+    assert workflow_module._quote_matches(
+        "完全无关的句子内容", prose
+    ) == (False, "引文未能与正文匹配。")
+
+
+def test_quote_matches_rejects_fabricated_tail_after_prefix():
+    prose = "林舟握住门把，听见走廊尽头的脚步逼近。他没有回头，只是把掌心压得更紧。"
+    prefix = "林舟握住门把，听见走廊尽头的脚步逼近"
+    # 前 20 字真实，但虚构尾部远超长度容差
+    fabricated = prefix + "。他忽然想起了二十年前那个雨夜，外婆在灶台边说的话。"
+    matched, detail = workflow_module._quote_matches(fabricated, prose)
+    assert matched is False
+    assert detail
+    # 前缀命中且窗口内仅有少量逐字差异时仍接受
+    near = prefix + "。他没有回头，只把掌心压紧。"
+    matched, _ = workflow_module._quote_matches(near, prose)
+    assert matched is True

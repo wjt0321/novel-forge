@@ -420,3 +420,12 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 3. **双审阈值**：Blind Reader 的 `uncertain` 默认不触发修订；`synthetic` 必须引用正文证据，并返回 `needs_revision` 与恰好一条 `structural` MUST。Chapter Editor 独立检查逻辑，只在问题分布广、值得唯一一次修订时确认。
 4. **调用不扩张**：默认角色仍只有 Writer、Blind Reader、Chapter Editor；章节状态不变，`MAX_AUTOMATIC_GENERATIONS=2`，即初稿加至多一次文学修订。局部 replacement 和章节级 Patch 均沿用现有路由。
 5. **省 token**：先减少 Writer 输入，再用确定性提示帮助现有 Editor 聚焦；不增设“去味 Agent”、评分矩阵、全文第三审或自动循环。
+
+## 2026-08-02 迭代 47 实施结果（46 号复盘）
+
+针对《敛骨人》第一章生产的控制面卡点，本次完成：
+
+1. **死锁修复（K1/K2/K7）**：新增官方命令 `authorize-revision <slug> --reference <依据>`，在第二版仍有 MUST 的 `decision_required` 下记录 author 决策并恢复一次集中修订 + 完整双审，消灭 python -c 越权调用路径。`retry`（重新生成）在 Lean 下通过 `authorize_regeneration(require_body_history=False)` 不再依赖不存在的 receipts；两个正文版本门槛仅适用于无 author 签名的自动重试。决策选项改为 Python 按状态机可达性生成，`next-action` 返回 `user_decision` 卡，`complete-role` 在决策期被拒。
+2. **失败率（K3/K4）**：冻结稿改名 `控制面冻结稿.md`，Writer 动作携带 `read_only_project_files` 并在指令与卡片中显式标注；控制面变异失败消息给出唯一允许写入路径。审稿引文校验改为规范化匹配 + 20 字前缀窗口逐字差异 ≤ 15，失败报告首个不匹配位置。
+3. **体验（K5/K8）**：审稿提示词引导位置/归属矛盾 MUST 标 `scope=local` 并给出唯一定位 evidence（复用 45 号局部 Patch）；不实现实体-归属共现启发式检测器——系统不认证文学价值，启发式误报风险高于收益。决策消息携带已进行轮次与"将再跑一轮 Writer + 完整双审"的预期提示。
+4. **未做**：双审并行化（K6）为结构性重构，留待单独评估。

@@ -63,8 +63,12 @@ def render_review_instructions(
             "human_likeness、reader_desire、emotional_residue、"
             "next_chapter_pull、summary 和 evidence_quote。每条 MUST 用紧凑对象"
             "标注 scope=local|structural|blocking，并保留位置、原文和理由；该分类"
-            "只用于成本观测，不决定修订路径。不要填写技术终态、哈希、Session、"
-            "Runtime、Guardian、Git 或其他表格。"
+            "只用于成本观测，不决定修订路径。evidence_quote 必须逐字来自当前"
+            "正文：打开正文文件直接复制完整原句，不要凭记忆改写或截断；若找不到，"
+            "改用正文中确实存在的另一句。物件位置/归属/数量矛盾类 MUST，若能给出"
+            "正文中唯一原文片段，标 scope=local 并以该片段为 evidence；需跨多段"
+            "协调才标 structural。不要填写技术终态、哈希、Session、Runtime、"
+            "Guardian、Git 或其他表格。"
             if lean
             else (
                 "通过宿主正式结果通道返回结构化判断，不直接写 reviews、状态或"
@@ -114,9 +118,11 @@ Canon，只判断本章是否成立。检查因果、主角选择与私人代价
 唯一一次修订。机器纹理提示只是低成本抽样，不是文学结论，不得据此单独判错。若存在不改就会破坏
 人物选择、逻辑、可读性或核心钩子的问题，返回 `verdict=needs_revision` 并一次列全；分布式人工编排
 最多一条 structural MUST。每条 MUST 标注 scope=local|structural|blocking，并保留位置、原文和理由；
-该分类只用于成本观测，Python 仍按现行章节级集中修订。风格偏好不要放进 MUST。本章成立则直接
-`verdict=pass`，另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写 hard anchor、分析维度、
-哈希、状态、Session、Runtime、Guardian 或 Git 表格。
+该分类只用于成本观测，Python 仍按现行章节级集中修订。evidence_quote 必须逐字来自当前正文：打开
+正文文件直接复制完整原句，不要凭记忆改写或截断。物件位置/归属/数量矛盾类 MUST，若能给出正文中
+唯一原文片段，标 scope=local 并以该片段为 evidence；需跨多段协调才标 structural。风格偏好不要放进
+MUST。本章成立则直接 `verdict=pass`，另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写
+hard anchor、分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
 """,
             )
         return _prompt(

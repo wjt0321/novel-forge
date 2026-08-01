@@ -89,8 +89,17 @@ The removed plan files fall into these completed workstreams:
 | 2026-07-21 | Literary production loop | Control-plane isolation and one-Patch convergence |
 | 2026-07-23 | Deterministic native workflow | Native Relay, result routing, workspace hygiene |
 | 2026-07-31 | Workflow observability phase 1 | Write-once cost/retry/body-change observations without routing changes |
+| 2026-08-02 | Author-revision routing (iteration 47) | `authorize-revision` official command, Lean receipt-gate bypass, reachable decision options, frozen-draft rename, fuzzy evidence-quote matching |
 
 Plans were removed after their implementation and tests became the executable truth. New completed plans should be summarized here rather than retained indefinitely.
+
+## 2026-08-02 iteration 47 durable conclusions
+
+1. After a second reviewed failure the only viable route is an official author decision command; python -c or state-file overrides are dead-end recovery paths and are now replaced by `authorize-revision <slug> --reference <依据>`.
+2. Receipt-history gates must not block Lean mode: an explicit author decision (retry or authorize-revision) authorizes the next body version; the two-distinct-versions gate applies only to un-authorized automatic retries.
+3. Decision options belong to the deterministic control plane (reachability), not to the Lead or host; `next-action` issues a `user_decision` card and `complete-role` is rejected while a decision is pending.
+4. Entity-position/ownership consistency detectors were deliberately not built: Python verifies process and locatable evidence, not literary meaning; heuristic entity scans would flag too much or too little. Instead, reviewer instructions route locatable consistency MUSTs to the existing local-Patch path.
+5. Evidence-quote verification needs bounded tolerance and precise failure positions; exact-substring-only checks inflate review retry counts without quality benefit.
 
 ## Agent Demo benchmark history
 

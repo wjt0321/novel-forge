@@ -770,8 +770,15 @@ def authorize_regeneration(
     *,
     authority: str,
     decision_reference: str,
+    require_body_history: bool = True,
 ) -> dict[str, Any]:
-    """Record one signed, chapter-bound human regeneration authorization."""
+    """Record one signed, chapter-bound human regeneration authorization.
+
+    ``require_body_history`` gates the "third distinct body version" rule on
+    guardian receipts; Lean mode writes no receipts, so an explicit author
+    decision (retry or authorize-revision) authorizes the next version without
+    them.
+    """
     root = Path(root).resolve()
     book_dir = _book_dir(root, slug)
     authority = authority.strip()
@@ -793,7 +800,7 @@ def authorize_regeneration(
         )
     chapter = status["current_chapter"]
     prior_body_sha256 = _clean_body_hashes(root, slug, chapter)
-    if len(prior_body_sha256) < 2:
+    if len(prior_body_sha256) < 2 and require_body_history:
         raise GuardianError(
             "regeneration authorization 只用于第三个不同正文版本。"
         )

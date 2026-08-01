@@ -74,6 +74,119 @@ USER_OPTIONS = (
     "B. 重新生成本章",
     "C. 停止任务",
 )
+REVISION_DECISION_KINDS = frozenset(
+    {
+        "literary_revision_required",
+        "local_patch_hard_gate_failed",
+    }
+)
+REVISION_OPTIONS = (
+    "D. 授权一次集中修订后重新双审："
+    "authorize-revision <slug> --reference <依据>",
+    "C. 停止任务",
+)
+BUDGET_OPTIONS = (
+    "E. 作者授权继续一次修订："
+    "continue-budget <slug> --reference <依据>",
+    "C. 停止任务",
+)
+HIGH_RISK_OPTIONS = (
+    "F. 作者确认后晋升："
+    "approve-high-risk <slug> --reference <依据>",
+    "C. 停止任务",
+)
+CALIBRATION_OPTIONS = (
+    "G. 批准 Writer 模型校准后重新 start："
+    "approve-writer-model <slug> --volume N --model <模型> "
+    "--reference <依据>，再 start <slug>",
+    "C. 停止任务",
+)
+_QUOTE_PREFIX_CJK = 20
+_QUOTE_LENGTH_TOLERANCE = 15
+_QUOTE_DETAIL_LIMIT = 40
+
+
+def _decision_options(decision_kind: str) -> tuple[str, ...]:
+    """Return author-visible options reachable from the current decision state."""
+    if decision_kind in REVISION_DECISION_KINDS:
+        return REVISION_OPTIONS
+    if decision_kind == "hard_budget_reached":
+        return BUDGET_OPTIONS
+    if decision_kind == "high_risk_author_confirmation":
+        return HIGH_RISK_OPTIONS
+    if decision_kind == "writer_model_calibration_required":
+        return CALIBRATION_OPTIONS
+    return USER_OPTIONS
+
+
+def _normalize_quote(text: str) -> str:
+    """Strip whitespace, unify full/half width, and drop punctuation."""
+    unified = "".join(
+        chr(ord(char) - 0xFEE0)
+        if "！" <= char <= "～"
+        else char
+        for char in text
+    )
+    return re.sub(r"[\s　\t\r\n\W_]+", "", unified).lower()
+
+
+def _quote_matches(quote: str, prose: str) -> tuple[bool, str]:
+    """Verify an evidence quote against prose with bounded tolerance.
+
+    Returns ``(matched, detail)``. Exact substring wins; then whitespace and
+    punctuation are ignored; then a normalized 20-char prefix plus a length
+    tolerance accepts model-side truncation. The detail on failure points to
+    the first mismatching character.
+    """
+    quote = quote.strip()
+    if not quote or not prose:
+        return False, "引文为空或正文为空。"
+    if quote in prose:
+        return True, ""
+    normalized_quote = _normalize_quote(quote)
+    normalized_prose = _normalize_quote(prose)
+    if not normalized_quote:
+        return False, "引文不含可比对文本。"
+    if normalized_quote in normalized_prose:
+        return True, ""
+    prefix = normalized_quote[:_QUOTE_PREFIX_CJK]
+    start = normalized_prose.find(prefix)
+    if start >= 0:
+        window = normalized_prose[
+            start : start + len(normalized_quote) + _QUOTE_LENGTH_TOLERANCE
+        ]
+        # 容忍窗口内少量逐字差异；引文比窗口更长时超出的部分计为差异。
+        differences = sum(
+            1 for expected, actual in zip(normalized_quote, window)
+            if expected != actual
+        ) + max(0, len(normalized_quote) - len(window))
+        if differences <= _QUOTE_LENGTH_TOLERANCE:
+            return True, ""
+        return (
+            False,
+            f"首个不匹配在规范化第 {_QUOTE_PREFIX_CJK + 1} 字附近："
+            f"期望「{normalized_quote[_QUOTE_PREFIX_CJK:_QUOTE_PREFIX_CJK + _QUOTE_DETAIL_LIMIT]}」，"
+            f"实际「{window[_QUOTE_PREFIX_CJK:_QUOTE_PREFIX_CJK + _QUOTE_DETAIL_LIMIT]}」。",
+        )
+    best_start, best_run = 0, 0
+    for index in range(len(normalized_prose)):
+        run = 0
+        while (
+            run < len(normalized_quote)
+            and index + run < len(normalized_prose)
+            and normalized_prose[index + run] == normalized_quote[run]
+        ):
+            run += 1
+        if run > best_run:
+            best_run, best_start = run, index
+    if best_run == 0:
+        return False, "引文未能与正文匹配。"
+    return (
+        False,
+        f"首个不匹配在规范化第 {best_run + 1} 字："
+        f"期望「{normalized_quote[best_run:best_run + _QUOTE_DETAIL_LIMIT]}」，"
+        f"实际「{normalized_prose[best_start:best_start + _QUOTE_DETAIL_LIMIT]}」。",
+    )
 REVIEW_ANALYSIS_FIELDS = {
     "blind-reader": (
         "reconstruction_space",
@@ -1482,6 +1595,7 @@ class NovelWorkflowOrchestrator:
                     session.session_id,
                     authority="human_delegate",
                     decision_reference=human_decision_reference,
+                    require_body_history=False,
                 )
                 authorization_id = authorization["authorization_id"]
             capsule = (
@@ -1813,8 +1927,11 @@ class NovelWorkflowOrchestrator:
             book_dir, chapter
         ).read_text(encoding="utf-8-sig")
         quote = outcome.evidence_quote.strip()
-        if not quote or quote not in prose:
-            raise WorkflowError(f"{role} 没有返回当前正文中的有效审稿引文。")
+        matched, detail = _quote_matches(quote, prose)
+        if not matched:
+            raise WorkflowError(
+                f"{role} 没有返回当前正文中的有效审稿引文。{detail}"
+            )
         required_analysis = REVIEW_ANALYSIS_FIELDS[role]
         missing_analysis = [
             name
@@ -2260,7 +2377,7 @@ class NovelWorkflowOrchestrator:
             message,
             sequence_id,
             retries=retries,
-            options=USER_OPTIONS,
+            options=_decision_options(decision_kind),
         )
 
     def _finish_chapter(
@@ -2625,7 +2742,9 @@ class NovelWorkflowOrchestrator:
                 ),
                 sequence_id,
                 retries=int(control.get("technical_retry_count") or 0),
-                options=USER_OPTIONS,
+                options=_decision_options(
+                    str(control.get("decision_kind") or "")
+                ),
             )
         if phase == "stopped":
             return _user_result("stopped", "任务已停止。", sequence_id)
@@ -2688,7 +2807,7 @@ class NovelWorkflowOrchestrator:
                 "decision_required",
                 "当前草稿需要人工选择保留、重写或停止。",
                 sequence_id,
-                options=USER_OPTIONS,
+                options=_decision_options(decision_kind),
             )
         must_findings = tuple(
             str(item)
@@ -2843,6 +2962,14 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
     if action.get("kind") == "start_next_chapter":
         print(str(action.get("task") or "本章完成，请开始下一章。"))
         return
+    if action.get("kind") == "user_decision":
+        print("当前没有可执行的角色动作，请把以下决定转交作者：")
+        message = str(action.get("message") or "").strip()
+        if message:
+            print(message)
+        for option in action.get("options", []):
+            print(f"- {option}")
+        return
     role = str(action.get("role") or "角色")
     labels = {
         "writer": "Writer",
@@ -2859,6 +2986,12 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
     if isinstance(capsule, dict):
         print(f"输入目录：{capsule.get('path')}")
         print(f"唯一允许写入：{capsule.get('output')}")
+        read_only = action.get("read_only_project_files")
+        if isinstance(read_only, list) and read_only:
+            print(
+                "只读文件（禁止写入）："
+                + "；".join(str(item) for item in read_only)
+            )
     elif isinstance(review_capsule, dict):
         print(f"只读输入目录：{review_capsule.get('path')}")
         print(f"角色只写结论到：{action.get('result_file')}")
@@ -3002,6 +3135,9 @@ def main(argv: list[str] | None = None) -> int:
     approve_risk = sub.add_parser("approve-high-risk")
     approve_risk.add_argument("slug")
     approve_risk.add_argument("--reference", required=True)
+    authorize_revision = sub.add_parser("authorize-revision")
+    authorize_revision.add_argument("slug")
+    authorize_revision.add_argument("--reference", required=True)
     continue_budget = sub.add_parser("continue-budget")
     continue_budget.add_argument("slug")
     continue_budget.add_argument("--reference", required=True)
@@ -3052,6 +3188,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.operation == "approve-high-risk":
             result = relay.approve_high_risk(
+                args.slug, decision_reference=args.reference
+            )
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        if args.operation == "authorize-revision":
+            result = relay.authorize_revision(
                 args.slug, decision_reference=args.reference
             )
             _print_result(result)

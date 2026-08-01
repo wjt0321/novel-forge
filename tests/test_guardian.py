@@ -1186,3 +1186,43 @@ def test_control_plane_bypass_sample_is_sanitized_and_actionable():
     assert sample["privacy"]["raw_reasoning_stored"] is False
     assert sample["cleanup"]["source_projects_removed"] is True
     assert sample["cleanup"]["external_book_git_histories_removed"] is True
+
+
+def test_lean_authorize_regeneration_allows_empty_body_history(
+    tmp_path: Path,
+):
+    """Lean mode records no receipts; an explicit author decision still
+    authorizes the next body version without the receipt-history gate."""
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    _book(root)
+
+    with pytest.raises(guardian.GuardianError, match="第三个不同正文版本"):
+        guardian.authorize_regeneration(
+            root,
+            "demo",
+            "seq-guardian",
+            "native-writer-001",
+            authority="author",
+            decision_reference="decision://lean-author-first-revision",
+        )
+
+    authorization = guardian.authorize_regeneration(
+        root,
+        "demo",
+        "seq-guardian",
+        "native-writer-001",
+        authority="author",
+        decision_reference="decision://lean-author-first-revision",
+        require_body_history=False,
+    )
+
+    assert authorization["chapter"] == 1
+    assert authorization["authority"] == "author"
+    assert authorization["prior_body_sha256"] == []
+    path = (
+        root
+        / ".local-guardian/demo/authorizations"
+        / f"{authorization['authorization_id']}.json"
+    )
+    assert path.is_file()

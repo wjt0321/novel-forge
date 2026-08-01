@@ -22,7 +22,7 @@
 | 初稿 | `.novel-forge/diff/chNN/writer/draft/正文.md` | Writer 只写该文件 | 最小规划、动作、快照 |
 | 表面修订 | 同上 | Writer 继续修改同一文件 | 汇总 blocking、最多三轮 |
 | 双审 | 同上 | 两个审稿角色各写一个简短 `result_file` | Capsule、哈希、结果规范化 |
-| 文学修订 | 同上 | 全部 local 且唯一可定位时只返回 replacements；否则 Writer 按合并 MUST 集中修订 | 冻结 `初稿.md`、Python 精确替换或记录 `修订.diff` |
+| 文学修订 | 同上 | 全部 local 且唯一可定位时只返回 replacements；否则 Writer 按合并 MUST 集中修订 | 冻结 `控制面冻结稿.md`、Python 精确替换或记录 `修订.diff` |
 | 双审通过 | `chapters/eXX/ch-XX/正文.md` | 无 | CAS 晋升、Generation、Review、Guardian、状态、Git |
 
 双审通过前，正式章节、Generation、Guardian Receipt 和 draft Git checkpoint 都不得
@@ -64,6 +64,11 @@ Session、Runtime、Guardian、哈希和 Git 均不是 Lean 创作角色的表�
 技术重试按当前角色执行计数。Writer 修订产生新的正文后，Blind Reader 和 Chapter
 Editor 都从零开始计算运输重试。文学结论的第二版仍有 MUST 时进入用户决定，不用
 技术重试伪装文学收敛。
+
+| 第二版仍有 MUST 后作者选择续修 | `authorize-revision <slug> --reference <依据>` 记录 author 决策并恢复一次集中修订 + 完整双审 | 伪造 receipt 或无限自动回炉 |
+| 作者选择重新生成（retry） | Lean 下显式 author 决策通过 `require_body_history=False` 授权第三版，写 authorization 记录 | 自动重试无 author 签名时绕过两个正文版本的门槛 |
+| decision 等待期误调 `complete-role` | 报错并列出当前决策的可达命令（authorize-revision / continue-budget / approve-high-risk / retry / stop） | 用技术表单补交掩盖未决决策 |
+| 审稿引文逐字不匹配 | 去空白/标点规范化或前缀窗口逐字差异 ≤ 15 匹配；失败给出首个不匹配位置 | 无理由重跑审稿角色 |
 
 ## 完整性边界
 

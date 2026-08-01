@@ -65,7 +65,8 @@ PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> cost-
    官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；
 3. Writer 只写暂存正文；Blind Reader 与 Chapter Editor 分别提交各自的简短审稿结果；
 4. `complete-role` 交回控制面。第一次 MUST 若全部为可唯一定位的 `local` 问题，则只返回 replacement fragments 由 Python 精确替换；否则集中修订一次。局部替换或整章修订后都重新跑完整硬门和双审；第二版仍有 MUST 就停在用户
-   决定处，绝不无限循环。双审通过后 Python 才自动晋升章节，并提示下一章或完成状态。
+   决定处，绝不无限循环。作者续修只走官方命令
+   `authorize-revision <slug> --reference <依据>`（记录 author 决策后恢复一次集中修订 + 完整双审），不越权改状态或调内部函数。双审通过后 Python 才自动晋升章节，并提示下一章或完成状态。
 
 没有命令 Backend 时，`start` 仍会签发宿主原生会话动作。Agent 不得先探索工作流源码、
 自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。默认 `lean_native` 下，
@@ -80,7 +81,7 @@ Git 全由 Python 自动处理，未知遥测保持 null，不会因为技术字
 1. Python 先在后台生成最小的连续性与场景材料，再直接签发 Writer 的正文动作；
    Writer 可在写作过程中思考规划，但不回传规划表；
 2. Writer 在当前书 `.novel-forge/diff/chNN/writer/draft/正文.md` 写作；Python
-   冻结首次合规版本为 `初稿.md`。破折号、省略号和“不是 X，而是 Y / 不是 X，
+   冻结首次合规版本为 `控制面冻结稿.md`。破折号、省略号和“不是 X，而是 Y / 不是 X，
    是 Y”属于 blocking 机械语言，命中时一次列全并在同一文件集中清理；
 3. 正文仍留在 diff 区，不创建 Generation，也不写 `chapters/`；Python 运行必要的
    质量、叙事与跨章文学结构门，普通 advisory 不自动触发修订；

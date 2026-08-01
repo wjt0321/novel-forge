@@ -21,12 +21,14 @@ Writer 暂存正文
 
 不要先探索仓库、读旧会话、调表、计算哈希、补状态、改 capsule 或配置 Harness。Python 创建项目骨架、动作、证据、状态和本地恢复点；Lead 只分发、等待和调用命令。
 
-## 用户/Lead 的三个生产命令
+## 用户/Lead 的生产命令
 
 ```powershell
 python tools/novel-workflow.py --root <绝对根目录> start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 python tools/novel-workflow.py --root <绝对根目录> next-action <slug>
 python tools/novel-workflow.py --root <绝对根目录> complete-role <slug>
+# 第二版仍有 MUST、停在作者决定时，由作者授权一次续修
+python tools/novel-workflow.py --root <绝对根目录> authorize-revision <slug> --reference <作者决定依据>
 ```
 
 作者需要查看成本时，另运行只读命令：
@@ -39,6 +41,7 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 - `next-action <slug>` 默认是简明角色交接卡，不显示 JSON、哈希、Session 或 Guardian。只有宿主程序集成使用 `--json`。
 - 每次只执行卡片上的一个角色。创建角色后必须使用宿主官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；created、accepted、progress、idle、available 或文件稳定都不算完成。
+- 所有角色（Writer/Blind Reader/Chapter Editor/Patch）一律经 Agent 子代理等独立会话执行；Lead 不得亲自写任何角色文件，包括 `draft/正文.md`、`local-patch/replacements.json` 和各 `result_file`。Lead 直接写出角色结果的章节按 `exploration` 处理，永远不能 formal ready。
 - Writer 已产生合规正文但交付元数据缺失时，保留正文并由 Python 补记，**不重写正文**。审稿运输失败只重开该审稿角色。
 - 第 N 章 ready 后，`next-action` 会告诉你 `start <slug> --chapter N+1`；后续章节会复用已保存元数据。本章未开始时才需要完整 `start` 参数。
 
@@ -46,7 +49,7 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 ### Writer
 
-只读取卡片给出的 capsule；只写 `draft/正文.md`。正式稿至少 5000 个 CJK 汉字。不得写脚本、规划表、状态、证据、审稿、runtime 或控制面；不得把提示词、技术表单、用户硬锚或审稿结论写进正文。
+只读取卡片给出的 capsule；只写 `draft/正文.md`（动作卡会列出只读文件，如 `控制面冻结稿.md`，禁止写入）。正式稿至少 5000 个 CJK 汉字。不得写脚本、规划表、状态、证据、审稿、runtime 或控制面；不得把提示词、技术表单、用户硬锚或审稿结论写进正文。
 
 只读 capsule 的 `writer-context.md`；默认 P0/P1/P2 上限为 1500/850/450 CJK。按视角人物会注意什么来写，让私人欲望、关系摩擦和感知偏差进入动作。提交前全文检索并改掉破折号、省略号和“不是 X，而是 Y / 不是 X，是 Y”机械句，并在同一次调用内静默删去重复解释和最机械的一处重复反应。`literary-micro-rules/v5` 不要求数值风格目标或职业证明。
 
@@ -60,7 +63,7 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 ## 自动处理与停止点
 
-- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后只回 Writer 一次；第二版仍有 MUST，进入用户决定，禁止无限重试。
+- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后只回 Writer 一次；第二版仍有 MUST，进入用户决定，禁止无限重试。用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后恢复一次集中修订 + 完整双审），不是无限 retry。
 - 双审通过前，不能有正式章节、Generation 和两份 Review、Guardian Receipt 或 Git checkpoint；Python 晋升后才创建它们。
 - `ready` 不等于作者批准，也不等于可以发布；不配置 remote。
 - 未知遥测保持 null。不要伪造模型、token、Session、会话终态或作者授权。ACP 只用于事后取证。

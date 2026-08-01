@@ -67,6 +67,7 @@ from .workflow_iteration import (
 from .workflow import (
     NovelWorkflowOrchestrator,
     PlanningOutcome,
+    REVISION_DECISION_KINDS,
     REVIEW_ANALYSIS_FIELDS,
     ReviewFinding,
     ReviewOutcome,
@@ -75,6 +76,8 @@ from .workflow import (
     WorkflowRequest,
     WorkflowResult,
     _atomic_json,
+    _decision_options,
+    _quote_matches,
 )
 
 
@@ -107,9 +110,13 @@ LEAN_PROTECTED_CONTROL_PLANE_PATHS = (
 class NativeWorkspaceMutationError(WorkflowError):
     """Raised after restoring one creative role's project mutation."""
 
-    def __init__(self, reason: str):
-        super().__init__("创作角色修改了项目控制面。")
+    def __init__(self, reason: str, detail: str = ""):
         self.reason = reason
+        self.detail = detail
+        message = "创作角色修改了项目控制面。"
+        if detail:
+            message += detail
+        super().__init__(message)
 
 
 class NativeCompletionRepairError(WorkflowError):
@@ -719,11 +726,13 @@ class NativeWorkflowRelay:
         if path.exists():
             shutil.rmtree(path)
 
+    FROZEN_DRAFT_FILENAME = "控制面冻结稿.md"
+
     def _freeze_initial_draft(self, state: dict[str, Any]) -> None:
         source = self._staged_body_path(state)
         initial = self._diff_dir(
             str(state["slug"]), int(state["chapter"])
-        ) / "初稿.md"
+        ) / self.FROZEN_DRAFT_FILENAME
         if not initial.exists():
             initial.write_bytes(source.read_bytes())
 
@@ -731,7 +740,7 @@ class NativeWorkflowRelay:
         diff_dir = self._diff_dir(
             str(state["slug"]), int(state["chapter"])
         )
-        initial = diff_dir / "初稿.md"
+        initial = diff_dir / self.FROZEN_DRAFT_FILENAME
         current = self._staged_body_path(state)
         before = initial.read_text(encoding="utf-8-sig").splitlines(
             keepends=True
@@ -743,7 +752,7 @@ class NativeWorkflowRelay:
             difflib.unified_diff(
                 before,
                 after,
-                fromfile="初稿.md",
+                fromfile=self.FROZEN_DRAFT_FILENAME,
                 tofile="最终稿.md",
             )
         )
@@ -903,6 +912,12 @@ class NativeWorkflowRelay:
         state = self._load_state(slug)
         if self.strict_audit:
             raise WorkflowError("严格审计模式必须提交完整角色终态。")
+        if state.get("phase") == "decision_required":
+            raise WorkflowError(
+                "当前没有可完成的角色动作；请按 status 或 next-action "
+                "列出的可达命令处理（authorize-revision / continue-budget / "
+                "approve-high-risk / retry / stop）。"
+            )
         action = self.next_action(slug)
         role = self._phase_role(state)
         expected = action.get("session")
@@ -1504,11 +1519,35 @@ class NativeWorkflowRelay:
                 or unexpected_modified
                 or unexpected_deleted
             ) else "unexpected_project_artifact"
-            raise NativeWorkspaceMutationError(reason)
+            raise NativeWorkspaceMutationError(
+                reason,
+                detail=self._workspace_mutation_detail(allowed, action),
+            )
         snapshot_path.unlink(missing_ok=True)
         backup_path.unlink(missing_ok=True)
         if control_plane_mutated:
-            raise NativeWorkspaceMutationError("control_plane_mutation")
+            raise NativeWorkspaceMutationError(
+                "control_plane_mutation",
+                detail=self._workspace_mutation_detail(allowed, action),
+            )
+
+    @staticmethod
+    def _workspace_mutation_detail(
+        allowed: set[str],
+        action: dict[str, Any],
+    ) -> str:
+        """Return the allowed-write hint for a control-plane mutation failure."""
+        permitted = "，".join(sorted(allowed)) if allowed else "无"
+        capsule = action.get("capsule")
+        target = "writer/draft/正文.md"
+        if isinstance(capsule, dict):
+            target = str(
+                capsule.get("output") or target
+            )
+        return (
+            f" 唯一允许写入：{permitted}；"
+            f"请只写动作卡指定的 {target}。"
+        )
 
     @staticmethod
     def _control_session(role: str, chapter: int) -> SessionIdentity:
@@ -1577,6 +1616,7 @@ class NativeWorkflowRelay:
                 session.session_id,
                 authority="human_delegate",
                 decision_reference=human_decision_reference,
+                require_body_history=self.strict_audit,
             )
             authorization_id = authorization["authorization_id"]
         prepared = prepare_writer_capsule(
@@ -1649,6 +1689,14 @@ class NativeWorkflowRelay:
                 (
                     Path(prepared["capsule_dir"])
                     / prepared["draft_output"]
+                )
+                .relative_to(self._integrity_root(slug))
+                .as_posix()
+            ],
+            "read_only_project_files": [
+                (
+                    self._diff_dir(slug, chapter)
+                    / self.FROZEN_DRAFT_FILENAME
                 )
                 .relative_to(self._integrity_root(slug))
                 .as_posix()
@@ -1860,11 +1908,38 @@ class NativeWorkflowRelay:
                         f"执行 start {slug} --chapter {next_chapter} 开始下一章。"
                     ),
                 }
+            if state.get("phase") == "decision_required":
+                decision_kind = str(state.get("decision_kind") or "")
+                return {
+                    "schema": NATIVE_ACTION_SCHEMA,
+                    "kind": "user_decision",
+                    "decision_kind": decision_kind,
+                    "message": self._decision_message(state),
+                    "options": _decision_options(decision_kind),
+                    "must_findings": list(state.get("must_findings", [])),
+                }
             raise WorkflowError("当前没有等待执行的原生角色动作。")
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("schema") != NATIVE_ACTION_SCHEMA:
             raise WorkflowError("原生角色动作格式无效。")
         return payload
+
+    @staticmethod
+    def _decision_message(state: dict[str, Any]) -> str:
+        """Render the decision message with the revision-round hint."""
+        decision_kind = str(state.get("decision_kind") or "")
+        message = str(
+            state.get("decision_message")
+            or "自动修订后仍有问题，请选择下一步。"
+        )
+        if decision_kind in REVISION_DECISION_KINDS:
+            patch_round = int(state.get("patch_round") or 0)
+            message += (
+                f"\n第 {patch_round} 轮集中修订后仍有 MUST；"
+                "授权续修将再跑一轮 Writer 与完整双审，"
+                "不会自动继续。"
+            )
+        return message
 
     def status(self, slug: str) -> WorkflowResult:
         """Return the native relay phase in user language, not stale DB state."""
@@ -1894,15 +1969,13 @@ class NativeWorkflowRelay:
             "stopped": "任务已停止。",
         }
         if phase == "decision_required":
+            decision_kind = str(state.get("decision_kind") or "")
             return WorkflowResult(
                 user_state="decision_required",
-                message=str(
-                    state.get("decision_message")
-                    or "自动修订后仍有问题，请选择下一步。"
-                ),
+                message=self._decision_message(state),
                 sequence_id=sequence_id,
                 technical_retry_count=retries,
-                options=USER_OPTIONS,
+                options=_decision_options(decision_kind),
             )
         return WorkflowResult(
             user_state=(
@@ -2124,6 +2197,10 @@ class NativeWorkflowRelay:
                     "retry_reason": "user_regeneration",
                 }
             )
+            # 重新生成是全新草稿：陈旧 MUST 与修订轮次不得被技术恢复
+            # 当作 patch 指令重新路由。
+            state.pop("must_findings", None)
+            state.pop("patch_round", None)
             self._prepare_lean_writer_action(
                 slug,
                 state,
@@ -2237,6 +2314,7 @@ class NativeWorkflowRelay:
                 slug,
                 state,
                 failure_reason=exc.reason,
+                failure_detail=exc.detail,
             )
             self._observe_call(
                 slug,
@@ -2706,6 +2784,7 @@ class NativeWorkflowRelay:
         state: dict[str, Any],
         *,
         failure_reason: str = "writer_result_invalid",
+        failure_detail: str = "",
     ) -> WorkflowResult:
         phase = str(state.get("phase") or "")
         if phase == "awaiting_blind_reader":
@@ -2760,7 +2839,10 @@ class NativeWorkflowRelay:
             self._write_action(slug, state, action)
             return WorkflowResult(
                 user_state="running",
-                message="写作会话异常，已自动换新会话重试。",
+                message=(
+                    "写作会话异常，已自动换新会话重试。"
+                    f"{failure_detail}"
+                ),
                 sequence_id=sequence_id,
                 technical_retry_count=retries,
             )
@@ -2809,7 +2891,10 @@ class NativeWorkflowRelay:
             )
             return WorkflowResult(
                 user_state="running",
-                message="写作会话异常，已自动换新会话重试。",
+                message=(
+                    "写作会话异常，已自动换新会话重试。"
+                    f"{failure_detail}"
+                ),
                 sequence_id=sequence_id,
                 technical_retry_count=retries,
             )
@@ -3592,9 +3677,10 @@ class NativeWorkflowRelay:
                 self.root / "books" / slug,
                 int(state["chapter"]),
             ).read_text(encoding="utf-8-sig")
-        if not quote or quote not in prose:
+        matched, detail = _quote_matches(quote, prose)
+        if not matched:
             raise WorkflowError(
-                f"{role} 没有返回当前正文中的有效审稿引文。"
+                f"{role} 没有返回当前正文中的有效审稿引文。{detail}"
             )
 
     def _record_staged_review_completion(
@@ -3801,7 +3887,7 @@ class NativeWorkflowRelay:
         state.update(
             {
                 "phase": "awaiting_local_patch",
-                "patch_round": 1,
+                "patch_round": int(state.get("patch_round") or 0) + 1,
                 "must_findings": [
                     self.orchestrator._patch_directive(item)
                     for item in findings
@@ -3879,6 +3965,8 @@ class NativeWorkflowRelay:
             )
             state["phase"] = "decision_required"
             state["decision_kind"] = "local_patch_hard_gate_failed"
+            state["must_findings"] = list(surface_findings)
+            state["decision_message"] = "局部修订后硬检查仍有问题，请选择下一步。"
             _atomic_json(self._state_path(slug), state)
             self._action_path(slug).unlink(missing_ok=True)
             return result
@@ -3961,12 +4049,20 @@ class NativeWorkflowRelay:
                     self._integrity_root(slug)
                 ).as_posix()
             ],
+            "read_only_project_files": [
+                (
+                    self._diff_dir(slug, chapter)
+                    / self.FROZEN_DRAFT_FILENAME
+                )
+                .relative_to(self._integrity_root(slug))
+                .as_posix()
+            ],
         }
         state.update(
             {
                 "phase": "awaiting_writer",
                 "must_findings": list(must),
-                "patch_round": 1,
+                "patch_round": int(state.get("patch_round") or 0) + 1,
                 "control_run_id": str(writer["session_id"]),
             }
         )
@@ -4100,6 +4196,68 @@ class NativeWorkflowRelay:
             return self._request_local_patch(slug, state, findings, plan)
         return self._request_staged_literary_patch(slug, state, must)
 
+    def authorize_revision(
+        self, slug: str, *, decision_reference: str
+    ) -> WorkflowResult:
+        """Authorize one bounded literary revision after the second review round.
+
+        Official replacement for the python -c recovery call: records the
+        author's decision, then resumes the staged revision so the revised
+        body is re-reviewed before ready. It is not an unlimited retry loop.
+        """
+        state = self._load_state(slug)
+        decision_kind = str(state.get("decision_kind") or "")
+        if (
+            state.get("phase") != "decision_required"
+            or decision_kind not in REVISION_DECISION_KINDS
+        ):
+            raise WorkflowError("当前没有等待作者授权的续修决策。")
+        reference = str(decision_reference or "").strip()
+        if not reference:
+            raise WorkflowError("续修授权必须提供作者决定依据。")
+        must = tuple(
+            str(item)
+            for item in state.get("must_findings", [])
+            if str(item).strip()
+        )
+        if not must:
+            raise WorkflowError("续修授权缺少待处理的 MUST。")
+        state["author_revision_authorized"] = True
+        state["author_revision_reference"] = reference
+        state["human_decision_reference"] = (
+            f"author-revision:ch{int(state['chapter']):02d}"
+        )
+        _atomic_json(self._state_path(slug), state)
+        self._record_author_revision(state, reference, decision_kind, must)
+        return self._request_staged_literary_patch(slug, state, must)
+
+    def _record_author_revision(
+        self,
+        state: dict[str, Any],
+        decision_reference: str,
+        decision_kind: str,
+        must: tuple[str, ...],
+    ) -> None:
+        """Persist one author revision decision as a lightweight evidence file."""
+        slug = str(state["slug"])
+        directory = self._relay_dir(slug) / "author-revisions"
+        directory.mkdir(parents=True, exist_ok=True)
+        record = {
+            "schema": "novel-forge-author-revision/v1",
+            "id": f"author-rev-{uuid.uuid4().hex[:12]}",
+            "slug": slug,
+            "chapter": int(state["chapter"]),
+            "sequence_id": str(state.get("sequence_id") or ""),
+            "decision_kind": decision_kind,
+            "decision_reference": decision_reference,
+            "must_findings": list(must),
+            "created_at": datetime.now(UTC).isoformat(),
+            "author_approval": False,
+            "publication_eligibility": False,
+        }
+        path = directory / f"{record['id']}.json"
+        _atomic_json(path, record)
+
     def _complete_staged_review(
         self,
         slug: str,
@@ -4162,12 +4320,17 @@ class NativeWorkflowRelay:
         must = self._combined_must_findings(blind, outcome)
         if must:
             if int(state.get("patch_round") or 0) >= 1:
+                patch_round = int(state.get("patch_round") or 0)
                 result = self.orchestrator._decision_result(
                     slug,
                     request,
                     chapter,
                     sequence_id,
-                    message="自动修订后仍有问题，请选择下一步。",
+                    message=(
+                        f"第 {patch_round} 轮集中修订后仍有 MUST；"
+                        "authorize-revision 将再跑一轮 Writer 与完整双审，"
+                        "已进入作者决定，不会自动继续。"
+                    ),
                     retries=int(state.get("technical_retry_count") or 0),
                     decision_kind="literary_revision_required",
                     must_findings=must,
@@ -4176,6 +4339,7 @@ class NativeWorkflowRelay:
                 state["phase"] = "decision_required"
                 state["decision_kind"] = "literary_revision_required"
                 state["must_findings"] = list(must)
+                state["decision_message"] = "自动修订后仍有问题，请选择下一步。"
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
                 return result
