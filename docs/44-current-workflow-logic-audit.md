@@ -69,6 +69,9 @@ Editor 都从零开始计算运输重试。文学结论的第二版仍有 MUST �
 | 作者选择重新生成（retry） | Lean 下显式 author 决策通过 `require_body_history=False` 授权第三版，写 authorization 记录 | 自动重试无 author 签名时绕过两个正文版本的门槛 |
 | decision 等待期误调 `complete-role` | 报错并列出当前决策的可达命令（authorize-revision / continue-budget / approve-high-risk / retry / stop） | 用技术表单补交掩盖未决决策 |
 | 审稿引文逐字不匹配 | 去空白/标点规范化或前缀窗口逐字差异 ≤ 15 匹配；失败给出首个不匹配位置 | 无理由重跑审稿角色 |
+| 并行双审某一角色失败 | 按 `failed_review_role` 从 issued/completed 重新排队该角色并重签发角色卡 | 重跑另一已完成角色或整章 |
+| 技术重试/重新生成 | 只清理可再生成的 capsule 辅助文件，`draft/正文.md` 晋升前永不清除 | 丢弃有效暂存正文 |
+| 角色动作卡被篡改 | 角色卡 SHA-256 与状态记录比对失败即恢复并重签该角色 | 篡改卡扩大写入范围 |
 
 ## 完整性边界
 

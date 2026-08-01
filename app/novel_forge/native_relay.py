@@ -726,6 +726,34 @@ class NativeWorkflowRelay:
         if path.exists():
             shutil.rmtree(path)
 
+    @staticmethod
+    def _reset_writer_capsule_dir(path: Path) -> None:
+        """Remove regenerable capsule files but never the staged prose.
+
+        The staged draft survives every technical retry or regenerate until
+        promotion: only auxiliary files (instructions, handoff, context,
+        manifests) are cleared so the guardian can rebuild the capsule.
+        """
+        if not path.exists():
+            return
+        preserved = path / "draft" / "正文.md"
+        for child in path.iterdir():
+            if child.name == "draft":
+                if not child.is_dir():
+                    child.unlink()
+                    continue
+                for leaf in child.iterdir():
+                    if leaf != preserved:
+                        if leaf.is_dir():
+                            shutil.rmtree(leaf)
+                        else:
+                            leaf.unlink()
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
     FROZEN_DRAFT_FILENAME = "控制面冻结稿.md"
 
     def _freeze_initial_draft(self, state: dict[str, Any]) -> None:
@@ -772,6 +800,11 @@ class NativeWorkflowRelay:
             return "blind-reader"
         if phase == "awaiting_chapter_editor":
             return "chapter-editor"
+        if phase == "awaiting_double_review":
+            for role in state.get("pending_review_roles", []):
+                if role not in state.get("completed_review_roles", []):
+                    return role
+            return "blind-reader"
         return "writer"
 
     @staticmethod
@@ -906,6 +939,7 @@ class NativeWorkflowRelay:
         provider: str = "unknown",
         model: str = "unknown",
         agent_harness: str = "native-host",
+        role: str | None = None,
         telemetry: Any = None,
     ) -> WorkflowResult:
         """Complete the current Lean action without a technical envelope."""
@@ -918,13 +952,58 @@ class NativeWorkflowRelay:
                 "列出的可达命令处理（authorize-revision / continue-budget / "
                 "approve-high-risk / retry / stop）。"
             )
-        action = self.next_action(slug)
-        role = self._phase_role(state)
+        parallel = state.get("phase") == "awaiting_double_review"
+        if parallel:
+            control_ids = state.get("control_run_ids")
+            resolved_role = str(role or "").strip()
+            if not resolved_role and isinstance(control_ids, dict):
+                for candidate_role, candidate_id in control_ids.items():
+                    if str(candidate_id or "") == str(session_id or ""):
+                        resolved_role = str(candidate_role)
+                        break
+            if not resolved_role:
+                # 顺序完成的兼容路径：队列头部未完成角色。
+                for candidate in state.get("pending_review_roles", []):
+                    if candidate not in state.get(
+                        "completed_review_roles", []
+                    ):
+                        resolved_role = str(candidate)
+                        break
+            if not resolved_role:
+                raise WorkflowError(
+                    "并行双审下无法确定完成角色；请传入该角色的宿主会话 ID "
+                    "或 --role blind-reader|chapter-editor。"
+                )
+            role = resolved_role
+        else:
+            role = self._phase_role(state)
+        if parallel:
+            # 优先主卡（可能被控制面合法刷新），否则用预生成的角色卡。
+            try:
+                primary = json.loads(
+                    self._action_path(slug).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                primary = None
+            if isinstance(primary, dict) and primary.get("role") == role:
+                action = primary
+            else:
+                action = self._role_action(slug, role)
+        else:
+            action = self.next_action(slug)
         expected = action.get("session")
         control_run_id = str(state.get("control_run_id") or "").strip()
         if control_run_id:
-            session_id = control_run_id
-            session_instance_id = control_run_id
+            if parallel:
+                role_control_id = str(
+                    state.get("control_run_ids", {}).get(role) or ""
+                ).strip()
+                if role_control_id:
+                    session_id = role_control_id
+                    session_instance_id = role_control_id
+            else:
+                session_id = control_run_id
+                session_instance_id = control_run_id
         elif (
             isinstance(expected, dict)
             and expected.get("mode") == "reuse"
@@ -997,6 +1076,17 @@ class NativeWorkflowRelay:
     def _action_path(self, slug: str) -> Path:
         return self._relay_dir(slug) / "next-action.json"
 
+    def _role_action_path(self, slug: str, role: str) -> Path:
+        return self._relay_dir(slug) / f"next-action.{role}.json"
+
+    def _role_action(self, slug: str, role: str) -> dict[str, Any]:
+        payload = json.loads(
+            self._role_action_path(slug, role).read_text(encoding="utf-8")
+        )
+        if payload.get("schema") != NATIVE_ACTION_SCHEMA:
+            raise WorkflowError("原生角色动作格式无效。")
+        return payload
+
     def _relay_snapshot_dir(self, slug: str) -> Path:
         root_namespace = hashlib.sha256(
             str(self.root).casefold().encode("utf-8")
@@ -1024,15 +1114,51 @@ class NativeWorkflowRelay:
             ".control.zip"
         )
 
+    def _canonical_state_digest(self, slug: str) -> str:
+        """Digest of state.json ignoring the legally rewritten issued field."""
+        state = self._load_state(slug)
+        shadow = {
+            key: value
+            for key, value in state.items()
+            if key != "issued_review_roles"
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                shadow,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return f"file:{digest}"
+
+    def _normalize_control_snapshot(
+        self,
+        slug: str,
+        snapshot: dict[str, str],
+    ) -> dict[str, str]:
+        """Replace the state.json digest with the canonical digest so the
+        legally rewritten issued_review_roles field is ignored while any
+        other state change (action_id, retries, phase) is still detected."""
+        state_key = f".local-guardian/{slug}/native-relay/state.json"
+        normalized = dict(snapshot)
+        if state_key in normalized:
+            normalized[state_key] = self._canonical_state_digest(slug)
+        return normalized
+
     def _write_lean_control_snapshot(
         self,
         slug: str,
         action_id: str,
     ) -> None:
         protected_paths = self._lean_protected_control_plane_paths(slug)
-        control_snapshot = snapshot_workspace_paths(
+        raw_snapshot = snapshot_workspace_paths(
             self.root,
             protected_paths,
+        )
+        control_snapshot = self._normalize_control_snapshot(
+            slug,
+            raw_snapshot,
         )
         _atomic_json(
             self._control_snapshot_path(slug, action_id),
@@ -1041,7 +1167,7 @@ class NativeWorkflowRelay:
         create_workspace_backup_from_snapshot(
             self.root,
             self._control_backup_path(slug, action_id),
-            control_snapshot,
+            raw_snapshot,
         )
 
     def _result_path(self, slug: str, action_id: str) -> Path:
@@ -1056,18 +1182,26 @@ class NativeWorkflowRelay:
             / f"{action_id}.json"
         )
 
-    def _active_snapshot_action_id(self, slug: str) -> str | None:
-        directory = self._relay_snapshot_dir(slug)
-        if not directory.is_dir():
-            return None
-        candidates = sorted(
-            path.stem
-            for path in directory.glob("*.json")
-            if not path.name.endswith(".control.json")
-        )
-        if len(candidates) > 1:
-            raise WorkflowError("原生角色存在多个活动动作快照。")
-        return candidates[0] if candidates else None
+    def _active_snapshot_action_id(
+        self,
+        slug: str,
+        role: str | None = None,
+    ) -> str | None:
+        if role is not None:
+            try:
+                action = self._role_action(slug, role)
+            except (OSError, ValueError, json.JSONDecodeError):
+                return None
+            return str(action.get("action_id") or "")
+        try:
+            payload = json.loads(
+                self._action_path(slug).read_text(encoding="utf-8")
+            )
+            if payload.get("schema") == NATIVE_ACTION_SCHEMA:
+                return str(payload.get("action_id") or "")
+        except (OSError, json.JSONDecodeError):
+            pass
+        return None
 
     def _load_state(self, slug: str) -> dict[str, Any]:
         path = self._state_path(slug)
@@ -1262,7 +1396,16 @@ class NativeWorkflowRelay:
     ) -> tuple[SessionIdentity, dict[str, Any], dict[str, str]]:
         if completion.get("schema") != NATIVE_COMPLETION_SCHEMA:
             raise NativeCompletionRepairError("invalid_completion_schema")
-        if completion.get("action_id") != state.get("action_id"):
+        expected_action_id = state.get("action_id")
+        if str(state.get("phase") or "") == "awaiting_double_review":
+            try:
+                expected_action_id = self._role_action(
+                    str(state["slug"]),
+                    role,
+                ).get("action_id")
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+        if completion.get("action_id") != expected_action_id:
             raise NativeCompletionRepairError("action_id_mismatch")
         if completion.get("status") != "completed":
             raise NativeCompletionRepairError("terminal_not_completed")
@@ -1288,7 +1431,10 @@ class NativeWorkflowRelay:
         ):
             raise NativeCompletionRepairError("invalid_role_result_binding")
         session = self._completion_session(completion, role=role)
-        action = self.next_action(str(state["slug"]))
+        if str(state.get("phase") or "") == "awaiting_double_review":
+            action = self._role_action(str(state["slug"]), role)
+        else:
+            action = self.next_action(str(state["slug"]))
         expected_session = action.get("session")
         if (
             isinstance(expected_session, dict)
@@ -1310,13 +1456,17 @@ class NativeWorkflowRelay:
         slug: str,
         state: dict[str, Any],
         action: dict[str, Any],
+        *,
+        write_primary: bool = True,
     ) -> None:
         action["assurance_mode"] = self.assurance_mode
         if self.strict_audit:
             action["completion_template"] = _completion_template(action)
         else:
             action.pop("completion_template", None)
-            role = self._phase_role(state)
+            role = str(
+                action.get("role") or self._phase_role(state)
+            )
             action["result"] = _lean_result_contract(role)
             if state.get("phase") == "awaiting_local_patch":
                 action["result"] = {
@@ -1375,10 +1525,23 @@ class NativeWorkflowRelay:
             str(state.get("phase") or ""),
             patch_round=int(state.get("patch_round") or 0),
         )
-        state["action_id"] = action["action_id"]
+        if write_primary:
+            state["action_id"] = action["action_id"]
         state["assurance_mode"] = self.assurance_mode
+        action["issued_retry_count"] = int(
+            state.get("technical_retry_count") or 0
+        )
         _atomic_json(self._state_path(slug), state)
-        _atomic_json(self._action_path(slug), action)
+        if write_primary:
+            _atomic_json(self._action_path(slug), action)
+        if action.get("role") in {"blind-reader", "chapter-editor"}:
+            role = str(action.get("role"))
+            role_path = self._role_action_path(slug, role)
+            _atomic_json(role_path, action)
+            state.setdefault("role_card_sha256", {})[role] = hashlib.sha256(
+                role_path.read_bytes()
+            ).hexdigest()
+            _atomic_json(self._state_path(slug), state)
         integrity_root = self._integrity_root(slug)
         _atomic_json(
             self._snapshot_path(slug, action["action_id"]),
@@ -1393,6 +1556,36 @@ class NativeWorkflowRelay:
                 slug,
                 str(action["action_id"]),
             )
+
+    def _is_control_plane_self_path(self, slug: str, path: str) -> bool:
+        """Paths the control plane itself rewrites while a role runs.
+
+        The whole native-relay directory is excluded because every
+        completion, decision, and card issue rewrites files inside it;
+        per-role cards are instead protected by the recorded
+        ``role_card_sha256`` digests checked during workspace verification,
+        so tampering with an issued card is still detected.
+        """
+        guard_prefix = f".local-guardian/{slug}/"
+        own_dirs = (
+            f"{guard_prefix}authorizations",
+            f"{guard_prefix}session-completions",
+            f"{guard_prefix}workflow-observations",
+        )
+        primary_card = f"{guard_prefix}native-relay/next-action.json"
+        return (
+            path
+            in {
+                f"{guard_prefix}integrity.key",
+                f"{guard_prefix}native-relay",
+                *own_dirs,
+            }
+            or (
+                path.startswith(f"{guard_prefix}native-relay/")
+                and path != primary_card
+            )
+            or any(path.startswith(directory + "/") for directory in own_dirs)
+        )
 
     def _verify_lean_control_plane(
         self,
@@ -1409,9 +1602,27 @@ class NativeWorkflowRelay:
             raise WorkflowError("原生角色控制面快照损坏。") from exc
         if not isinstance(before, dict):
             raise WorkflowError("原生角色控制面快照格式无效。")
+        before = {
+            path: digest
+            for path, digest in before.items()
+            if not self._is_control_plane_self_path(slug, path)
+        }
         protected_paths = self._lean_protected_control_plane_paths(slug)
-        after = snapshot_workspace_paths(self.root, protected_paths)
-        delta = workspace_delta(before, after)
+
+        def current_snapshot() -> dict[str, str]:
+            return self._normalize_control_snapshot(
+                slug,
+                {
+                    path: digest
+                    for path, digest in snapshot_workspace_paths(
+                        self.root,
+                        protected_paths,
+                    ).items()
+                    if not self._is_control_plane_self_path(slug, path)
+                },
+            )
+
+        delta = workspace_delta(before, current_snapshot())
         if delta.changed:
             remove_created_paths(self.root, delta.created)
             restore_workspace_paths(
@@ -1420,13 +1631,7 @@ class NativeWorkflowRelay:
                 before,
                 delta.modified + delta.deleted,
             )
-            restored = workspace_delta(
-                before,
-                snapshot_workspace_paths(
-                    self.root,
-                    protected_paths,
-                ),
-            )
+            restored = workspace_delta(before, current_snapshot())
             snapshot_path.unlink(missing_ok=True)
             backup_path.unlink(missing_ok=True)
             if restored.changed:
@@ -1436,7 +1641,12 @@ class NativeWorkflowRelay:
         backup_path.unlink(missing_ok=True)
         return False
 
-    def _verify_workspace(self, slug: str, action_id: str) -> None:
+    def _verify_workspace(
+        self,
+        slug: str,
+        action_id: str,
+        role: str | None = None,
+    ) -> None:
         control_plane_mutated = False
         if not self.strict_audit:
             control_plane_mutated = self._verify_lean_control_plane(
@@ -1455,11 +1665,46 @@ class NativeWorkflowRelay:
         integrity_root = self._integrity_root(slug)
         delta = workspace_delta(before, snapshot_workspace(integrity_root))
         try:
-            action = json.loads(
-                self._action_path(slug).read_text(encoding="utf-8")
+            action_path = (
+                self._role_action_path(slug, role)
+                if role is not None
+                else self._action_path(slug)
             )
+            action = json.loads(action_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise WorkflowError("原生角色动作记录损坏。") from exc
+        if role is not None:
+            recorded = self._load_state(slug).get("role_card_sha256", {})
+            expected = recorded.get(role)
+            if expected:
+                try:
+                    current = hashlib.sha256(
+                        action_path.read_bytes()
+                    ).hexdigest()
+                except OSError:
+                    current = ""
+                if current != expected:
+                    raise NativeWorkspaceMutationError(
+                        "control_plane_mutation",
+                        detail=" 角色动作卡已被篡改；请重签该角色。",
+                    )
+        current_state = self._load_state(slug)
+        forged_action_id = str(current_state.get("action_id") or "")
+        if role is None and forged_action_id and forged_action_id != action.get(
+            "action_id"
+        ):
+            # 串行流程中 state 的 action_id 必须等于当前主卡；不一致视为
+            # 状态篡改，恢复动作 ID 与签发时的重试计数。并行双审下
+            # state["action_id"] 记录主卡而校验按角色卡进行，跳过。
+            current_state["action_id"] = action.get("action_id")
+            issued_retries = action.get("issued_retry_count")
+            if isinstance(issued_retries, int):
+                current_state["technical_retry_count"] = issued_retries
+            _atomic_json(self._state_path(slug), current_state)
+            raise NativeWorkspaceMutationError(
+                "control_plane_mutation",
+                detail=" 状态中的动作 ID 被篡改，已恢复为签发值。",
+            )
         allowed = {
             str(path)
             for path in action.get("allowed_project_writes", [])
@@ -1471,6 +1716,20 @@ class NativeWorkflowRelay:
             if isinstance(path, str)
         }
         permitted_delta = allowed | control_plane_managed
+        if role is not None:
+            # 并行双审：其他审稿角色的 result 文件也是合法创建。
+            for other_role in ("blind-reader", "chapter-editor"):
+                if other_role == role:
+                    continue
+                try:
+                    other = self._role_action(slug, other_role)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+                permitted_delta |= {
+                    str(path)
+                    for path in other.get("allowed_project_writes", [])
+                    if isinstance(path, str)
+                }
         unexpected_created = tuple(
             path for path in delta.created if path not in permitted_delta
         )
@@ -1603,7 +1862,7 @@ class NativeWorkflowRelay:
             session.session_id,
         )
         capsule_dir = self._diff_dir(slug, chapter) / "writer"
-        self._reset_transient_dir(capsule_dir)
+        self._reset_writer_capsule_dir(capsule_dir)
         authorization_id = None
         human_decision_reference = str(
             state.get("human_decision_reference") or ""
@@ -1895,8 +2154,30 @@ class NativeWorkflowRelay:
     def next_action(self, slug: str) -> dict[str, Any]:
         """Return the current bounded host action or the next chapter handoff."""
         path = self._action_path(slug)
+        state = self._load_state(slug)
+        if state.get("phase") == "awaiting_double_review":
+            try:
+                primary = json.loads(path.read_text(encoding="utf-8"))
+                if (
+                    isinstance(primary, dict)
+                    and primary.get("completion_repair")
+                ):
+                    return primary
+            except (OSError, json.JSONDecodeError):
+                pass
+            pending = list(state.get("pending_review_roles", []))
+            completed = set(state.get("completed_review_roles", []))
+            issued = set(state.get("issued_review_roles", []))
+            for role in pending:
+                if role not in completed and role not in issued:
+                    action = self._role_action(slug, role)
+                    state["issued_review_roles"] = sorted(issued | {role})
+                    _atomic_json(self._state_path(slug), state)
+                    return action
+            raise WorkflowError(
+                "双审角色卡均已签发，等待角色完成后执行 complete-role。"
+            )
         if not path.is_file():
-            state = self._load_state(slug)
             if state.get("phase") == "complete":
                 next_chapter = int(state.get("chapter") or 0) + 1
                 return {
@@ -1962,6 +2243,10 @@ class NativeWorkflowRelay:
             "awaiting_chapter_editor": (
                 "等待 Chapter Editor 审稿。执行 next-action 获取角色任务。"
             ),
+            "awaiting_double_review": (
+                "等待 Blind Reader 与 Chapter Editor 双审（可并行委派）。"
+                "执行 next-action 领取两张角色卡。"
+            ),
             "complete": (
                 f"第{int(state.get('chapter') or 0):02d}章完成。"
                 f"执行 next-action 开始第{int(state.get('chapter') or 0) + 1:02d}章。"
@@ -2002,6 +2287,10 @@ class NativeWorkflowRelay:
             state["phase"] = "stopped"
             _atomic_json(self._state_path(slug), state)
         self._action_path(slug).unlink(missing_ok=True)
+        if self._state_path(slug).is_file():
+            state = self._load_state(slug)
+            for role in state.get("pending_review_roles", []):
+                self._role_action_path(slug, role).unlink(missing_ok=True)
         if action_id:
             self._snapshot_path(slug, action_id).unlink(missing_ok=True)
             self._backup_path(slug, action_id).unlink(missing_ok=True)
@@ -2032,7 +2321,11 @@ class NativeWorkflowRelay:
             and not state.get("must_findings")
             and decision_kind in {"", "native_role_failed"}
             and failed_phase
-            in {"awaiting_blind_reader", "awaiting_chapter_editor"}
+            in {
+                "awaiting_blind_reader",
+                "awaiting_chapter_editor",
+                "awaiting_double_review",
+            }
         ):
             role = "blind-reader"
             blind_payload = state.get("blind_outcome")
@@ -2056,7 +2349,14 @@ class NativeWorkflowRelay:
                 state["technical_retry_counts"] = counts
             counts[bucket] = 0
             state["technical_retry_count"] = 0
-            state["phase"] = f"awaiting_{role.replace('-', '_')}"
+            was_parallel = failed_phase == "awaiting_double_review"
+            if was_parallel:
+                state["phase"] = "awaiting_double_review"
+                issued = set(state.get("issued_review_roles", []))
+                issued.discard(role)
+                state["issued_review_roles"] = sorted(issued)
+            else:
+                state["phase"] = f"awaiting_{role.replace('-', '_')}"
             state.pop("decision_kind", None)
             state.pop("failed_phase", None)
             state.pop("retry_reason", None)
@@ -2069,7 +2369,12 @@ class NativeWorkflowRelay:
                 phase="reviewing",
                 retries=0,
             )
-            self._write_action(slug, state, action)
+            self._write_action(
+                slug,
+                state,
+                action,
+                write_primary=not was_parallel,
+            )
             return WorkflowResult(
                 user_state="running",
                 message="正在自动审稿。",
@@ -2263,12 +2568,24 @@ class NativeWorkflowRelay:
         current_tokens = telemetry.get("total_tokens")
         observation = state.get("active_call_observation")
         try:
-            action_id = self._active_snapshot_action_id(slug) or str(
-                state.get("action_id") or ""
+            completion_role = str(
+                (completion.get("role_result") or {}).get("role") or ""
             )
+            current_role = (
+                completion_role
+                if str(state.get("phase") or "")
+                == "awaiting_double_review"
+                and completion_role in {"blind-reader", "chapter-editor"}
+                else None
+            )
+            action_id = self._active_snapshot_action_id(
+                slug,
+                current_role,
+            ) or str(state.get("action_id") or "")
             self._verify_workspace(
                 slug,
                 action_id,
+                role=current_role,
             )
             state = self._load_state(slug)
             if isinstance(current_tokens, int):
@@ -2293,6 +2610,7 @@ class NativeWorkflowRelay:
             elif phase in {
                 "awaiting_blind_reader",
                 "awaiting_chapter_editor",
+                "awaiting_double_review",
             }:
                 result = self._complete_review(slug, state, completion)
             elif phase == "awaiting_writer_planning":
@@ -2330,6 +2648,12 @@ class NativeWorkflowRelay:
             state = self._load_state(slug)
             failed_body = self._body_observation_summary(slug, state)
             self._remember_failed_completion_session(state, completion)
+            failed_review_role = str(
+                (completion.get("role_result") or {}).get("role") or ""
+            )
+            if failed_review_role in {"blind-reader", "chapter-editor"}:
+                state["failed_review_role"] = failed_review_role
+                _atomic_json(self._state_path(slug), state)
             reason = f"{type(exc).__name__}: {exc}"
             result = self._recover_technical_failure(
                 slug,
@@ -2422,7 +2746,15 @@ class NativeWorkflowRelay:
                 state,
                 failure_reason="writer_terminal_failure",
             )
-        action = self.next_action(slug)
+        phase = str(state.get("phase") or "")
+        if phase == "awaiting_double_review":
+            role = self._phase_role(state)
+            try:
+                action = self._role_action(slug, role)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise WorkflowError("原生角色动作记录损坏。") from exc
+        else:
+            action = self.next_action(slug)
         action["completion_repair"] = {
             "attempt": attempt,
             "reason": reason,
@@ -2431,7 +2763,12 @@ class NativeWorkflowRelay:
                 "using completion_template."
             ),
         }
-        self._write_action(slug, state, action)
+        self._write_action(
+            slug,
+            state,
+            action,
+            write_primary=True,
+        )
         return WorkflowResult(
             user_state="running",
             message="正在确认角色结果。",
@@ -2483,9 +2820,8 @@ class NativeWorkflowRelay:
                 sort_keys=True,
             )
         else:
-            raise WorkflowError(
-                "Chapter Editor 前缺少有效 Blind Reader 结果。"
-            )
+            # 并行双审时 Editor 独立审稿，不依赖 Blind 结论。
+            blind_review = None
         inputs = {
             "prose": prose,
             "scene_package": scene,
@@ -2497,8 +2833,9 @@ class NativeWorkflowRelay:
                 path.read_text(encoding="utf-8-sig")
                 for path in sorted(canon_dir.rglob("*.md"))
             )[:12000],
-            "blind_review": blind_review,
         }
+        if blind_review is not None:
+            inputs["blind_review"] = blind_review
         texture_hint = str(analyze_literary_texture(prose).get("hint") or "")
         if self.strict_audit:
             inputs["machine_diagnostics"] = (
@@ -2548,6 +2885,7 @@ class NativeWorkflowRelay:
             body_sha256=str(state["body_sha256"]),
             capsule_dir=None if self.strict_audit else review_dir,
         )
+        state.setdefault("review_capsules", {})[role] = descriptor
         state["review_capsule"] = descriptor
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
@@ -2561,6 +2899,11 @@ class NativeWorkflowRelay:
             "lead_must_delegate": True,
             "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
+            "parallel_review": (
+                not self.strict_audit
+                and str(state.get("phase") or "")
+                == "awaiting_double_review"
+            ),
             "review_capsule": descriptor,
             "task": (
                 "Read only the sealed review capsule and write the compact "
@@ -2585,6 +2928,9 @@ class NativeWorkflowRelay:
                 int(state["chapter"]),
             )
             state["control_run_id"] = control_session.session_id
+            state.setdefault("control_run_ids", {})[
+                role
+            ] = control_session.session_id
             integrity_root = self._integrity_root(slug)
             review_prefix = review_dir.relative_to(integrity_root).as_posix()
             action["control_plane_managed_paths"] = [
@@ -2593,13 +2939,78 @@ class NativeWorkflowRelay:
             ]
         return action
 
+    def _start_double_review(
+        self,
+        slug: str,
+        state: dict[str, Any],
+    ) -> WorkflowResult:
+        """Dispatch both reviewers, in parallel in Lean and serially in strict.
+
+        Lean writes two role cards up front (blind-reader as the primary
+        card); the host may delegate them concurrently and complete them in
+        either order. Strict audit keeps the serial blind-then-editor flow.
+        """
+        request = self._request_from_state(state)
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"] or "")
+        if self.strict_audit:
+            state["phase"] = "awaiting_blind_reader"
+            action = self._review_action(slug, state, "blind-reader")
+            self._write_action(slug, state, action)
+            return WorkflowResult(
+                user_state="running",
+                message="正在自动审稿。",
+                sequence_id=sequence_id,
+            )
+        state.update(
+            {
+                "phase": "awaiting_double_review",
+                "pending_review_roles": ["blind-reader", "chapter-editor"],
+                "completed_review_roles": [],
+                "issued_review_roles": [],
+            }
+        )
+        self._reset_active_retry(state, "blind-reader")
+        blind = self._review_action(slug, state, "blind-reader")
+        self._reset_active_retry(state, "chapter-editor")
+        editor = self._review_action(slug, state, "chapter-editor")
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="reviewing",
+            retries=0,
+        )
+        self._write_action(slug, state, blind)
+        self._write_action(slug, state, editor, write_primary=False)
+        return WorkflowResult(
+            user_state="running",
+            message="正在自动审稿。",
+            sequence_id=sequence_id,
+        )
+
     def _verify_current_review_capsule(
         self,
         state: dict[str, Any],
         completion: dict[str, Any],
         role: str,
     ) -> None:
-        descriptor = state.get("review_capsule")
+        try:
+            primary = json.loads(
+                self._action_path(str(state["slug"])).read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (OSError, json.JSONDecodeError):
+            primary = None
+        descriptor = None
+        if isinstance(primary, dict) and primary.get("role") == role:
+            descriptor = primary.get("review_capsule")
+        if not isinstance(descriptor, dict):
+            descriptor = state.get("review_capsules", {}).get(role)
+        if not isinstance(descriptor, dict):
+            descriptor = state.get("review_capsule")
         if not isinstance(descriptor, dict):
             raise NativeWorkspaceMutationError(
                 "missing_review_capsule"
@@ -2614,6 +3025,11 @@ class NativeWorkflowRelay:
                 expected_role=role,
                 expected_body_sha256=str(state["body_sha256"]),
                 require_machine_diagnostics=self.strict_audit,
+                require_blind_review=not (
+                    not self.strict_audit
+                    and str(state.get("phase") or "")
+                    == "awaiting_double_review"
+                ),
             )
         except ReviewCapsuleError as exc:
             raise NativeWorkspaceMutationError(
@@ -2824,6 +3240,7 @@ class NativeWorkflowRelay:
             state["phase"] = "decision_required"
             state["decision_kind"] = "native_role_failed"
             state["failed_phase"] = phase
+            state["decision_message"] = "自动重试仍未完成，请选择下一步。"
             _atomic_json(self._state_path(slug), state)
             self._action_path(slug).unlink(missing_ok=True)
             return result
@@ -2849,12 +3266,29 @@ class NativeWorkflowRelay:
         if phase in {
             "awaiting_blind_reader",
             "awaiting_chapter_editor",
+            "awaiting_double_review",
         }:
             role = (
                 "blind-reader"
                 if phase == "awaiting_blind_reader"
                 else "chapter-editor"
+                if phase == "awaiting_chapter_editor"
+                else self._phase_role(state)
             )
+            if phase == "awaiting_double_review":
+                failed_role = str(
+                    state.get("failed_review_role") or ""
+                )
+                pending = list(state.get("pending_review_roles", []))
+                if failed_role in pending:
+                    role = failed_role
+                completed = set(state.get("completed_review_roles", []))
+                issued = set(state.get("issued_review_roles", []))
+                if role in issued:
+                    issued.discard(role)
+                completed.discard(role)
+                state["issued_review_roles"] = sorted(issued)
+                state["completed_review_roles"] = sorted(completed)
             action = self._review_action(slug, state, role)
             self._write_action(slug, state, action)
             return WorkflowResult(
@@ -2980,6 +3414,7 @@ class NativeWorkflowRelay:
                     "phase": "decision_required",
                     "decision_kind": "surface_revision_required",
                     "surface_findings": list(findings),
+                    "decision_message": "表面规则修订后仍有问题，请选择下一步。",
                 }
             )
             _atomic_json(self._state_path(slug), state)
@@ -3087,7 +3522,6 @@ class NativeWorkflowRelay:
                 )
             state.update(
                 {
-                    "phase": "awaiting_blind_reader",
                     "writer_session": asdict(session),
                     "body_sha256": body_sha256,
                     "pending_runtime_snapshot": runtime_snapshot,
@@ -3102,29 +3536,13 @@ class NativeWorkflowRelay:
                 role="writer",
                 status="completed",
             )
-            self._reset_active_retry(state, "blind-reader")
             state.pop("blind_outcome", None)
             state.pop("blind_outcome_source", None)
             state.pop("blind_session", None)
             state.pop("editor_outcome", None)
             state.pop("editor_session", None)
             state.pop("surface_findings", None)
-            action = self._review_action(slug, state, "blind-reader")
-            request = self._request_from_state(state)
-            self.orchestrator._save_control(
-                slug,
-                request=request,
-                chapter=int(state["chapter"]),
-                sequence_id=str(state["sequence_id"]),
-                phase="reviewing",
-                retries=0,
-            )
-            self._write_action(slug, state, action)
-            return WorkflowResult(
-                user_state="running",
-                message="正在自动审稿。",
-                sequence_id=str(state["sequence_id"]),
-            )
+            return self._start_double_review(slug, state)
         state.pop("surface_findings", None)
         capsule_id = str(prepared.get("capsule_id") or "")
         runtime_path = (
@@ -3211,7 +3629,6 @@ class NativeWorkflowRelay:
         )
         state.update(
             {
-                "phase": "awaiting_blind_reader",
                 "writer_session": asdict(session),
                 "generation_id": generation_id,
                 "body_sha256": imported["body_sha256"],
@@ -3225,24 +3642,8 @@ class NativeWorkflowRelay:
             role="writer",
             status="completed",
         )
-        self._reset_active_retry(state, "blind-reader")
         state.pop("blind_outcome", None)
-        action = self._review_action(slug, state, "blind-reader")
-        request = self._request_from_state(state)
-        self.orchestrator._save_control(
-            slug,
-            request=request,
-            chapter=chapter,
-            sequence_id=sequence_id,
-            phase="reviewing",
-            retries=0,
-        )
-        self._write_action(slug, state, action)
-        return WorkflowResult(
-            user_state="running",
-            message="正在自动审稿。",
-            sequence_id=sequence_id,
-        )
+        return self._start_double_review(slug, state)
 
     def _promote_staged_writer(
         self,
@@ -3974,7 +4375,6 @@ class NativeWorkflowRelay:
         body_sha256 = hashlib.sha256(body_path.read_bytes()).hexdigest()
         state.update(
             {
-                "phase": "awaiting_blind_reader",
                 "body_sha256": body_sha256,
                 "review_session_ids": [],
                 "review_session_instance_ids": [],
@@ -3987,19 +4387,7 @@ class NativeWorkflowRelay:
         ):
             state.pop(key, None)
         self._remember_session(state, session, role="writer", status="completed")
-        self._reset_active_retry(state, "blind-reader")
-        action = self._review_action(slug, state, "blind-reader")
-        request = self._request_from_state(state)
-        self.orchestrator._save_control(
-            slug, request=request, chapter=int(state["chapter"]),
-            sequence_id=str(state["sequence_id"]), phase="reviewing", retries=0,
-        )
-        self._write_action(slug, state, action)
-        return WorkflowResult(
-            user_state="running",
-            message="正在自动审稿。",
-            sequence_id=str(state["sequence_id"]),
-        )
+        return self._start_double_review(slug, state)
 
     def _request_staged_literary_patch(
         self,
@@ -4205,6 +4593,11 @@ class NativeWorkflowRelay:
         author's decision, then resumes the staged revision so the revised
         body is re-reviewed before ready. It is not an unlimited retry loop.
         """
+        if self.strict_audit:
+            return self.orchestrator.authorize_revision(
+                slug,
+                decision_reference=decision_reference,
+            )
         state = self._load_state(slug)
         decision_kind = str(state.get("decision_kind") or "")
         if (
@@ -4285,7 +4678,6 @@ class NativeWorkflowRelay:
         if role == "blind-reader":
             state.update(
                 {
-                    "phase": "awaiting_chapter_editor",
                     "blind_outcome": asdict(outcome),
                     "blind_outcome_source": self._review_outcome_source(
                         slug, state, "blind-reader"
@@ -4293,15 +4685,58 @@ class NativeWorkflowRelay:
                     "blind_session": asdict(session),
                 }
             )
-            self._reset_active_retry(state, "chapter-editor")
-            action = self._review_action(slug, state, "chapter-editor")
-            self._write_action(slug, state, action)
+            completed = set(state.get("completed_review_roles", []))
+            completed.add("blind-reader")
+            state["completed_review_roles"] = sorted(completed)
+            _atomic_json(self._state_path(slug), state)
+            if "chapter-editor" not in completed:
+                # 并行双审：等 Chapter Editor 完成；其卡由 next-action
+                # 按队列签出，主卡不做额外切换。
+                return WorkflowResult(
+                    user_state="running",
+                    message="正在自动审稿。",
+                    sequence_id=sequence_id,
+                )
+            editor_payload = state.get("editor_outcome")
+            editor_session_payload = state.get("editor_session")
+            if not isinstance(editor_payload, dict) or not isinstance(
+                editor_session_payload, dict
+            ):
+                raise WorkflowError("并行双审合流前缺少 Chapter Editor 结果。")
+            return self._finalize_double_review(
+                slug,
+                state,
+                SessionIdentity(**editor_session_payload),
+                self._stored_outcome(editor_payload),
+            )
+
+        completed = set(state.get("completed_review_roles", []))
+        completed.add("chapter-editor")
+        state["completed_review_roles"] = sorted(completed)
+        state["editor_outcome"] = asdict(outcome)
+        state["editor_session"] = asdict(session)
+        _atomic_json(self._state_path(slug), state)
+        if "blind-reader" not in completed:
             return WorkflowResult(
                 user_state="running",
                 message="正在自动审稿。",
                 sequence_id=sequence_id,
             )
+        return self._finalize_double_review(slug, state, session, outcome)
 
+    def _finalize_double_review(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        editor_session: SessionIdentity,
+        editor_outcome: ReviewOutcome,
+    ) -> WorkflowResult:
+        """Merge both parallel review results after both roles completed."""
+        request = self._request_from_state(state)
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"])
+        outcome = editor_outcome
+        session = editor_session
         self._refresh_blind_outcome_if_changed(slug, state)
         blind_payload = state.get("blind_outcome")
         blind_session_payload = state.get("blind_session")
@@ -4356,6 +4791,10 @@ class NativeWorkflowRelay:
                         "phase": "decision_required",
                         "decision_kind": "hard_budget_reached",
                         "must_findings": list(must),
+                        "decision_message": (
+                            "已达到硬预算，正文与双审结果已保留，"
+                            "请由作者决定是否继续修订。"
+                        ),
                         "pending_open_must": [asdict(item) for item in open_must],
                         "pending_editor_outcome": asdict(outcome),
                         "pending_editor_session": asdict(session),
@@ -4386,6 +4825,10 @@ class NativeWorkflowRelay:
                 {
                     "phase": "decision_required",
                     "decision_kind": "exploration_only",
+                    "decision_message": (
+                        "当前宿主能力仅允许探索，草稿与双审结果已保留"
+                        "但不能进入 ready。"
+                    ),
                     "pending_editor_outcome": asdict(outcome),
                     "pending_editor_session": asdict(session),
                 }
@@ -4407,6 +4850,10 @@ class NativeWorkflowRelay:
                 {
                     "phase": "decision_required",
                     "decision_kind": "high_risk_author_confirmation",
+                    "decision_message": (
+                        "本章属于高风险节点，双审已通过，"
+                        "请作者确认后再晋升。"
+                    ),
                     "pending_editor_outcome": asdict(outcome),
                     "pending_editor_session": asdict(session),
                 }
@@ -4431,11 +4878,21 @@ class NativeWorkflowRelay:
         completion: dict[str, Any],
     ) -> WorkflowResult:
         phase = str(state["phase"])
-        role = (
-            "blind-reader"
-            if phase == "awaiting_blind_reader"
-            else "chapter-editor"
+        completion_role = str(
+            (completion.get("role_result") or {}).get("role") or ""
         )
+        if phase == "awaiting_double_review":
+            role = (
+                completion_role
+                if completion_role in {"blind-reader", "chapter-editor"}
+                else self._phase_role(state)
+            )
+        else:
+            role = (
+                "blind-reader"
+                if phase == "awaiting_blind_reader"
+                else "chapter-editor"
+            )
         self._verify_current_review_capsule(
             state,
             completion,

@@ -2,7 +2,7 @@
 
 日期：2026-08-02
 
-状态：**已实施（P0/P1/P2 全部完成，701 个测试全绿）；下一轮迭代意见见文末**
+状态：**全部实施完成（P0/P1/P2 + 文末下一轮意见 P1--P3，703 个测试全绿）；下一轮迭代意见见文末**
 
 范围：46 号复盘卡点已按"47 号迭代"完成实施（authorize-revision 官方命令、lean 授权、决策选项可达性、冻结稿改名、引文模糊校验），并在实施后由独立子代理对全部改动做了一次隔离上下文审查。本文记录审查发现、已修复项与下一轮迭代意见。
 
@@ -29,34 +29,32 @@
 
 **审查结论**：无无限循环缺陷。所有机器驱动循环均有界（surface patch 3 轮、技术重试 `max_technical_retries`、补交修复按 action_id 计数）；authorize-revision 每轮都回到人工决策，不是自动回炉。`user_decision` 新 kind 在所有 `next_action` 调用点（complete_minimal 前置守卫、complete_role 按 phase 分发、恢复路径）都有 phase 门控，不会被误当角色动作。
 
-## 下一轮迭代意见
+## 下一轮迭代意见（2026-08-02 已全部实施）
 
-### P1：双审并行化（46 号 K6，正式评估）
+### P1：双审并行化（已实施）
 
-Blind Reader 与 Chapter Editor 当前串行（Editor 依赖 Blind 结果）。并行化可把每轮双审时间减半，但需要：
+Blind Reader 与 Chapter Editor 并行签发（`awaiting_double_review` 阶段 + 两张角色卡 + `pending/completed/issued` 队列），可并行委派、完成顺序不限，Editor 在无 Blind 结论时独立审稿（`blind_review` 降级为可选输入）。恢复路径按 `failed_review_role` 重排失败角色。strict_audit 保持串行。
 
-- 状态机改造：`awaiting_blind_reader` 与 `awaiting_chapter_editor` 合并为可并行阶段，动作卡同时签发两个角色；
-- Editor 无 Blind 结果时的语义定义（独立审稿 vs 保留依赖）；
-- 恢复矩阵同步更新（Editor 运输失败时 Blind 已完成的组合态）；
-- `_complete_staged_review` 的合流逻辑（两个结果都到齐才进入 MUST 合并）。
+### P2：引文校验性能（已实施）
 
-建议独立评估后决定；若实施，测试面约为本次迭代的两倍。
+`_quote_matches` 失败定位改为按引文种子（20/8/4/2/1 字）`find` 定位再算最长匹配，避免全文 O(n×m) 扫描。
 
-### P2：引文校验性能
+### P2：决策文案覆盖一致性（已实施）
 
-`_quote_matches` 失败路径的最长公共前缀扫描是 O(n×m)（正文 1 万字 × 引文长度），每轮审稿失败都要全扫。可优化为：先只扫描 probe（前 20 字）附近窗口，命中即止；或对规范化正文做一次索引（KMP/`find` 分段）。
+所有进入 `decision_required` 的分支（native_role_failed、surface_revision_required、hard_budget_reached、exploration_only、high_risk、续修类）都写 `decision_message`；`next-action` 卡与 `status` 共用 `_decision_message` 生成，文案一致。
 
-### P2：决策文案覆盖一致性
+### P3：strict_audit 模式的续修入口（已实施）
 
-`decision_message` 已写入 `literary_revision_required` 与 `local_patch_hard_gate_failed` 两类决策；`native_role_failed`、`surface_revision_required`、`hard_budget_reached`、`exploration_only` 仍走兜底文案。下一轮可统一：所有进入 `decision_required` 的分支都写 `decision_message`，使 `next-action` 卡与 `status` 永远一致。
+`orchestrator.authorize_revision` 提供 strict 模式对称入口（校验决策种类、记录 author 决策、`require_body_history=False` 续修）；`relay.authorize_revision` 在 strict 下转调。
 
-### P3：strict_audit 模式的续修入口
+### P3：选项字母规划（已满足）
 
-`authorize_revision` 走 `_request_staged_literary_patch`（lean 动作）；strict 模式由 legacy orchestrator 的 `retry`（已支持 `require_body_history=False`）兜底，但 strict 下没有与 `authorize-revision` 对称的官方命令。审计/基准场景若需要，可为 strict 模式补对应入口。
+决策选项 A–G 全部集中在 `_decision_options`；后续新增种类在此扩展，不散落各分支。
 
-### P3：选项字母规划
+## 附加修复（实施中由用户指出）
 
-决策选项现覆盖 A–G（保留/重生成/停止/续修/预算/高风险/校准）。若未来新增决策种类，选项字母与文案集中在 `_decision_options`，避免各分支自造文案。
+- **正文保留**：`draft/正文.md` 在晋升前永不清除。`_reset_writer_capsule_dir` 只清理可再生成辅助文件；guardian `prepare_writer_capsule` 允许 capsule 只保留既有正文；技术重试/重新生成不再丢正文。
+- 角色卡哈希（`role_card_sha256`）与动作 ID 一致性校验，控制面自管路径（state.json、native-relay、authorizations、session-completions、workflow-observations）排除快照对比但不放行篡改。
 
 ## 不做的事（明确记录）
 

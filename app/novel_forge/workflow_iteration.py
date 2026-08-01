@@ -443,7 +443,11 @@ def display_workflow_state(phase: str, *, patch_round: int = 0) -> str:
         return "待局部修订"
     if phase in {"awaiting_writer", "writing", "patching"}:
         return "写作中"
-    if phase in {"awaiting_blind_reader", "awaiting_chapter_editor"}:
+    if phase in {
+        "awaiting_blind_reader",
+        "awaiting_chapter_editor",
+        "awaiting_double_review",
+    }:
         return "双审中"
     if phase in {"hard_check", "promoting"}:
         return "硬检查"

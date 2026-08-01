@@ -438,8 +438,16 @@ def prepare_writer_capsule(
     if capsule.exists():
         if not capsule.is_dir():
             raise GuardianError(f"capsule_dir 不是目录：{capsule}")
-        if any(capsule.iterdir()):
-            raise GuardianError(f"capsule_dir 必须为空：{capsule}")
+        preserved = capsule / "draft" / "正文.md"
+        unexpected = [
+            path
+            for path in capsule.rglob("*")
+            if path not in {capsule / "draft", preserved}
+        ]
+        if unexpected:
+            raise GuardianError(
+                f"capsule_dir 必须为空或只保留 draft/正文.md：{capsule}"
+            )
     capsule.mkdir(parents=True, exist_ok=True)
     sequence = _sequence_record(book_dir, sequence_id)
     handoff = sequence.get("handoffs", {}).get(str(chapter))

@@ -153,8 +153,13 @@ def verify_review_capsule(
     expected_role: str,
     expected_body_sha256: str,
     require_machine_diagnostics: bool = True,
+    require_blind_review: bool = True,
 ) -> dict[str, str]:
-    """Verify every sealed input and return its logical text mapping."""
+    """Verify every sealed input and return its logical text mapping.
+
+    ``require_blind_review`` is disabled for the parallel double review where
+    the Chapter Editor independently reviews without a Blind Reader result.
+    """
     if descriptor.get("schema") != REVIEW_CAPSULE_SCHEMA:
         raise ReviewCapsuleError("review capsule 描述格式无效。")
     capsule_dir = Path(str(descriptor.get("path") or "")).resolve()
@@ -222,9 +227,10 @@ def verify_review_capsule(
                 "scene_package",
                 "story_contract",
                 "canon",
-                "blind_review",
             }
         )
+        if require_blind_review:
+            expected.add("blind_review")
         if require_machine_diagnostics:
             expected.add("machine_diagnostics")
     if not expected.issubset(result):

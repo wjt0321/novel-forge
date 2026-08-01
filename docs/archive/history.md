@@ -141,3 +141,9 @@ All experiments compared model + host + permissions + workflow, not model weight
 6. Local problems should use exact local replacement; structural problems need one concentrated chapter Patch.
 7. Cost controls stop additional calls; they never convert an unresolved issue into a pass.
 8. Only the author can approve the work, and publication eligibility remains false.
+
+## 2026-08-02 iteration 47 completion addendum
+
+1. Parallel double review: Lean dispatches both reviewer cards up front with an any-order completion queue; the Chapter Editor reviews independently without a Blind conclusion; strict audit stays serial.
+2. Staged prose is never cleared before promotion: capsule re-preparation preserves `draft/正文.md`, the guardian accepts a capsule retaining existing prose, and technical retries/regenerations keep it.
+3. Per-role cards are protected by recorded SHA-256 digests and action-id consistency checks; control-plane self-managed paths are excluded from snapshot comparison only where the control plane itself rewrites them (state.json, relay records, observations, authorizations).

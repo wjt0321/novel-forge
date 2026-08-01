@@ -168,17 +168,32 @@ def _quote_matches(quote: str, prose: str) -> tuple[bool, str]:
             f"期望「{normalized_quote[_QUOTE_PREFIX_CJK:_QUOTE_PREFIX_CJK + _QUOTE_DETAIL_LIMIT]}」，"
             f"实际「{window[_QUOTE_PREFIX_CJK:_QUOTE_PREFIX_CJK + _QUOTE_DETAIL_LIMIT]}」。",
         )
-    best_start, best_run = 0, 0
-    for index in range(len(normalized_prose)):
+    # 失败定位：只在引文种子出现的少量位置做最长匹配，避免全文 O(n*m) 扫描。
+    def longest_run_at(start: int) -> int:
         run = 0
         while (
             run < len(normalized_quote)
-            and index + run < len(normalized_prose)
-            and normalized_prose[index + run] == normalized_quote[run]
+            and start + run < len(normalized_prose)
+            and normalized_prose[start + run] == normalized_quote[run]
         ):
             run += 1
-        if run > best_run:
-            best_run, best_start = run, index
+        return run
+
+    best_start, best_run = 0, 0
+    for seed_len in (_QUOTE_PREFIX_CJK, 8, 4, 2, 1):
+        seed = normalized_quote[:seed_len]
+        if not seed:
+            continue
+        cursor = normalized_prose.find(seed)
+        while cursor >= 0:
+            run = longest_run_at(cursor)
+            if run > best_run:
+                best_run, best_start = run, cursor
+                if run >= len(normalized_quote):
+                    break
+            cursor = normalized_prose.find(seed, cursor + 1)
+        if best_run >= len(normalized_quote):
+            break
     if best_run == 0:
         return False, "引文未能与正文匹配。"
     return (
@@ -2750,8 +2765,18 @@ class NovelWorkflowOrchestrator:
             return _user_result("stopped", "任务已停止。", sequence_id)
         return _user_result("running", "正在自动处理本章。", sequence_id)
 
-    def retry(self, slug: str) -> WorkflowResult:
-        """Resume a failed chapter with a new native writer session."""
+    def retry(
+        self,
+        slug: str,
+        *,
+        human_decision_reference: str | None = None,
+    ) -> WorkflowResult:
+        """Resume a failed chapter with a new native writer session.
+
+        ``human_decision_reference`` overrides the default regenerate label,
+        letting an explicit author decision (authorize-revision) carry its own
+        evidence reference instead of the generic user-selected label.
+        """
         path = self._control_path(slug)
         if not path.is_file():
             raise WorkflowError("还没有开始自动写作。")
@@ -2851,9 +2876,12 @@ class NovelWorkflowOrchestrator:
             must_findings=must_findings,
             parent_generation_id=parent_generation_id,
             human_decision_reference=(
-                "automatic-workflow:user-selected-regenerate"
-                if decision_kind == "literary_revision_required"
-                else None
+                human_decision_reference
+                or (
+                    "automatic-workflow:user-selected-regenerate"
+                    if decision_kind == "literary_revision_required"
+                    else None
+                )
             ),
         )
         if patched is None:
@@ -2894,6 +2922,35 @@ class NovelWorkflowOrchestrator:
             generation_id,
             retries,
             allow_patch=False,
+        )
+
+    def authorize_revision(
+        self,
+        slug: str,
+        *,
+        decision_reference: str,
+    ) -> WorkflowResult:
+        """Authorize one concentrated literary revision in strict-audit mode."""
+        path = self._control_path(slug)
+        if not path.is_file():
+            raise WorkflowError("还没有开始自动写作。")
+        control = json.loads(path.read_text(encoding="utf-8"))
+        decision_kind = str(control.get("decision_kind") or "")
+        if (
+            control.get("phase") != "decision_required"
+            or decision_kind not in REVISION_DECISION_KINDS
+        ):
+            raise WorkflowError("当前没有等待作者授权的续修决策。")
+        reference = str(decision_reference or "").strip()
+        if not reference:
+            raise WorkflowError("续修授权必须提供作者决定依据。")
+        control["author_revision_authorized"] = True
+        control["author_revision_reference"] = reference
+        control["updated_at"] = _now()
+        _atomic_json(path, control)
+        return self.retry(
+            slug,
+            human_decision_reference=f"author-revision:{reference}",
         )
 
     def stop(self, slug: str) -> WorkflowResult:
@@ -2995,10 +3052,18 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
     elif isinstance(review_capsule, dict):
         print(f"只读输入目录：{review_capsule.get('path')}")
         print(f"角色只写结论到：{action.get('result_file')}")
+        if action.get("parallel_review") is True:
+            print(
+                "本轮双审含 Blind Reader 与 Chapter Editor 两张卡，"
+                "可并行委派，完成顺序不限；另一张卡继续执行 next-action 领取。"
+            )
     else:
         print("按当前角色任务执行，不创建控制面或额外文件。")
     print("等待宿主报告该角色已完成后，执行：")
-    print(f"complete-role {slug}")
+    if action.get("parallel_review") is True:
+        print(f"complete-role {slug} --role {action.get('role')}")
+    else:
+        print(f"complete-role {slug}")
 
 
 def _print_cost_summary(summary: dict[str, Any]) -> None:
@@ -3114,6 +3179,7 @@ def main(argv: list[str] | None = None) -> int:
     complete.add_argument("--from-file", type=Path)
     complete.add_argument("--session-id")
     complete.add_argument("--session-instance-id")
+    complete.add_argument("--role", choices=("blind-reader", "chapter-editor"))
     complete.add_argument("--provider", default="unknown")
     complete.add_argument("--model", default="unknown")
     complete.add_argument("--agent-harness", default="native-host")
@@ -3249,6 +3315,7 @@ def main(argv: list[str] | None = None) -> int:
                     model=args.model,
                     agent_harness=args.agent_harness,
                     result_file=args.from_file,
+                    role=args.role,
                     telemetry=telemetry,
                 )
             else:

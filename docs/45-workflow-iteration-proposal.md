@@ -429,3 +429,12 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 2. **失败率（K3/K4）**：冻结稿改名 `控制面冻结稿.md`，Writer 动作携带 `read_only_project_files` 并在指令与卡片中显式标注；控制面变异失败消息给出唯一允许写入路径。审稿引文校验改为规范化匹配 + 20 字前缀窗口逐字差异 ≤ 15，失败报告首个不匹配位置。
 3. **体验（K5/K8）**：审稿提示词引导位置/归属矛盾 MUST 标 `scope=local` 并给出唯一定位 evidence（复用 45 号局部 Patch）；不实现实体-归属共现启发式检测器——系统不认证文学价值，启发式误报风险高于收益。决策消息携带已进行轮次与"将再跑一轮 Writer + 完整双审"的预期提示。
 4. **未做**：双审并行化（K6）为结构性重构，留待单独评估。
+
+## 2026-08-02 迭代 47 补记：P1--P3 全部完成
+
+1. **双审并行化（P1）**：Lean 下双审并行（`awaiting_double_review` + 双角色卡 + pending/completed/issued 队列），完成顺序不限；Editor 无 Blind 结论时独立审稿；恢复按 `failed_review_role` 重排失败角色；strict_audit 保持串行。
+2. **引文校验性能（P2）**：失败定位改为种子定位（20/8/4/2/1 字 find），避免全文 O(n×m) 扫描。
+3. **决策文案覆盖（P2）**：所有 decision_required 分支写 `decision_message`，`next-action` 卡与 `status` 共用生成。
+4. **strict 续修入口（P3）**：`orchestrator.authorize_revision` 提供 strict 对称入口。
+5. **正文保留（用户指出）**：`draft/正文.md` 晋升前永不清除；guardian 允许 capsule 保留既有正文；技术重试不丢正文。
+6. **防篡改加固**：角色卡 SHA-256 记录 + 动作 ID 一致性校验；控制面自管路径（state.json、native-relay、observations）排除快照对比但角色卡篡改仍被检测。

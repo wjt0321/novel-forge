@@ -3841,3 +3841,94 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         encoding="utf-8",
     )
     temp.replace(path)
+
+
+def test_parallel_double_review_accepts_editor_first_completion(
+    tmp_path: Path,
+):
+    """Both review cards can be claimed up front and completed in any order."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("并行双审"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+
+    blind = relay.next_action("demo")
+    editor = relay.next_action("demo")
+    assert blind["role"] == "blind-reader"
+    assert editor["role"] == "chapter-editor"
+    assert blind["parallel_review"] is True
+
+    state = relay._load_state("demo")
+    editor_control_id = state["control_run_ids"]["chapter-editor"]
+    blind_control_id = state["control_run_ids"]["blind-reader"]
+
+    # editor 先完成
+    Path(editor["result_file"]).write_text(
+        json.dumps(
+            {"verdict": "pass", "must": [], "summary": "z",
+             "evidence_quote": "林舟握住门把"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal(
+        "demo",
+        session_id=editor_control_id,
+    )
+    assert result.user_state == "running"
+    state = relay._load_state("demo")
+    assert state["completed_review_roles"] == ["chapter-editor"]
+
+    # blind 后完成 → 合流晋升
+    Path(blind["result_file"]).write_text(
+        json.dumps(
+            {"verdict": "pass", "must": [], "human_likeness": "convincing",
+             "reader_desire": "continue", "emotional_residue": "x",
+             "next_chapter_pull": "y", "summary": "z",
+             "evidence_quote": "林舟握住门把"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal(
+        "demo",
+        session_id=blind_control_id,
+    )
+    assert result.user_state == "chapter_complete"
+    assert (root / "books/demo/chapters/e01/ch-01/正文.md").is_file()
+
+
+def test_staged_prose_survives_writer_technical_retry(tmp_path: Path):
+    """The staged draft is never cleared before promotion, even on a
+    technical writer retry that re-prepares the capsule."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    prose = _prose("第一版正文")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        prose, encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+
+    staged = Path(action["capsule"]["path"]) / "draft/正文.md"
+    assert staged.read_text(encoding="utf-8") == prose
+
+    # 重签发 writer 动作（_prepare_lean_writer_action 路径）不得清除正文
+    state = relay._load_state("demo")
+    request = relay._request_from_state(state)
+    relay._prepare_lean_writer_action(
+        "demo",
+        state,
+        request=request,
+        chapter=int(state["chapter"]),
+        sequence_id=str(state["sequence_id"]),
+    )
+
+    assert staged.is_file()
+    assert staged.read_text(encoding="utf-8") == prose
+    assert relay.next_action("demo")["role"] == "writer"

@@ -107,9 +107,10 @@ def render_review_instructions(
             return _prompt(
                 role,
                 f"""
-你是独立 Chapter Editor。完整阅读当前暂存正文、Blind Reader 结论、当前场景包与必要
-Canon，只判断本章是否成立。检查因果、主角选择与私人代价、对白信息流、句子肌理和
-连续性；不得直接修改正文，也不得把规划表翻译成审稿表。
+你是独立 Chapter Editor。完整阅读当前暂存正文、当前场景包与必要 Canon（若输入中
+提供 Blind Reader 结论，则核对其中问题是否遍布全章），只判断本章是否成立。检查因果、
+主角选择与私人代价、对白信息流、句子肌理和连续性；不得直接修改正文，也不得把规划表
+翻译成审稿表。
 
 短规则：
 {micro_rules}
