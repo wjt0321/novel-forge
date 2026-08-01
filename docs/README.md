@@ -10,6 +10,7 @@ S-Black Novel Forge documentation is intentionally split into a small current se
 | Understand current states, retries, recovery, and truth boundaries | `44-current-workflow-logic-audit.md` |
 | Understand the P0/P1/P2, local Patch, capability, risk, and budget iteration | `45-workflow-iteration-proposal.md` |
 | Read the production-blocker review and the next iteration proposal | `46-workflow-iteration-blockers-liangu.md`、`47-workflow-iteration-proposal.md` |
+| Future-direction note: AI cosplay interactive narrative | `48-cosplay-narrative-future.md` |
 
 Daily chapter work should normally stop after these documents. Do not read historical milestones before executing `next-action`.
 
