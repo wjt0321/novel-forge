@@ -68,4 +68,5 @@ Blind Reader 与 Chapter Editor 并行签发（`awaiting_double_review` 阶段 +
 3. **M1**：乱序完成时队列头 fallback 错绑角色。修复：fallback 改为"最后领取（issued 末尾）的未完成角色"；`issued_review_roles` 保持领取顺序（不再排序）。
 4. **M2**：并行角色结果文件缺失 = 死胡同。修复：complete_minimal 并行阶段结果缺失自动走 recover 重签该角色。
 5. **L2**：repair 计数键用主卡导致漂移。修复：并行时用被修复角色卡的真实 action_id。
-6. 审查结论：**无无限循环缺陷**（所有自动重试被 `max_technical_retries` 与用户决策严格有界）。
+6. **L1**：双审重试预算与 writer 共用 bucket。修复：`awaiting_double_review` 使用独立 `double-review` bucket，`_start_double_review` 与用户 retry 恢复时重置。
+7. 审查结论：**无无限循环缺陷**（所有自动重试被 `max_technical_retries` 与用户决策严格有界）。

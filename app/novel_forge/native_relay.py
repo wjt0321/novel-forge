@@ -2342,6 +2342,7 @@ class NativeWorkflowRelay:
                 counts = {}
                 state["technical_retry_counts"] = counts
             counts[bucket] = 0
+            counts["double-review"] = 0
             state["technical_retry_count"] = 0
             was_parallel = failed_phase == "awaiting_double_review"
             if was_parallel:
@@ -2692,6 +2693,8 @@ class NativeWorkflowRelay:
             return "blind-reader"
         if phase == "awaiting_chapter_editor":
             return "chapter-editor"
+        if phase == "awaiting_double_review":
+            return "double-review"
         if phase in {"awaiting_patch_writer_session", "awaiting_local_patch"}:
             return "patch-writer"
         if phase == "awaiting_writer" and state.get("must_findings"):
@@ -2977,6 +2980,7 @@ class NativeWorkflowRelay:
                 "issued_review_roles": [],
             }
         )
+        self._reset_active_retry(state, "double-review")
         self._reset_active_retry(state, "blind-reader")
         blind = self._review_action(slug, state, "blind-reader")
         self._reset_active_retry(state, "chapter-editor")
