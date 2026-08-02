@@ -2387,8 +2387,20 @@ def test_lean_editor_accepts_a_valid_control_plane_capsule_refresh(
         json.dumps(editor_action, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    relay._role_action_path("demo", "chapter-editor").write_text(
+        json.dumps(editor_action, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     state = relay._load_state("demo")
     state["review_capsule"] = descriptor
+    state["review_capsules"]["chapter-editor"] = descriptor
+    state.setdefault("role_card_sha256", {})["chapter-editor"] = (
+        hashlib.sha256(
+            relay._role_action_path(
+                "demo", "chapter-editor"
+            ).read_bytes()
+        ).hexdigest()
+    )
     relay._state_path("demo").write_text(
         json.dumps(state, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -3932,3 +3944,90 @@ def test_staged_prose_survives_writer_technical_retry(tmp_path: Path):
     assert staged.is_file()
     assert staged.read_text(encoding="utf-8") == prose
     assert relay.next_action("demo")["role"] == "writer"
+
+
+def test_parallel_recover_does_not_tamper_other_role_card(tmp_path: Path):
+    """H1 regression: a failed blind reader recovery must not rewrite the
+    primary card, so the pending chapter-editor completion is not reported
+    as a control-plane mutation."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("跨角色恢复"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+    blind = relay.next_action("demo")
+    editor = relay.next_action("demo")
+
+    # blind 结果缺失 → 走 recover 重签 blind
+    state = relay._load_state("demo")
+    state["failed_review_role"] = "blind-reader"
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    recovered = relay._recover_technical_failure(
+        "demo",
+        relay._load_state("demo"),
+        failure_reason="missing_or_invalid_result_file",
+    )
+    assert recovered.user_state == "running"
+    blind = relay.next_action("demo")
+    assert blind["role"] == "blind-reader"
+
+    # editor 先完成，不被误报 mutation
+    Path(editor["result_file"]).write_text(
+        json.dumps(
+            {"verdict": "pass", "must": [], "summary": "z",
+             "evidence_quote": "林舟握住门把"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal(
+        "demo", session_id=relay._load_state("demo")["control_run_ids"]["chapter-editor"]
+    )
+    assert result.user_state == "running"
+    assert relay._load_state("demo")["completed_review_roles"] == [
+        "chapter-editor"
+    ]
+
+
+def test_parallel_missing_result_file_recovers_not_deadlocks(tmp_path: Path):
+    """M2 regression: completing a parallel review role without a result
+    file re-queues the role instead of leaving the chapter stuck."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(root, strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("结果缺失"), encoding="utf-8"
+    )
+    relay.complete_minimal("demo")
+    blind = relay.next_action("demo")
+    editor = relay.next_action("demo")
+
+    # 不写 result_file 直接 complete blind（--role 指明）→ 重签而非卡死
+    result = relay.complete_minimal("demo", role="blind-reader")
+    assert result.user_state == "running"
+    retry_card = relay.next_action("demo")
+    assert retry_card["role"] == "blind-reader"
+
+    # 正常完成重签的盲读
+    Path(retry_card["result_file"]).write_text(
+        json.dumps(
+            {"verdict": "pass", "must": [], "human_likeness": "convincing",
+             "reader_desire": "continue", "emotional_residue": "x",
+             "next_chapter_pull": "y", "summary": "z",
+             "evidence_quote": "林舟握住门把"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result = relay.complete_minimal("demo")
+    assert result.user_state == "running"
+    assert relay._load_state("demo")["completed_review_roles"] == [
+        "blind-reader"
+    ]

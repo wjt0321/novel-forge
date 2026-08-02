@@ -60,3 +60,12 @@ Blind Reader 与 Chapter Editor 并行签发（`awaiting_double_review` 阶段 +
 
 - 不实现实体-归属共现启发式一致性检测器（46 号 K5 建议）：系统只验证流程与可定位证据，不认证文学价值；启发式误报风险高于收益。位置/归属矛盾由审稿 instructions 引导标 `scope=local` 走既有局部 Patch 路径。
 - 不把 `authorize-revision` 扩展为无限重试：每轮续修后仍进入人工决策，保留作者最终决定权。
+
+## 2026-08-02 第二轮审查修复（独立子代理实测复现）
+
+1. **H1**：recover 跨角色重写主卡导致另一角色完成校验误报控制面篡改、恢复路由错误角色。修复：并行 recover/repair 不写主卡（write_primary=False）；主卡保留快照检测；其他角色的 review capsule 管理路径视为合法变化。
+2. **H2**：`failed_review_role` 残留导致后续 recover 重签错误角色。修复：recover 消费后立即清除。
+3. **M1**：乱序完成时队列头 fallback 错绑角色。修复：fallback 改为"最后领取（issued 末尾）的未完成角色"；`issued_review_roles` 保持领取顺序（不再排序）。
+4. **M2**：并行角色结果文件缺失 = 死胡同。修复：complete_minimal 并行阶段结果缺失自动走 recover 重签该角色。
+5. **L2**：repair 计数键用主卡导致漂移。修复：并行时用被修复角色卡的真实 action_id。
+6. 审查结论：**无无限循环缺陷**（所有自动重试被 `max_technical_retries` 与用户决策严格有界）。
