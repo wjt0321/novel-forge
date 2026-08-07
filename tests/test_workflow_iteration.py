@@ -253,3 +253,73 @@ def test_literary_iteration_does_not_expand_default_control_flow():
     )
     assert DEFAULT_REVIEW_ROLES == ("blind-reader", "chapter-editor")
     assert MAX_AUTOMATIC_GENERATIONS == 2
+
+
+def test_minimal_writer_package_strips_previous_sha_and_path_from_0b(tmp_path: Path):
+    book = _book(tmp_path)
+    scene = book / "planning/scene-package-ch02.md"
+    scene.write_text(
+        "# Scene Package\n\n"
+        "## 0b. 章际交接\n"
+        "- 上一章正文路径：chapters/e01/ch-01/正文.md\n"
+        "- 上一章正文 SHA-256：0123abcdef0123abcdef0123abcdef0123abcdef\n"
+        "- 上一章结尾原文：门在身后合上，铜铃余音未散。\n"
+        "- 本章开头原文：deferred_until_drafted\n"
+        "## 1. 场景压力\n"
+        "- 视角角色要什么：拿回母亲留下的录音。\n",
+        encoding="utf-8",
+    )
+    handoff = book / "handoff.md"
+    handoff.write_text("legacy", encoding="utf-8")
+
+    package = compile_writer_package(
+        tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
+    )
+
+    text = package["text"]
+    assert "门在身后合上" in text
+    assert "SHA-256" not in text
+    assert "上一章正文路径" not in text
+    assert "chapters/e01/ch-01/正文.md" not in text
+
+
+def test_minimal_writer_package_direct_canon_uses_compressed_view(tmp_path: Path):
+    from app.novel_forge.book_memory import render_memory_markdown
+
+    book = _book(tmp_path)
+    metadata = {
+        "schema_version": 1,
+        "id": "fact.key-rule",
+        "kind": "fact",
+        "status": "canonical",
+        "tier": "hard",
+        "salience": "high",
+        "chapter": 1,
+        "source_path": "chapters/e01/ch-01/正文.md",
+        "evidence": "旧钥匙第一次出现",
+        "summary": "旧钥匙只能开一次戏楼暗门。",
+        "supersedes": None,
+        "subject": "item.old-key",
+        "predicate": "use_limit",
+        "object": "single_use",
+        "valid_from": 1,
+        "valid_to": None,
+    }
+    record_path = book / "memory" / "canon" / "facts" / "fact.key-rule.md"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        render_memory_markdown(metadata, title="旧钥匙规则"),
+        encoding="utf-8",
+    )
+    handoff = book / "handoff.md"
+    handoff.write_text("legacy", encoding="utf-8")
+
+    package = compile_writer_package(
+        tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
+    )
+
+    text = package["text"]
+    assert "## 直接 Canon" in text
+    assert "旧钥匙只能开一次戏楼暗门" in text
+    assert "schema_version" not in text
+    assert package["tiers"]["P1"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P1"]

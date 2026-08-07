@@ -73,6 +73,11 @@ Editor 都从零开始计算运输重试。文学结论的第二版仍有 MUST �
 | 并行角色结果文件缺失/非法 | 自动重签该角色（recover），不卡死在 `awaiting_double_review` | 停在无下一步的中间态 |
 | 技术重试/重新生成 | 只清理可再生成的 capsule 辅助文件，`draft/正文.md` 晋升前永不清除 | 丢弃有效暂存正文 |
 | 角色动作卡被篡改 | 角色卡 SHA-256 与状态记录比对失败即恢复并重签该角色 | 篡改卡扩大写入范围 |
+| 正文硬门失败（如不足 5000 CJK） | Writer 完成时先对暂存正文跑正式文本门禁，进入有界表面修订轮；耗尽后停在可授权的 `surface_revision_required` 决策 | 带缺陷正文进入双审/晋升后死锁 |
+| 晋升/收尾阶段 BookProjectError | 路由为可授权的 `hard_gate_failed` 决策（一次集中修订 + 完整双审，或停止） | 裸抛到 CLI 顶部，或耗尽重试停在不可授权的 `native_role_failed` |
+| 章节 Git checkpoint 失败 | 停在 `git_checkpoint_failed` 决策；`authorize-revision` 保留已晋升草稿与双审证据，只重试 ready/checkpoint 尾段 | 重放已完成的双审与序列推进，或除 stop 外无路可走 |
+| 门禁失败前 capsule 已 imported | `authorize-revision` 明确拒绝不安全的暂存修订重放并提示停止 | 静默空转的重试循环 |
+| 双审结论未通过 record_review 同源校验 | 晋升前先用 `review_outcome_preflight_errors` 校验，失败路由为作者决策且无正式章节/Generation/Receipt/checkpoint | 先晋升后校验，失败时正式副作用已落盘 |
 
 ## 完整性边界
 
@@ -241,3 +246,25 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 4. `literary_texture` 是内容外泄为零的确定性摘要。高风险只向现有 Chapter Editor 注入至多 160 字提示，并在 `cost-summary` 聚合 `low|medium|high|unknown`；旧记录缺失该字段时归 `unknown`。该指标不阻断、不改变路由、不证明 AI 来源。
 5. Blind Reader 的 `uncertain` 可以直接 `pass`；`synthetic` 若没有逐字证据、`needs_revision` 和恰好一条 `structural` MUST，会被控制面拒收并仅重试当前审稿交付。Chapter Editor 仍决定该结构问题是否真正值得一次修订。
 6. `MAX_AUTOMATIC_GENERATIONS=2`、5000 CJK 硬门、双审、至多一次文学 Patch、Canon candidate/promotion、`author_approval=False` 和 `publication_eligibility=False` 全部保持不变。
+
+## 2026-08-07：修辞层 advisory 与 uncertain 契约（docs/49 §4）
+
+1. lint 新增分句级检测：`mechanical-triplet` 扩展到逗号分句级（3 连以上同前缀复沓如“那些A，那些B，那些C”、≥2 字回环如“他沉默了，沉默得让人心慌”），新增 advisory 规则 `not-only-flip`（“不仅/不只是…而/更/而是”），`explanation-tic` 补入视角泄漏与成语化意象（“她不知道的是/没人知道/命运的(车轮|齿轮|轨迹)/时间仿佛(凝固|静止)/空气中弥漫着/说不清道不明”），`simile-density` 去掉 <500 字早退。全部 advisory，先观察一轮误报率。
+2. lint advisory（`explanation-tic/rhythm-monotony/mechanical-triplet/simile-density`）按规则聚合为 ≤240 字，与 ≤160 字纹理提示合并为 Chapter Editor 的 `machine_diagnostics`（总 ≤400 字）；语义仍是低成本抽样、不作单独判错依据。Blind Reader 保持 prose-only，strict_audit 路径不变。
+3. `uncertain` 契约以代码为准统一（取代 2026-07-31 节第 5 条的“uncertain 可以直接 pass”）：`uncertain` 不视为通过；pass 必须 `human_likeness=convincing` 且 `reader_desire=continue`；给 `uncertain` 必须附一句具体 `uncertain_note`（哪段像通用/工整/解释充分），说明为空则结果无效。校验在 `record_review`（`_review_validation_errors`），`review_outcome_preflight_errors` 同源同步。
+4. 双审每条开放 MUST 的原文 `evidence` 也按 `_quote_matches` 逐字校验，编造引文判无效并走与 `evidence_quote` 相同的 repair 路径。
+5. 集中 Patch 与局部 Patch 指令均加硬约束：新增因果必须落进动作/停顿/物件后果，禁止新增解释性段落。
+
+## 2026-08-07：宿主真实会话与并行完成契约（docs/49 P1-1/P1-2/P1-3）
+
+1. `complete-role` 必须用 `--session-id` 报告角色实际使用的宿主会话；合成 control id 只用于分发，不再充当完成会话。Writer 完成时 Python 把章节序列与 capsule control 重绑到该真实会话（prepared 态才可重绑，authorization 同步重签），Generation run_id、session-completions 与 Guardian 回执一律只携带真实会话；缺失时拒绝完成并报错。
+2. 并行双审下 `complete-role` 按宿主会话匹配、`--role`、唯一未完成角色依次精确解析完成对象；多个未完成角色且无提示时拒绝猜测并报错。修复耗尽路径先持久化 `failed_review_role` 再恢复，重签恰好是绑定角色；合流/晋升段失败且无可重签审稿角色时直接路由作者决定。
+3. 并行完成对 `state.json` 做 reload+合并写：review_session_ids、role_session_history、completed_review_roles 等列表去重合并，其余字段覆盖后单次原子写，后完成者不再覆盖先完成者的审稿字段（跨进程并发窗口仍为 reload+写，未加锁）。
+4. 晋升后 Writer 技术重试若需要新正文版本授权（如第三版本门），`_recover_technical_failure` 捕获 GuardianError 并路由到作者 decision（`native_role_failed`），不再裸抛异常。
+
+## 2026-08-07：审稿字段单源与动作快照 zip 收敛（docs/49 §2 轻量化）
+
+1. 审稿字段清单收单源：`REVIEW_ANALYSIS_FIELDS`（blind-reader 8 字段 / chapter-editor 5 字段）从 `workflow.py` 移入 `planning_spec.py`，扁平别名 `BLIND_RECONSTRUCTION_FIELDS`、`EDITORIAL_DIMENSION_FIELDS` 由该 dict 派生；`workflow.py` 与 `book_project.py` 删除本地重复定义，改为统一导入，`native_relay` 沿用原导入名，判定结果逐字节不变。
+2. 动作快照 zip 收敛：每次动作签发与完成的哈希比对（防改 `app/`、`tools/`、`tests/` 控制面）保持不变；字节备份 zip 只在 3 类节点生成——章节开始（首次签发）、晋升（ready）、进入作者决策（decision_required）。中间动作只写/更新哈希快照，不再打包 zip。
+3. 章节开始由 state 内 `chapter_zip_issued` 标记判定（每章首签打一次，重启后不重打）；晋升与决策由完成观测的 `workflow_effect`（promotion/author_decision）驱动 refresh 打 zip。strict_audit 与 lean 共用同一代码路径。
+4. 中间动作篡改仍按哈希比对检出并路由角色重试。字节恢复语义：当前动作自带 zip（章节开始、晋升、决策节点）或可回退到保留的章首基线 zip 时执行；lean 控制面层（`app/`/`tools/`/`tests/` 哈希）的中间动作仅检出不恢复字节。章首 zip 作为整章字节基线保留（章首动作完成时不再被自身消耗），由 `stop` 或下一章签发作废。并行双审下两角色共用观测上下文导致的 write-once 观测冲突不再阻断完整性 refresh，zip/快照照常写入。

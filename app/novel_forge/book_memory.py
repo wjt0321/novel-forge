@@ -1060,3 +1060,41 @@ def build_context_packet(root: Path, slug: str, chapter: int) -> dict[str, Any]:
         },
         "record_ids": sorted({row["id"] for row in all_rows}),
     }
+
+
+def canon_context_digest(
+    root: Path,
+    slug: str,
+    chapter: int,
+    *,
+    max_chars: int,
+    sections: tuple[str, ...] | None = None,
+) -> str:
+    """Return a bounded compressed canon view from the chapter context packet.
+
+    The digest reuses the ``build_context_packet`` line format instead of raw
+    record Markdown, so role inputs carry compact facts rather than
+    metadata-heavy source files. ``sections`` optionally keeps only the named
+    level-two sections (for example hard facts and active narrative) in
+    packet order.
+    """
+    if memory_status(root, slug)["state"] != "clean":
+        rebuild_memory_index(root, slug)
+    packet = build_context_packet(root, slug, chapter)
+    book_dir = _book_dir(root, slug)
+    text = (book_dir / packet["context_path"]).read_text(
+        encoding="utf-8-sig"
+    )
+    if sections:
+        wanted = {f"## {name}" for name in sections}
+        kept: list[str] = []
+        selected = False
+        for line in text.splitlines():
+            if line.startswith("## "):
+                selected = line.strip() in wanted
+            if selected:
+                kept.append(line)
+        text = "\n".join(kept).strip()
+    if max_chars > 0:
+        text = text[:max_chars]
+    return text.strip()

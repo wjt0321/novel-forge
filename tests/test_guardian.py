@@ -1226,3 +1226,133 @@ def test_lean_authorize_regeneration_allows_empty_body_history(
         / f"{authorization['authorization_id']}.json"
     )
     assert path.is_file()
+
+
+def test_minimal_capsule_omits_embedded_handoff_and_ingests_clean(
+    tmp_path: Path,
+):
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    book_dir = _book(root)
+    capsule = tmp_path / "capsules" / "writer-minimal"
+
+    prepared = guardian.prepare_writer_capsule(
+        root,
+        "demo",
+        "seq-guardian",
+        "native-writer-001",
+        capsule,
+        "chapters/e01/ch-01/正文.md",
+        writer_context_mode="minimal",
+    )
+
+    assert prepared["handoff_embedded"] is False
+    assert not (capsule / "handoff.md").exists()
+    assert (capsule / "writer-context.md").is_file()
+    manifest = json.loads(
+        (capsule / "capsule.json").read_text(encoding="utf-8")
+    )
+    assert manifest["handoff_embedded"] is False
+    control = json.loads(
+        (
+            book_dir
+            / "planning/guardian-sessions"
+            / f"{prepared['capsule_id']}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "handoff.md" not in control["protected_hashes"]
+    assert control["handoff_path"]
+
+    prose = "# 第一章\n\n" + "他把手放在门锁上。" * 900 + "\n"
+    (capsule / "draft/正文.md").write_text(prose, encoding="utf-8")
+    _record_runtime_sidecar(
+        guardian,
+        root,
+        prepared,
+        tmp_path / "runtime" / "minimal-clean.json",
+    )
+
+    result = guardian.ingest_writer_capsule(
+        root,
+        "demo",
+        prepared["capsule_id"],
+    )
+
+    assert result["status"] == "clean"
+
+
+def test_minimal_capsule_detects_handoff_source_tampering(
+    tmp_path: Path,
+):
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    book_dir = _book(root)
+    capsule = tmp_path / "capsules" / "writer-minimal-tampered"
+
+    prepared = guardian.prepare_writer_capsule(
+        root,
+        "demo",
+        "seq-guardian",
+        "native-writer-001",
+        capsule,
+        "chapters/e01/ch-01/正文.md",
+        writer_context_mode="minimal",
+    )
+    (capsule / "draft/正文.md").write_text(
+        "# 第一章\n\n正文。\n",
+        encoding="utf-8",
+    )
+    _record_runtime_sidecar(
+        guardian,
+        root,
+        prepared,
+        tmp_path / "runtime" / "minimal-tampered.json",
+    )
+    control = json.loads(
+        (
+            book_dir
+            / "planning/guardian-sessions"
+            / f"{prepared['capsule_id']}.json"
+        ).read_text(encoding="utf-8")
+    )
+    handoff_path = book_dir / control["handoff_path"]
+    handoff_path.write_text(
+        handoff_path.read_text(encoding="utf-8") + "\n篡改内容。\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(guardian.GuardianError, match="compromised"):
+        guardian.ingest_writer_capsule(
+            root,
+            "demo",
+            prepared["capsule_id"],
+        )
+
+    receipt = json.loads(
+        (
+            book_dir
+            / "evidence/guardian-receipts"
+            / f"{prepared['capsule_id']}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "handoff_source_changed" in receipt["reasons"]
+
+
+def test_full_writer_context_still_embeds_handoff(tmp_path: Path):
+    guardian = _guardian()
+    root = tmp_path / "repo"
+    _book(root)
+    capsule = tmp_path / "capsules" / "writer-full"
+
+    prepared = guardian.prepare_writer_capsule(
+        root,
+        "demo",
+        "seq-guardian",
+        "native-writer-001",
+        capsule,
+        "chapters/e01/ch-01/正文.md",
+        writer_context_mode="full",
+    )
+
+    assert prepared["handoff_embedded"] is True
+    assert (capsule / "handoff.md").is_file()

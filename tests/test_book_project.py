@@ -153,6 +153,7 @@ def _review_file(
     independence_note: str = "",
     human_likeness: str = "convincing",
     reader_desire: str = "continue",
+    uncertain_note: str = "",
     emotional_residue: str = "人物的选择留下了尚未化解的关系压力。",
     next_chapter_pull: str = "读者想知道门内的人会不会回应。",
     review_session_id: str | None = None,
@@ -234,6 +235,7 @@ def _review_file(
         f"- context_scope: {context_scope}\n"
         f"- independence_note: {independence_note}\n\n"
         f"- human_likeness: {human_likeness if role == 'blind-reader' else 'not_applicable'}\n\n"
+        f"- uncertain_note: {uncertain_note or 'not_applicable'}\n"
         f"- reader_desire: {reader_desire if role == 'blind-reader' else 'not_applicable'}\n"
         f"- emotional_residue: {emotional_residue if role == 'blind-reader' else 'not_applicable'}\n"
         f"- next_chapter_pull: {next_chapter_pull if role == 'blind-reader' else 'not_applicable'}\n\n"
@@ -2315,3 +2317,69 @@ def test_record_review_accepts_file_already_in_place(tmp_path: Path):
     result = book_project.record_review(tmp_path, "demo", 1, "blind-reader", target)
     assert result["verdict"] == "pass"
     assert target.exists()
+
+
+# --- docs/49 §4-3: uncertain 契约收紧 -----------------------------------------
+
+
+def test_blind_reader_uncertain_requires_a_concrete_note(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "needs_revision",
+        human_likeness="uncertain",
+        reader_desire="conditional",
+    )
+
+    with pytest.raises(BookProjectError, match="uncertain"):
+        book_project.record_review(
+            tmp_path, "demo", 1, "blind-reader", review
+        )
+
+
+def test_blind_reader_uncertain_with_concrete_note_is_recorded(tmp_path: Path):
+    _make_book(tmp_path)
+    review = _review_file(
+        tmp_path,
+        "blind-reader",
+        "needs_revision",
+        human_likeness="uncertain",
+        reader_desire="conditional",
+        uncertain_note="柜台前三段对话像通用问答记录，工整但不像具体的人。",
+    )
+
+    book_project.record_review(tmp_path, "demo", 1, "blind-reader", review)
+
+
+def _uncertain_preflight_errors(uncertain_note: str = "") -> list[str]:
+    prose = "林舟握住门把，没有回头。雨水顺着袖口往下滴。" * 5
+    analysis = {
+        name: "具体重建，能落到正文画面。"
+        for name in book_project.BLIND_RECONSTRUCTION_FIELDS
+    }
+    return book_project.review_outcome_preflight_errors(
+        role="blind-reader",
+        number=1,
+        prose=prose,
+        verdict="needs_revision",
+        evidence_quote="林舟握住门把",
+        analysis=analysis,
+        human_likeness="uncertain",
+        reader_desire="conditional",
+        uncertain_note=uncertain_note,
+    )
+
+
+def test_preflight_uncertain_without_note_is_an_error():
+    errors = _uncertain_preflight_errors()
+
+    assert any("uncertain" in error for error in errors)
+
+
+def test_preflight_uncertain_with_note_has_no_uncertain_error():
+    errors = _uncertain_preflight_errors(
+        uncertain_note="中段柜台前的解释过于工整，像通用旁白。",
+    )
+
+    assert not any("uncertain" in error for error in errors)

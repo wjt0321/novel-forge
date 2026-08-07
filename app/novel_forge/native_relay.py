@@ -13,15 +13,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from . import book_memory
 from . import book_project
 from .artifact_integrity import record_session_completion
+from .book_gates import check_chapter_text
 from .chapter_sequence import (
+    ChapterSequenceError,
     begin_chapter_sequence,
     chapter_sequence_status,
     claim_chapter_session,
     rotate_chapter_session,
 )
-from .lint import lint_file
+from .lint import lint_file, lint_text, summarize_advisories
 from .models import NovelForgeError
 from .guardian import (
     GuardianError,
@@ -29,6 +32,7 @@ from .guardian import (
     capsule_status,
     ingest_writer_capsule,
     prepare_writer_capsule,
+    rebind_writer_capsule_session,
     record_capsule_runtime,
     reject_writer_capsule,
 )
@@ -56,10 +60,12 @@ from .workflow_observability import (
     record_call_observation,
     sanitize_call_telemetry,
 )
+from .planning_spec import EDITOR_SCENE_SECTIONS
 from .workflow_iteration import (
     apply_local_replacements,
     evaluate_budget_breaker,
     evaluate_writer_model,
+    extract_markdown_sections,
     plan_local_patch,
     require_high_risk_confirmation,
     display_workflow_state,
@@ -203,6 +209,7 @@ def _completion_payload_template(role: str) -> dict[str, Any]:
             "next_chapter_pull": "<specific-reason-to-continue>",
             "analysis": {},
             "evidence_quote": "<exact-current-prose-quote>",
+            "uncertain_note": "<required-when-human_likeness-is-uncertain>",
         }
     if role == "chapter-editor":
         return {
@@ -358,6 +365,31 @@ def _lean_result_contract(role: str) -> dict[str, Any]:
             if role == "blind-reader"
             else "章节编辑结论"
         ),
+    }
+
+
+def _session_history_record(
+    session: dict[str, Any] | SessionIdentity,
+    *,
+    role: str,
+    status: str,
+) -> dict[str, Any] | None:
+    """Build one dedup key for ``role_session_history`` (docs/49 P1-2)."""
+    if isinstance(session, SessionIdentity):
+        session_id = session.session_id
+        session_instance_id = session.session_instance_id
+    else:
+        session_id = str(session.get("session_id") or "").strip()
+        session_instance_id = str(
+            session.get("session_instance_id") or ""
+        ).strip()
+    if not session_id or not session_instance_id:
+        return None
+    return {
+        "session_id": session_id,
+        "session_instance_id": session_instance_id,
+        "role": role,
+        "status": status,
     }
 
 
@@ -634,30 +666,39 @@ class NativeWorkflowRelay:
                 / f"{context['action_id']}.json"
             )
             observation_existed = observation_path.is_file()
-            record_call_observation(
-                self.root,
-                slug,
-                {
-                    **dict(context),
-                    "outcome": outcome,
-                    "completed_at": completed_at,
-                    "provider": str(session.get("provider") or "unknown"),
-                    "model": str(session.get("model") or "unknown"),
-                    "telemetry": self._completion_telemetry(
-                        completion,
-                        str(context.get("started_at") or completed_at),
-                    ),
-                    "body_after": after,
-                    "body_changed": changed,
-                    "must_scope_counts": self._completion_scope_counts(
-                        completion
-                    ),
-                    "workflow_effect": effect,
-                    "failure_reason": failure_reason,
-                },
-            )
             try:
-                self._refresh_active_action_integrity(slug)
+                record_call_observation(
+                    self.root,
+                    slug,
+                    {
+                        **dict(context),
+                        "outcome": outcome,
+                        "completed_at": completed_at,
+                        "provider": str(session.get("provider") or "unknown"),
+                        "model": str(session.get("model") or "unknown"),
+                        "telemetry": self._completion_telemetry(
+                            completion,
+                            str(context.get("started_at") or completed_at),
+                        ),
+                        "body_after": after,
+                        "body_changed": changed,
+                        "must_scope_counts": self._completion_scope_counts(
+                            completion
+                        ),
+                        "workflow_effect": effect,
+                        "failure_reason": failure_reason,
+                    },
+                )
+            except (NovelForgeError, OSError, TypeError, ValueError):
+                # Best-effort metric: an immutable write-once collision (e.g.
+                # parallel review cards may share the primary observation
+                # context) must not block the integrity refresh below.
+                pass
+            try:
+                self._refresh_active_action_integrity(
+                    slug,
+                    zip_required=effect in {"promotion", "author_decision"},
+                )
             except (NovelForgeError, OSError, TypeError, ValueError):
                 if not observation_existed:
                     observation_path.unlink(missing_ok=True)
@@ -673,23 +714,39 @@ class NativeWorkflowRelay:
         except (NovelForgeError, OSError, TypeError, ValueError):
             return
 
-    def _refresh_active_action_integrity(self, slug: str) -> None:
-        """Rebase the pending action after a control-plane observation write."""
+    def _refresh_active_action_integrity(
+        self,
+        slug: str,
+        *,
+        zip_required: bool = False,
+    ) -> None:
+        """Rebase the pending action after a control-plane observation write.
+
+        The hash snapshot is refreshed after every role observation; the byte
+        backup zip is only produced at promotion/decision nodes (docs/49 §2.3).
+        """
         state = self._load_state(slug)
         action_id = str(state.get("action_id") or "").strip()
-        if not action_id or not self._action_path(slug).is_file():
+        if not action_id:
+            return
+        if not self._action_path(slug).is_file() and not zip_required:
             return
         integrity_root = self._integrity_root(slug)
         _atomic_json(
             self._snapshot_path(slug, action_id),
             snapshot_workspace(integrity_root),
         )
-        create_workspace_backup(
-            integrity_root,
-            self._backup_path(slug, action_id),
-        )
+        if zip_required:
+            create_workspace_backup(
+                integrity_root,
+                self._backup_path(slug, action_id),
+            )
         if not self.strict_audit:
-            self._write_lean_control_snapshot(slug, action_id)
+            self._write_lean_control_snapshot(
+                slug,
+                action_id,
+                zip_required=zip_required,
+            )
 
     def _review_result_path(
         self,
@@ -972,15 +1029,23 @@ class NativeWorkflowRelay:
                         resolved_role = str(candidate)
                         break
             if not resolved_role:
-                for candidate in state.get("pending_review_roles", []):
-                    if candidate not in state.get(
-                        "completed_review_roles", []
-                    ):
-                        resolved_role = str(candidate)
-                        break
+                # 仅剩一个未完成角色时才能兜底解析；多个并行角色未完成时
+                # 必须显式传 --role，避免把结果记到错误角色（docs/49 P1-2）。
+                completed_roles = set(
+                    state.get("completed_review_roles", [])
+                )
+                pending = [
+                    str(candidate)
+                    for candidate in state.get(
+                        "pending_review_roles", []
+                    )
+                    if str(candidate) not in completed_roles
+                ]
+                if len(pending) == 1:
+                    resolved_role = pending[0]
             if not resolved_role:
                 raise WorkflowError(
-                    "并行双审下无法确定完成角色；请传入该角色的宿主会话 ID "
+                    "并行双审下无法唯一确定完成角色；请传入该角色的宿主会话 ID "
                     "或 --role blind-reader|chapter-editor。"
                 )
             role = resolved_role
@@ -992,38 +1057,40 @@ class NativeWorkflowRelay:
         else:
             action = self.next_action(slug)
         expected = action.get("session")
-        control_run_id = str(state.get("control_run_id") or "").strip()
-        if control_run_id:
-            if parallel:
-                role_control_id = str(
-                    state.get("control_run_ids", {}).get(role) or ""
-                ).strip()
-                if role_control_id:
-                    session_id = role_control_id
-                    session_instance_id = role_control_id
-            else:
-                session_id = control_run_id
-                session_instance_id = control_run_id
-        elif (
+        if (
             isinstance(expected, dict)
             and expected.get("mode") == "reuse"
         ):
-            session_id = str(expected["session_id"])
-            session_instance_id = str(expected["session_instance_id"])
+            # Strict flows pin the reused session on the action itself.
+            session_id = str(expected.get("session_id") or "")
+            session_instance_id = str(
+                expected.get("session_instance_id")
+                or session_id
+                or ""
+            )
         else:
+            # Lean flows never pin the session on the action: the host must
+            # report the real native session it used (docs/49 P1-1). The
+            # synthetic relay control ids are dispatch-only and must never
+            # enter evidence (generation run_id, session completions or
+            # Guardian receipts).
             session_id = str(session_id or "").strip()
+            session_instance_id = str(
+                session_instance_id or session_id or ""
+            ).strip()
         session = SessionIdentity(
-            session_id=str(session_id or "").strip(),
-            session_instance_id=(
-                str(session_instance_id or session_id or "").strip()
-            ),
+            session_id=session_id,
+            session_instance_id=session_instance_id,
             provider=provider.strip() or "unknown",
             model=model.strip() or "unknown",
             agent_harness=agent_harness.strip() or "native-host",
             role="writer" if role == "writer-planning" else role,
         )
         if not session.session_id or not session.session_instance_id:
-            raise WorkflowError("角色完成必须提供真实会话 ID。")
+            raise WorkflowError(
+                "角色完成必须提供真实会话 ID；请用 --session-id 传入本次"
+                "角色执行使用的宿主会话 ID。"
+            )
         if result_file is None and action.get("result_file"):
             result_file = Path(str(action["result_file"]))
         try:
@@ -1131,6 +1198,8 @@ class NativeWorkflowRelay:
         self,
         slug: str,
         action_id: str,
+        *,
+        zip_required: bool = True,
     ) -> None:
         protected_paths = self._lean_protected_control_plane_paths(slug)
         control_snapshot = snapshot_workspace_paths(
@@ -1141,11 +1210,12 @@ class NativeWorkflowRelay:
             self._control_snapshot_path(slug, action_id),
             control_snapshot,
         )
-        create_workspace_backup_from_snapshot(
-            self.root,
-            self._control_backup_path(slug, action_id),
-            control_snapshot,
-        )
+        if zip_required:
+            create_workspace_backup_from_snapshot(
+                self.root,
+                self._control_backup_path(slug, action_id),
+                control_snapshot,
+            )
 
     def _result_path(self, slug: str, action_id: str) -> Path:
         root_namespace = hashlib.sha256(
@@ -1258,30 +1328,18 @@ class NativeWorkflowRelay:
         role: str,
         status: str,
     ) -> None:
-        if isinstance(session, SessionIdentity):
-            session_id = session.session_id
-            session_instance_id = session.session_instance_id
-        else:
-            session_id = str(session.get("session_id") or "").strip()
-            session_instance_id = str(
-                session.get("session_instance_id") or ""
-            ).strip()
-        if not session_id or not session_instance_id:
+        record = _session_history_record(session, role=role, status=status)
+        if record is None:
             return
         history = state.setdefault("role_session_history", [])
         if not isinstance(history, list):
             history = []
             state["role_session_history"] = history
-        record = {
-            "session_id": session_id,
-            "session_instance_id": session_instance_id,
-            "role": role,
-            "status": status,
-        }
         if not any(
             isinstance(item, dict)
-            and item.get("session_id") == session_id
-            and item.get("session_instance_id") == session_instance_id
+            and item.get("session_id") == record["session_id"]
+            and item.get("session_instance_id")
+            == record["session_instance_id"]
             and item.get("role") == role
             and item.get("status") == status
             for item in history
@@ -1508,6 +1566,14 @@ class NativeWorkflowRelay:
         action["issued_retry_count"] = int(
             state.get("technical_retry_count") or 0
         )
+        # Zip nodes: the chapter-start dispatch only. Promotion/decision
+        # nodes are zipped by the observation refresh path (docs/49 §2.3).
+        is_chapter_start = state.get("chapter_zip_issued") != state.get(
+            "chapter"
+        )
+        if is_chapter_start:
+            state["chapter_zip_issued"] = state.get("chapter")
+            state["chapter_zip_action_id"] = action["action_id"]
         _atomic_json(self._state_path(slug), state)
         if write_primary:
             _atomic_json(self._action_path(slug), action)
@@ -1524,14 +1590,16 @@ class NativeWorkflowRelay:
             self._snapshot_path(slug, action["action_id"]),
             snapshot_workspace(integrity_root),
         )
-        create_workspace_backup(
-            integrity_root,
-            self._backup_path(slug, action["action_id"]),
-        )
+        if is_chapter_start:
+            create_workspace_backup(
+                integrity_root,
+                self._backup_path(slug, action["action_id"]),
+            )
         if not self.strict_audit:
             self._write_lean_control_snapshot(
                 slug,
                 str(action["action_id"]),
+                zip_required=is_chapter_start,
             )
 
     def _is_control_plane_self_path(self, slug: str, path: str) -> bool:
@@ -1596,27 +1664,33 @@ class NativeWorkflowRelay:
         delta = workspace_delta(before, after)
         if delta.changed:
             remove_created_paths(self.root, delta.created)
-            restore_workspace_paths(
-                self.root,
-                backup_path,
-                before,
-                delta.modified + delta.deleted,
-            )
-            restored = workspace_delta(
-                before,
-                {
-                    path: digest
-                    for path, digest in snapshot_workspace_paths(
-                        self.root,
-                        protected_paths,
-                    ).items()
-                    if not self._is_control_plane_self_path(slug, path)
-                },
-            )
+            if backup_path.is_file():
+                restore_workspace_paths(
+                    self.root,
+                    backup_path,
+                    before,
+                    delta.modified + delta.deleted,
+                )
+                restored = workspace_delta(
+                    before,
+                    {
+                        path: digest
+                        for path, digest in snapshot_workspace_paths(
+                            self.root,
+                            protected_paths,
+                        ).items()
+                        if not self._is_control_plane_self_path(slug, path)
+                    },
+                )
+                if restored.changed:
+                    snapshot_path.unlink(missing_ok=True)
+                    backup_path.unlink(missing_ok=True)
+                    raise WorkflowError("项目控制面自动恢复失败。")
+            # Middle actions carry no byte backup (docs/49 §2.3): the hash
+            # comparison still detects the tamper and it is routed below;
+            # only the byte-level restore is skipped without a zip.
             snapshot_path.unlink(missing_ok=True)
             backup_path.unlink(missing_ok=True)
-            if restored.changed:
-                raise WorkflowError("项目控制面自动恢复失败。")
             return True
         snapshot_path.unlink(missing_ok=True)
         backup_path.unlink(missing_ok=True)
@@ -1670,6 +1744,9 @@ class NativeWorkflowRelay:
                         detail=" 角色动作卡已被篡改；请重签该角色。",
                     )
         current_state = self._load_state(slug)
+        chapter_zip_action_id = str(
+            current_state.get("chapter_zip_action_id") or ""
+        ).strip()
         forged_action_id = str(current_state.get("action_id") or "")
         if role is None and forged_action_id and forged_action_id != action.get(
             "action_id"
@@ -1729,39 +1806,56 @@ class NativeWorkflowRelay:
             path for path in delta.deleted if path not in permitted_delta
         )
         backup_path = self._backup_path(slug, action_id)
+        restore_source = backup_path
+        if not restore_source.is_file() and chapter_zip_action_id and (
+            chapter_zip_action_id != action_id
+        ):
+            # Middle actions keep only the hash snapshot (docs/49 §2.3), but
+            # the chapter-start zip is still a valid byte baseline for their
+            # delta paths, so restore falls back to it when present.
+            candidate = self._backup_path(slug, chapter_zip_action_id)
+            if candidate.is_file():
+                restore_source = candidate
         if unexpected_created or unexpected_modified or unexpected_deleted:
             remove_created_paths(integrity_root, unexpected_created)
-            restore_workspace_paths(
-                integrity_root,
-                backup_path,
-                before,
-                unexpected_modified + unexpected_deleted,
-            )
-            restored = workspace_delta(
-                before,
-                snapshot_workspace(integrity_root),
-            )
-            restored_unexpected = (
-                tuple(
-                    path
-                    for path in restored.created
-                    if path not in permitted_delta
+            if restore_source.is_file():
+                restore_workspace_paths(
+                    integrity_root,
+                    restore_source,
+                    before,
+                    unexpected_modified + unexpected_deleted,
                 )
-                + tuple(
-                    path
-                    for path in restored.modified
-                    if path not in permitted_delta
+                restored = workspace_delta(
+                    before,
+                    snapshot_workspace(integrity_root),
                 )
-                + tuple(
-                    path
-                    for path in restored.deleted
-                    if path not in permitted_delta
+                restored_unexpected = (
+                    tuple(
+                        path
+                        for path in restored.created
+                        if path not in permitted_delta
+                    )
+                    + tuple(
+                        path
+                        for path in restored.modified
+                        if path not in permitted_delta
+                    )
+                    + tuple(
+                        path
+                        for path in restored.deleted
+                        if path not in permitted_delta
+                    )
                 )
-            )
-            if restored_unexpected:
-                raise WorkflowError("项目控制面自动恢复失败。")
+                if restored_unexpected:
+                    raise WorkflowError("项目控制面自动恢复失败。")
+            # Middle actions carry no own byte backup (docs/49 §2.3): the
+            # hash comparison still detects the mutation and it is rejected
+            # below; byte restore applies only when a zip (own or the
+            # chapter-start fallback) exists. The chapter-start zip is kept
+            # as the chapter byte baseline, not consumed by its own action.
             snapshot_path.unlink(missing_ok=True)
-            backup_path.unlink(missing_ok=True)
+            if action_id != chapter_zip_action_id:
+                backup_path.unlink(missing_ok=True)
             reason = "control_plane_mutation" if (
                 control_plane_mutated
                 or unexpected_modified
@@ -1772,7 +1866,8 @@ class NativeWorkflowRelay:
                 detail=self._workspace_mutation_detail(allowed, action),
             )
         snapshot_path.unlink(missing_ok=True)
-        backup_path.unlink(missing_ok=True)
+        if action_id != chapter_zip_action_id:
+            backup_path.unlink(missing_ok=True)
         if control_plane_mutated:
             raise NativeWorkspaceMutationError(
                 "control_plane_mutation",
@@ -1916,7 +2011,11 @@ class NativeWorkflowRelay:
                 "path": prepared["capsule_dir"],
                 "operation": prepared["operation"],
                 "instructions": "instructions.md",
-                "handoff": "handoff.md",
+                **(
+                    {"handoff": "handoff.md"}
+                    if prepared.get("handoff_embedded", True)
+                    else {}
+                ),
                 "context": "writer-context.md",
                 "output": prepared["draft_output"],
             },
@@ -2207,7 +2306,11 @@ class NativeWorkflowRelay:
             state.get("decision_message")
             or "自动修订后仍有问题，请选择下一步。"
         )
-        if decision_kind in REVISION_DECISION_KINDS:
+        if (
+            decision_kind in REVISION_DECISION_KINDS
+            and decision_kind != "git_checkpoint_failed"
+            and int(state.get("patch_round") or 0) > 0
+        ):
             patch_round = int(state.get("patch_round") or 0)
             message += (
                 f"\n第 {patch_round} 轮集中修订后仍有 MUST；"
@@ -2564,6 +2667,7 @@ class NativeWorkflowRelay:
         telemetry = sanitize_call_telemetry(completion.get("telemetry"))
         current_tokens = telemetry.get("total_tokens")
         observation = state.get("active_call_observation")
+        completion_role = ""
         try:
             completion_role = str(
                 (completion.get("role_result") or {}).get("role") or ""
@@ -2620,6 +2724,7 @@ class NativeWorkflowRelay:
                 slug,
                 state,
                 reason=exc.reason,
+                failed_role=completion_role,
             )
         except NativeWorkspaceMutationError as exc:
             state = self._load_state(slug)
@@ -2638,6 +2743,22 @@ class NativeWorkflowRelay:
                 result,
                 outcome="failed",
                 failure_reason=exc.reason,
+                body_after=failed_body,
+            )
+            return result
+        except book_project.BookProjectError as exc:
+            state = self._load_state(slug)
+            failed_body = self._body_observation_summary(slug, state)
+            self._remember_failed_completion_session(state, completion)
+            reason = f"{type(exc).__name__}: {exc}"
+            result = self._hard_gate_failure_decision(slug, state, exc)
+            self._observe_call(
+                slug,
+                observation,
+                completion,
+                result,
+                outcome="failed",
+                failure_reason=reason,
                 body_after=failed_body,
             )
             return result
@@ -2675,6 +2796,43 @@ class NativeWorkflowRelay:
             outcome="completed",
         )
         return result
+
+    def _hard_gate_failure_decision(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        exc: book_project.BookProjectError,
+    ) -> WorkflowResult:
+        """Route a deterministic gate/certification failure to the author.
+
+        Hard-gate and evidence-validation failures cannot be fixed by
+        re-signing the current role, so they must not enter the technical
+        retry loop (which deadlocked chapters behind the unauthorizable
+        native_role_failed kind). The author gets a bounded decision: one
+        authorized concentrated revision plus a full double review, or stop.
+        """
+        chapter = int(state.get("chapter") or 0)
+        sequence_id = str(state.get("sequence_id") or "")
+        request = self._request_from_state(state)
+        findings = (f"hard-gate: {exc}",)
+        message = f"章节晋升前校验未通过：{exc}；请选择下一步。"
+        state["phase"] = "decision_required"
+        state["decision_kind"] = "hard_gate_failed"
+        state["must_findings"] = list(findings)
+        state["decision_message"] = message
+        _atomic_json(self._state_path(slug), state)
+        self._action_path(slug).unlink(missing_ok=True)
+        return self.orchestrator._decision_result(
+            slug,
+            request,
+            chapter,
+            sequence_id,
+            message=message,
+            retries=int(state.get("technical_retry_count") or 0),
+            decision_kind="hard_gate_failed",
+            must_findings=findings,
+            parent_generation_id=state.get("generation_id"),
+        )
 
     @staticmethod
     def _review_retry_message(failure_reason: str) -> str:
@@ -2725,17 +2883,56 @@ class NativeWorkflowRelay:
         counts[bucket] = 0
         state["technical_retry_count"] = 0
 
+    @staticmethod
+    def _resolve_failed_review_role(
+        state: dict[str, Any],
+        failed_role: str = "",
+    ) -> str:
+        """Resolve the specific review role that owns a parallel completion.
+
+        An explicit hint (``--role`` or the failed completion's own role) is
+        authoritative even when that role is already marked completed: the
+        failure can occur at the confluence/promotion stage after both roles
+        finished, and re-issuing exactly the completing role is the targeted
+        transport recovery (docs/43, docs/49 P1-2). Without a hint, never
+        guesses when the unfinished set is ambiguous: a single unfinished role
+        is the only safe fallback, anything else must be resolved by the
+        caller (decision_required for a no-hint confluence failure).
+        """
+        pending = list(state.get("pending_review_roles", []))
+        for hint in (
+            str(failed_role or "").strip(),
+            str(state.get("failed_review_role") or "").strip(),
+        ):
+            if hint in pending:
+                return hint
+        completed = set(state.get("completed_review_roles", []))
+        unfinished = [role for role in pending if role not in completed]
+        if len(unfinished) == 1:
+            return unfinished[0]
+        raise WorkflowError(
+            "无法唯一确定失败/待完成的并行审稿角色；请传入 --role "
+            "blind-reader|chapter-editor。"
+        )
+
     def _request_completion_repair(
         self,
         slug: str,
         state: dict[str, Any],
         *,
         reason: str,
+        failed_role: str = "",
     ) -> WorkflowResult:
         phase = str(state.get("phase") or "")
+        repair_role = ""
         if phase == "awaiting_double_review":
             try:
-                repair_role = self._phase_role(state)
+                repair_role = self._resolve_failed_review_role(
+                    state, failed_role
+                )
+            except (OSError, ValueError, json.JSONDecodeError):
+                repair_role = ""
+            try:
                 action_id = str(
                     self._role_action(slug, repair_role).get("action_id")
                     or ""
@@ -2751,6 +2948,9 @@ class NativeWorkflowRelay:
         attempt = int(counts.get(action_id) or 0) + 1
         counts[action_id] = attempt
         if attempt > self.orchestrator.max_technical_retries:
+            if repair_role:
+                state["failed_review_role"] = repair_role
+                _atomic_json(self._state_path(slug), state)
             return self._recover_technical_failure(
                 slug,
                 state,
@@ -2758,7 +2958,7 @@ class NativeWorkflowRelay:
             )
         phase = str(state.get("phase") or "")
         if phase == "awaiting_double_review":
-            role = self._phase_role(state)
+            role = self._resolve_failed_review_role(state, failed_role)
             try:
                 action = self._role_action(slug, role)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -2810,10 +3010,31 @@ class NativeWorkflowRelay:
             return {"prose": prose}
         if not self.strict_audit:
             self._refresh_blind_outcome_if_changed(slug, state)
-        scene = (
+        scene_text = (
             book_dir / f"planning/scene-package-ch{chapter:02d}.md"
         ).read_text(encoding="utf-8-sig")
         canon_dir = book_dir / "memory/canon"
+        if self.strict_audit:
+            scene = scene_text
+            canon = "\n".join(
+                path.read_text(encoding="utf-8-sig")
+                for path in sorted(canon_dir.rglob("*.md"))
+            )[:12000]
+        else:
+            # Lean reviews receive only counterpart sections; the user story
+            # contract is injected once via the dedicated input below, and
+            # canon arrives as the compressed memory digest instead of raw
+            # record files.
+            scene = (
+                extract_markdown_sections(scene_text, EDITOR_SCENE_SECTIONS)
+                or scene_text
+            )
+            canon = book_memory.canon_context_digest(
+                self.root,
+                slug,
+                chapter,
+                max_chars=12000,
+            )
         blind_path = book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
         blind_outcome = state.get("blind_outcome")
         if self.strict_audit:
@@ -2839,10 +3060,7 @@ class NativeWorkflowRelay:
                 request,
                 chapter,
             ),
-            "canon": "\n".join(
-                path.read_text(encoding="utf-8-sig")
-                for path in sorted(canon_dir.rglob("*.md"))
-            )[:12000],
+            "canon": canon,
         }
         if blind_review is not None:
             inputs["blind_review"] = blind_review
@@ -2858,15 +3076,25 @@ class NativeWorkflowRelay:
                     )
                 )
             )
-        elif texture_hint:
-            inputs["machine_diagnostics"] = texture_hint[:160]
+        elif not self.strict_audit:
+            # Aggregate lint advisories alongside the texture hint as one
+            # bounded low-cost sample (docs/49 §4-2); it never decides a
+            # verdict, it only asks the editor to check chapter-wide spread.
+            advisory_hint = summarize_advisories(lint_text(prose))
+            hint_parts = [
+                part for part in (texture_hint[:160], advisory_hint) if part
+            ]
+            if hint_parts:
+                inputs["machine_diagnostics"] = "\n".join(hint_parts)[:400]
         if chapter > 1:
             previous = book_project.find_chapter_file(
                 book_dir,
                 chapter - 1,
             ).read_text(encoding="utf-8-sig")
+            # Lean continuity checks need only the closing beat and hook.
+            tail_ratio = 0.8 if self.strict_audit else 0.9
             inputs["previous_chapter_ending"] = previous[
-                max(0, int(len(previous) * 0.8)) :
+                max(0, int(len(previous) * tail_ratio)) :
             ]
         return inputs
 
@@ -3292,12 +3520,35 @@ class NativeWorkflowRelay:
                 else self._phase_role(state)
             )
             if phase == "awaiting_double_review":
-                failed_role = str(
-                    state.get("failed_review_role") or ""
-                )
-                pending = list(state.get("pending_review_roles", []))
-                if failed_role in pending:
-                    role = failed_role
+                try:
+                    role = self._resolve_failed_review_role(
+                        state,
+                        str(state.get("failed_review_role") or ""),
+                    )
+                except WorkflowError:
+                    # 两个并行角色都已完成的失败发生在合流/晋升段，重签
+                    # 审稿没有意义：交给作者决定而不是猜角色（docs/49 P1-2）。
+                    result = self.orchestrator._decision_result(
+                        slug,
+                        request,
+                        chapter,
+                        sequence_id,
+                        message="审稿合流/晋升阶段失败且没有可重签的审稿角色，"
+                        "请选择下一步。",
+                        retries=retries - 1,
+                        decision_kind="native_role_failed",
+                        parent_generation_id=state.get("generation_id"),
+                    )
+                    state["phase"] = "decision_required"
+                    state["decision_kind"] = "native_role_failed"
+                    state["failed_phase"] = phase
+                    state["decision_message"] = (
+                        "审稿合流/晋升阶段失败且没有可重签的审稿角色，请选择下一步。"
+                    )
+                    state.pop("failed_review_role", None)
+                    _atomic_json(self._state_path(slug), state)
+                    self._action_path(slug).unlink(missing_ok=True)
+                    return result
                 state.pop("failed_review_role", None)
                 completed = set(state.get("completed_review_roles", []))
                 issued = [
@@ -3334,18 +3585,48 @@ class NativeWorkflowRelay:
                 except GuardianError:
                     pass
         if not self.strict_audit and sequence_id:
-            self._prepare_lean_writer_action(
-                slug,
-                state,
-                request=request,
-                chapter=chapter,
-                sequence_id=sequence_id,
-                must_findings=tuple(
-                    str(item) for item in state.get("must_findings", [])
-                ),
-                parent_generation_id=state.get("parent_generation_id"),
-                reuse_preferred=bool(state.get("must_findings")),
-            )
+            try:
+                self._prepare_lean_writer_action(
+                    slug,
+                    state,
+                    request=request,
+                    chapter=chapter,
+                    sequence_id=sequence_id,
+                    must_findings=tuple(
+                        str(item) for item in state.get("must_findings", [])
+                    ),
+                    parent_generation_id=state.get("parent_generation_id"),
+                    reuse_preferred=bool(state.get("must_findings")),
+                )
+            except GuardianError as exc:
+                # A third distinct body version needs explicit author
+                # authorization (docs/43, docs/49 P1-3): route to a
+                # user decision instead of letting the error escape the
+                # recovery handler as a bare exception.
+                reason = str(exc)
+                result = self.orchestrator._decision_result(
+                    slug,
+                    request,
+                    chapter,
+                    sequence_id,
+                    message="自动重试需要新的正文版本授权，请选择下一步。",
+                    retries=retries - 1,
+                    decision_kind="native_role_failed",
+                    must_findings=tuple(
+                        str(item) for item in state.get("must_findings", [])
+                    ),
+                    parent_generation_id=state.get("parent_generation_id"),
+                )
+                state["phase"] = "decision_required"
+                state["decision_kind"] = "native_role_failed"
+                state["failed_phase"] = phase
+                state["decision_message"] = (
+                    "自动重试需要新的正文版本授权"
+                    f"（{reason}），请选择下一步。"
+                )
+                _atomic_json(self._state_path(slug), state)
+                self._action_path(slug).unlink(missing_ok=True)
+                return result
             return WorkflowResult(
                 user_state="running",
                 message=(
@@ -3421,6 +3702,26 @@ class NativeWorkflowRelay:
             if finding.severity == "blocking"
         )
 
+    def _staged_hard_gate_findings(
+        self,
+        state: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Run the formal text gates against the staged body before promotion.
+
+        Catching length/paragraph gate failures at writer completion keeps
+        the capsule in "prepared" state, so the surface-patch loop and an
+        eventual author-authorized revision can still re-ingest the revised
+        body. The gates themselves are unchanged; only the evaluation
+        timing moves earlier.
+        """
+        mode = (
+            "degraded_exploration"
+            if state.get("formal_ready_allowed") is False
+            else "formal"
+        )
+        text = self._staged_body_path(state).read_text(encoding="utf-8-sig")
+        return tuple(check_chapter_text(text, mode=mode))
+
     def _request_surface_patch(
         self,
         slug: str,
@@ -3437,6 +3738,7 @@ class NativeWorkflowRelay:
                     "phase": "decision_required",
                     "decision_kind": "surface_revision_required",
                     "surface_findings": list(findings),
+                    "must_findings": list(findings),
                     "decision_message": "表面规则修订后仍有问题，请选择下一步。",
                 }
             )
@@ -3495,6 +3797,62 @@ class NativeWorkflowRelay:
             ),
         )
 
+    def _bind_host_session(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        session: SessionIdentity,
+        prepared: dict[str, Any],
+    ) -> None:
+        """Rebind the chapter sequence and writer capsule to the real host
+        session reported by the completion (docs/49 P1-1).
+
+        The control plane issues synthetic ``relay-*`` ids for dispatch only;
+        the evidence chain (sequence active session, generation run_id,
+        session completions and Guardian receipts) must carry the host's real
+        native session id. The capsule control record is rebound as well, so
+        ``record_capsule_runtime`` / ``ingest_writer_capsule`` keep matching
+        the sequence while the promoted records hold the real session.
+        """
+        sequence_id = str(state.get("sequence_id") or "")
+        capsule_id = str(prepared.get("capsule_id") or "")
+        if not sequence_id or not capsule_id:
+            return
+        try:
+            sequence = chapter_sequence_status(
+                self.root, slug, sequence_id
+            )
+            active = str(sequence.get("active_session_id") or "")
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if not active or active == session.session_id:
+            return
+        try:
+            rotate_chapter_session(
+                self.root,
+                slug,
+                sequence_id,
+                active,
+                reason="host_session_bind",
+            )
+            claim_chapter_session(
+                self.root,
+                slug,
+                sequence_id,
+                session.session_id,
+            )
+        except ChapterSequenceError as exc:
+            raise WorkflowError(
+                "无法把章节序列绑定到宿主会话，请为本次角色使用全新会话："
+                f"{exc}"
+            ) from exc
+        rebind_writer_capsule_session(
+            self.root,
+            slug,
+            capsule_id,
+            session.session_id,
+        )
+
     def _complete_writer(
         self,
         slug: str,
@@ -3526,12 +3884,15 @@ class NativeWorkflowRelay:
             raise WorkflowError("Writer 动作缺少 Capsule 绑定。")
         if not self.strict_audit:
             surface_findings = self._capsule_surface_findings(prepared)
+            if not surface_findings:
+                surface_findings = self._staged_hard_gate_findings(state)
             if surface_findings:
                 return self._request_surface_patch(
                     slug,
                     state,
                     surface_findings,
                 )
+            self._bind_host_session(slug, state, session, prepared)
             self._freeze_initial_draft(state)
             if state.get("patch_round"):
                 self._write_staged_diff(state)
@@ -4000,6 +4361,13 @@ class NativeWorkflowRelay:
             next_chapter_pull=NativeWorkflowRelay._result_text(
                 payload.get("next_chapter_pull") or "not_applicable"
             ),
+            uncertain_note=(
+                NativeWorkflowRelay._result_text(
+                    payload.get("uncertain_note") or ""
+                )
+                if role == "blind-reader"
+                else ""
+            ),
             analysis=dict(analysis),
             hard_anchor_coverage=hard_anchor_coverage,
             evidence_quote=(
@@ -4106,6 +4474,18 @@ class NativeWorkflowRelay:
             raise WorkflowError(
                 f"{role} 没有返回当前正文中的有效审稿引文。{detail}"
             )
+        # docs/49 §4-5: every open MUST's evidence quote must also exist in
+        # the reviewed prose; a fabricated citation invalidates the result
+        # and routes to the same repair path as an invalid evidence_quote.
+        for finding in outcome.findings:
+            evidence = finding.evidence.strip()
+            if finding.severity.upper() != "MUST" or not evidence:
+                continue
+            matched, detail = _quote_matches(evidence, prose)
+            if not matched:
+                raise WorkflowError(
+                    f"{role} 的 MUST 引文未在当前正文中找到。{detail}"
+                )
 
     def _record_staged_review_completion(
         self,
@@ -4284,6 +4664,7 @@ class NativeWorkflowRelay:
                 "instruction": (
                     "只替换给定连续段落；不得改变核心事件、硬锚点或章末目标。"
                     "每项返回原 target 与 replacement，不输出完整正文。"
+                    "新增因果必须落进动作、停顿、物件后果，禁止新增解释性段落。"
                 ),
                 "targets": plan,
             },
@@ -4449,7 +4830,11 @@ class NativeWorkflowRelay:
                 "path": prepared["capsule_dir"],
                 "operation": prepared["operation"],
                 "instructions": "instructions.md",
-                "handoff": "handoff.md",
+                **(
+                    {"handoff": "handoff.md"}
+                    if prepared.get("handoff_embedded", True)
+                    else {}
+                ),
                 "output": prepared["draft_output"],
             },
             "revision_file": str(revision_path),
@@ -4514,10 +4899,14 @@ class NativeWorkflowRelay:
         ):
             raise WorkflowError("正式晋升前缺少 Blind Reader 结果。")
         blind = self._stored_outcome(blind_payload)
+        blind_session = SessionIdentity(**blind_session_payload)
+        self._assert_finalize_reviews(
+            slug, state, blind_session, blind, editor_session, editor_outcome
+        )
         self._promote_staged_writer(slug, state)
         self._record_native_review(
             slug, state, "blind-reader",
-            SessionIdentity(**blind_session_payload), blind,
+            blind_session, blind,
         )
         self._record_native_review(
             slug, state, "chapter-editor", editor_session, editor_outcome
@@ -4550,9 +4939,82 @@ class NativeWorkflowRelay:
             if result.user_state == "chapter_complete"
             else "decision_required"
         )
+        if result.user_state != "chapter_complete":
+            # Propagate the orchestrator decision (e.g. git_checkpoint_failed)
+            # so next-action and authorize-revision can route it.
+            state["decision_kind"] = result.decision_kind
+            state["decision_message"] = result.message
         _atomic_json(self._state_path(slug), state)
         self._action_path(slug).unlink(missing_ok=True)
         return result
+
+    def _assert_finalize_reviews(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        blind_session: SessionIdentity,
+        blind: ReviewOutcome,
+        editor_session: SessionIdentity,
+        editor_outcome: ReviewOutcome,
+    ) -> None:
+        """Certify both review outcomes BEFORE any promotion side effect.
+
+        ``record_review`` validation runs after promotion; any failure that
+        depends on model output must surface here, while the formal chapter,
+        generation, Guardian receipt and checkpoints do not yet exist.
+        """
+        chapter = int(state["chapter"])
+        book_dir = self.root / "books" / slug
+        prose = self._staged_body_path(state).read_text(encoding="utf-8-sig")
+        writer_payload = state.get("writer_session")
+        writer_run_id = (
+            str(writer_payload.get("session_id") or "")
+            if isinstance(writer_payload, dict)
+            else ""
+        )
+        previous_prose: str | None = None
+        if chapter > 1:
+            try:
+                previous_prose = book_project.find_chapter_file(
+                    book_dir, chapter - 1
+                ).read_text(encoding="utf-8-sig")
+            except book_project.BookProjectError:
+                previous_prose = None
+        for role, session, outcome in (
+            ("blind-reader", blind_session, blind),
+            ("chapter-editor", editor_session, editor_outcome),
+        ):
+            errors = book_project.review_outcome_preflight_errors(
+                role=role,
+                number=chapter,
+                prose=prose,
+                verdict=outcome.verdict,
+                evidence_quote=outcome.evidence_quote,
+                analysis=outcome.analysis,
+                human_likeness=outcome.human_likeness,
+                reader_desire=outcome.reader_desire,
+                emotional_residue=outcome.emotional_residue,
+                next_chapter_pull=outcome.next_chapter_pull,
+                uncertain_note=outcome.uncertain_note,
+                previous_chapter_quote=outcome.previous_chapter_quote,
+                previous_prose=previous_prose,
+                review_session_id=session.session_id,
+                writer_run_id=writer_run_id,
+                extra_text="\n".join(
+                    part
+                    for finding in outcome.findings
+                    for part in (
+                        finding.location,
+                        finding.evidence,
+                        finding.reader_effect,
+                        finding.revision_intent,
+                    )
+                ),
+            )
+            if errors:
+                # Surface every preflight violation, not just the first one,
+                # so the author decision card lists the full set of reasons.
+                raise book_project.BookProjectError("；".join(errors))
 
     def approve_high_risk(
         self, slug: str, *, decision_reference: str
@@ -4631,6 +5093,10 @@ class NativeWorkflowRelay:
         reference = str(decision_reference or "").strip()
         if not reference:
             raise WorkflowError("续修授权必须提供作者决定依据。")
+        if decision_kind == "git_checkpoint_failed":
+            return self._retry_finish_after_checkpoint_failure(
+                slug, state, reference
+            )
         must = tuple(
             str(item)
             for item in state.get("must_findings", [])
@@ -4638,6 +5104,20 @@ class NativeWorkflowRelay:
         )
         if not must:
             raise WorkflowError("续修授权缺少待处理的 MUST。")
+        capsule = state.get("capsule")
+        capsule_id = (
+            str(capsule.get("capsule_id") or "")
+            if isinstance(capsule, dict)
+            else ""
+        )
+        if (
+            capsule_id
+            and capsule_status(self.root, slug, capsule_id) == "imported"
+        ):
+            raise WorkflowError(
+                "本章草稿已部分晋升但门禁未通过，集中修订无法安全重放；"
+                "请选择停止任务。"
+            )
         state["author_revision_authorized"] = True
         state["author_revision_reference"] = reference
         state["human_decision_reference"] = (
@@ -4646,6 +5126,51 @@ class NativeWorkflowRelay:
         _atomic_json(self._state_path(slug), state)
         self._record_author_revision(state, reference, decision_kind, must)
         return self._request_staged_literary_patch(slug, state, must)
+
+    def _retry_finish_after_checkpoint_failure(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        reference: str,
+    ) -> WorkflowResult:
+        """Retry only the ready/checkpoint tail after a checkpoint failure.
+
+        Promotion, review records and the sequence advance already
+        persisted; the promoted draft is kept and only the ready advance
+        plus the Git checkpoint are retried under the author's recorded
+        decision.
+        """
+        writer_payload = state.get("writer_session")
+        if not isinstance(writer_payload, dict):
+            raise WorkflowError("checkpoint 重试缺少 Writer 会话绑定。")
+        chapter = int(state["chapter"])
+        state["author_revision_authorized"] = True
+        state["author_revision_reference"] = reference
+        state.pop("decision_kind", None)
+        _atomic_json(self._state_path(slug), state)
+        self._record_author_revision(
+            state, reference, "git_checkpoint_failed", ()
+        )
+        result = self.orchestrator._finish_chapter(
+            slug,
+            self._request_from_state(state),
+            chapter,
+            str(state["sequence_id"]),
+            SessionIdentity(**writer_payload),
+            int(state.get("technical_retry_count") or 0),
+        )
+        state["phase"] = (
+            "complete"
+            if result.user_state == "chapter_complete"
+            else "decision_required"
+        )
+        if result.user_state != "chapter_complete":
+            state["decision_kind"] = result.decision_kind
+            state["decision_message"] = result.message
+        _atomic_json(self._state_path(slug), state)
+        if result.user_state == "chapter_complete":
+            self._action_path(slug).unlink(missing_ok=True)
+        return result
 
     def _record_author_revision(
         self,
@@ -4682,36 +5207,37 @@ class NativeWorkflowRelay:
         session: SessionIdentity,
         outcome: ReviewOutcome,
     ) -> WorkflowResult:
-        state.setdefault("review_session_ids", []).append(session.session_id)
-        state.setdefault("review_session_instance_ids", []).append(
-            session.session_instance_id
-        )
-        self._remember_session(
-            state,
-            session,
-            role=role,
-            status="completed",
-        )
         chapter = int(state["chapter"])
         sequence_id = str(state["sequence_id"])
         request = self._request_from_state(state)
         self._record_staged_review_completion(
             slug, state, role, session, outcome
         )
+        updates: dict[str, Any] = {
+            "review_session_ids": [session.session_id],
+            "review_session_instance_ids": [session.session_instance_id],
+        }
+        remember_record = _session_history_record(
+            session, role=role, status="completed"
+        )
+        if remember_record is not None:
+            updates["role_session_history"] = [remember_record]
         if role == "blind-reader":
-            state.update(
+            updates.update(
                 {
                     "blind_outcome": asdict(outcome),
                     "blind_outcome_source": self._review_outcome_source(
                         slug, state, "blind-reader"
                     ),
                     "blind_session": asdict(session),
+                    "completed_review_roles": sorted(
+                        set(state.get("completed_review_roles", []))
+                        | {"blind-reader"}
+                    ),
                 }
             )
+            state = self._atomic_merge_review_state(slug, state, updates)
             completed = set(state.get("completed_review_roles", []))
-            completed.add("blind-reader")
-            state["completed_review_roles"] = sorted(completed)
-            _atomic_json(self._state_path(slug), state)
             if "chapter-editor" not in completed:
                 # 并行双审：等 Chapter Editor 完成；其卡由 next-action
                 # 按队列签出，主卡不做额外切换。
@@ -4733,12 +5259,18 @@ class NativeWorkflowRelay:
                 self._stored_outcome(editor_payload),
             )
 
+        updates.update(
+            {
+                "editor_outcome": asdict(outcome),
+                "editor_session": asdict(session),
+                "completed_review_roles": sorted(
+                    set(state.get("completed_review_roles", []))
+                    | {"chapter-editor"}
+                ),
+            }
+        )
+        state = self._atomic_merge_review_state(slug, state, updates)
         completed = set(state.get("completed_review_roles", []))
-        completed.add("chapter-editor")
-        state["completed_review_roles"] = sorted(completed)
-        state["editor_outcome"] = asdict(outcome)
-        state["editor_session"] = asdict(session)
-        _atomic_json(self._state_path(slug), state)
         if "blind-reader" not in completed:
             return WorkflowResult(
                 user_state="running",
@@ -4746,6 +5278,69 @@ class NativeWorkflowRelay:
                 sequence_id=sequence_id,
             )
         return self._finalize_double_review(slug, state, session, outcome)
+
+    def _atomic_merge_review_state(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        updates: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one parallel review completion as a merged state write.
+
+        Two parallel ``complete_role`` calls each carry a full state snapshot;
+        a plain overwrite would drop the other role's fields (docs/49 P1-2).
+        Reload the current state, merge list keys with dedup, apply the
+        remaining field updates and write once atomically.
+        """
+        merged = self._load_state(slug)
+        for key in ("review_session_ids", "review_session_instance_ids"):
+            items = updates.get(key)
+            if not isinstance(items, list) or not items:
+                continue
+            base = merged.setdefault(key, [])
+            if not isinstance(base, list):
+                base = []
+                merged[key] = base
+            seen = set(base)
+            merged[key] = list(base) + [
+                item for item in items if item not in seen
+            ]
+        history_updates = updates.get("role_session_history")
+        if isinstance(history_updates, list) and history_updates:
+            base = merged.setdefault("role_session_history", [])
+            if not isinstance(base, list):
+                base = []
+                merged["role_session_history"] = base
+            for record in history_updates:
+                if not isinstance(record, dict):
+                    continue
+                if not any(
+                    isinstance(item, dict)
+                    and item.get("session_id") == record.get("session_id")
+                    and item.get("session_instance_id")
+                    == record.get("session_instance_id")
+                    and item.get("role") == record.get("role")
+                    and item.get("status") == record.get("status")
+                    for item in base
+                ):
+                    base.append(record)
+        completed_updates = updates.get("completed_review_roles")
+        if isinstance(completed_updates, list):
+            merged["completed_review_roles"] = sorted(
+                set(merged.get("completed_review_roles", []))
+                | set(completed_updates)
+            )
+        for key, value in updates.items():
+            if key in {
+                "review_session_ids",
+                "review_session_instance_ids",
+                "role_session_history",
+                "completed_review_roles",
+            }:
+                continue
+            merged[key] = value
+        _atomic_json(self._state_path(slug), merged)
+        return merged
 
     def _finalize_double_review(
         self,

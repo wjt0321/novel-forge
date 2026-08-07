@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.novel_forge.lint import lint_text
+from app.novel_forge.lint import lint_text, summarize_advisories
 
 
 def test_lint_detects_em_dash_and_ellipsis():
@@ -431,3 +431,137 @@ def test_lint_does_not_flag_generation_as_an_ordinary_story_word():
     assert not any(
         finding.rule_code == "workflow-meta-leak" for finding in findings
     )
+
+
+# --- docs/49 §4 rhetorical-layer advisory rules ------------------------------
+
+
+def test_mechanical_triplet_detects_clause_level_same_prefix():
+    findings = lint_text(
+        "那些年的雨，那些年的灯，那些年的背影，一起涌了上来。"
+    )
+
+    match = [f for f in findings if f.rule_code == "mechanical-triplet"]
+    assert match
+    assert all(f.severity == "advisory" for f in match)
+
+
+def test_mechanical_triplet_detects_reduplication_chain():
+    findings = lint_text("他沉默了，沉默得让人心慌。")
+
+    assert any(f.rule_code == "mechanical-triplet" for f in findings)
+
+
+def test_mechanical_triplet_allows_two_part_parallelism():
+    findings = lint_text("那些年的雨，那些年的灯，都留在他心里。")
+
+    assert not any(f.rule_code == "mechanical-triplet" for f in findings)
+
+
+def test_not_only_flip_detected_as_advisory():
+    findings = lint_text("这不仅是一次相遇，更是一场久别重逢。")
+
+    match = [f for f in findings if f.rule_code == "not-only-flip"]
+    assert match
+    assert all(f.severity == "advisory" for f in match)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这不仅仅是退让，而是放弃。",
+        "这不只是疲惫，更是一种解脱。",
+        "他不仅没有退缩，反而迎了上去。",
+    ],
+)
+def test_not_only_flip_variants(text):
+    findings = lint_text(text)
+
+    assert any(f.rule_code == "not-only-flip" for f in findings)
+
+
+def test_not_only_flip_exempts_questions_and_dialogue():
+    question = "这难道不是不仅考验耐心，更考验胆识？"
+    dialogue = '他说："这不仅是考验，更是磨练。"'
+
+    assert not any(f.rule_code == "not-only-flip" for f in lint_text(question))
+    assert not any(f.rule_code == "not-only-flip" for f in lint_text(dialogue))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "她不知道的是，门后一直站着一个人。",
+        "没人知道他去了哪里。",
+        "命运的齿轮开始转动。",
+        "命运的车轮滚滚向前。",
+        "时间仿佛凝固了。",
+        "时间仿佛静止在这一刻。",
+        "空气中弥漫着紧张的气息。",
+        "一种说不清道不明的情绪涌上来。",
+    ],
+)
+def test_explanation_tic_detects_viewpoint_leak_and_stock_images(text):
+    findings = lint_text(text)
+
+    match = [f for f in findings if f.rule_code == "explanation-tic"]
+    assert match
+    assert all(f.severity == "advisory" for f in match)
+
+
+def test_simile_density_also_checks_short_text():
+    findings = lint_text("月亮像盘子。她的脸仿佛纸。")
+
+    assert any(f.rule_code == "simile-density" for f in findings)
+
+
+def test_docs49_rhetorical_sample_is_caught():
+    text = (
+        "她不知道的是，命运的齿轮早已开始转动。那些年的雨，那些年的灯，"
+        "那些年的背影，一起涌了上来。这不仅是一次相遇，更是一场久别重逢。"
+    )
+    findings = lint_text(text)
+    codes = {f.rule_code for f in findings}
+
+    assert "explanation-tic" in codes
+    assert "mechanical-triplet" in codes
+    assert "not-only-flip" in codes
+
+
+def test_bone_picker_human_text_gains_no_new_lint_findings():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "experiments"
+        / "bone-picker-ch01-retelling.md"
+    )
+    findings = lint_text(path.read_text(encoding="utf-8-sig"))
+
+    assert not any(f.severity == "blocking" for f in findings)
+    codes = {f.rule_code for f in findings}
+    assert codes <= {
+        "ascii-punctuation",
+        "rhythm-monotony",
+        "explanatory-punchline",
+        "colon-density",
+    }
+
+
+# --- docs/49 §4-2: advisory aggregation for the Chapter Editor ----------------
+
+
+def test_summarize_advisories_aggregates_per_rule_and_caps():
+    text = (
+        "她不知道的是，命运的齿轮早已开始转动。那些年的雨，那些年的灯，"
+        "那些年的背影，一起涌了上来。这不仅是一次相遇，更是一场久别重逢。"
+        "月亮像盘子。她的脸仿佛纸。他的心如止水般平静，宛如镜面。"
+    )
+    summary = summarize_advisories(lint_text(text))
+
+    assert "explanation-tic" in summary
+    assert "mechanical-triplet" in summary
+    assert "simile-density" in summary
+    assert len(summary) <= 240
+
+
+def test_summarize_advisories_is_empty_without_target_rules():
+    assert summarize_advisories(lint_text("他点了点头，把门带上。")) == ""

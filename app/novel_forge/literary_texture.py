@@ -45,18 +45,31 @@ def _sentence_uniformity(sentences: list[str]) -> float | None:
     return round(math.sqrt(variance) / mean, 4) if mean else None
 
 
+# Minimum repeat counts per n-gram size. Sizes 2-3 catch two/three-char
+# refrains ("沉默……沉默"); their thresholds are higher because short
+# collocations repeat legitimately. Function-word-only grams are excluded.
+_NGRAM_MIN_COUNT = {2: 8, 3: 6, 4: 4, 5: 4, 6: 4}
+_FUNCTION_CHARS = frozenset(
+    "的了着过在是我就你他她它们这那有没不也都还很又再把被让"
+    "和与或但因为所以如果虽然么呢吧啊吗一个"
+)
+
+
 def _repeated_ngrams(text: str) -> list[dict[str, Any]]:
     compact = "".join(_CJK_RE.findall(text))
     candidates: Counter[str] = Counter()
-    for size in (4, 5, 6):
-        candidates.update(
-            compact[index : index + size]
-            for index in range(max(0, len(compact) - size + 1))
-        )
+    for size, min_count in _NGRAM_MIN_COUNT.items():
+        for index in range(max(0, len(compact) - size + 1)):
+            value = compact[index : index + size]
+            if len(set(value)) <= 1:
+                continue
+            if size <= 3 and all(char in _FUNCTION_CHARS for char in value):
+                continue
+            candidates[value] += 1
     repeated = [
         {"text": value, "count": count}
         for value, count in candidates.most_common()
-        if count >= 4 and len(set(value)) > 1
+        if count >= _NGRAM_MIN_COUNT[len(value)]
     ]
     chosen: list[dict[str, Any]] = []
     for item in repeated:

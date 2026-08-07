@@ -26,7 +26,7 @@ from .book_evidence import (
     record_evidence,
     render_evidence_markdown,
 )
-from .book_git import book_git_status, checkpoint_book
+from .book_git import BookGitError, book_git_status, checkpoint_book
 from .chapter_sequence import (
     advance_chapter_sequence,
     attest_chapter_ready_candidate,
@@ -44,6 +44,7 @@ from .guardian import (
     reject_writer_capsule,
 )
 from .models import NovelForgeError
+from .planning_spec import REVIEW_ANALYSIS_FIELDS
 from .project_templates import init_book_project
 from .review_prompt import (
     render_planning_instructions,
@@ -78,10 +79,18 @@ REVISION_DECISION_KINDS = frozenset(
     {
         "literary_revision_required",
         "local_patch_hard_gate_failed",
+        "hard_gate_failed",
+        "surface_revision_required",
+        "git_checkpoint_failed",
     }
 )
 REVISION_OPTIONS = (
     "D. 授权一次集中修订后重新双审："
+    "authorize-revision <slug> --reference <依据>",
+    "C. 停止任务",
+)
+CHECKPOINT_OPTIONS = (
+    "H. 保留已晋升草稿与双审证据，授权重试本章 Git checkpoint："
     "authorize-revision <slug> --reference <依据>",
     "C. 停止任务",
 )
@@ -108,6 +117,8 @@ _QUOTE_DETAIL_LIMIT = 40
 
 def _decision_options(decision_kind: str) -> tuple[str, ...]:
     """Return author-visible options reachable from the current decision state."""
+    if decision_kind == "git_checkpoint_failed":
+        return CHECKPOINT_OPTIONS
     if decision_kind in REVISION_DECISION_KINDS:
         return REVISION_OPTIONS
     if decision_kind == "hard_budget_reached":
@@ -202,25 +213,6 @@ def _quote_matches(quote: str, prose: str) -> tuple[bool, str]:
         f"期望「{normalized_quote[best_run:best_run + _QUOTE_DETAIL_LIMIT]}」，"
         f"实际「{normalized_prose[best_start:best_start + _QUOTE_DETAIL_LIMIT]}」。",
     )
-REVIEW_ANALYSIS_FIELDS = {
-    "blind-reader": (
-        "reconstruction_space",
-        "reconstruction_body",
-        "reconstruction_constraints",
-        "reconstruction_emotion",
-        "reconstruction_dialogue",
-        "memorable_image_1",
-        "memorable_image_2",
-        "memorable_image_3",
-    ),
-    "chapter-editor": (
-        "editorial_causality",
-        "editorial_agency",
-        "editorial_dialogue",
-        "editorial_texture",
-        "editorial_continuity",
-    ),
-}
 HARD_ANCHOR_FIELDS = (
     "protagonist",
     "world",
@@ -369,6 +361,7 @@ class ReviewOutcome:
     reader_desire: str = "not_applicable"
     emotional_residue: str = "not_applicable"
     next_chapter_pull: str = "not_applicable"
+    uncertain_note: str = ""
     analysis: dict[str, str] = field(default_factory=dict)
     hard_anchor_coverage: dict[str, dict[str, str]] = field(
         default_factory=dict
@@ -408,6 +401,7 @@ class WorkflowResult:
     technical_retry_count: int = 0
     options: tuple[str, ...] = ()
     git_checkpoint_succeeded: bool = False
+    decision_kind: str | None = None
 
 
 class SessionBackend(Protocol):
@@ -989,6 +983,7 @@ def _user_result(
     retries: int = 0,
     options: tuple[str, ...] = (),
     git_ok: bool = False,
+    decision_kind: str | None = None,
 ) -> WorkflowResult:
     return WorkflowResult(
         user_state=state,
@@ -997,6 +992,7 @@ def _user_result(
         technical_retry_count=retries,
         options=options,
         git_checkpoint_succeeded=git_ok,
+        decision_kind=decision_kind,
     )
 
 
@@ -2063,6 +2059,7 @@ class NovelWorkflowOrchestrator:
             reader_desire = outcome.reader_desire
             emotional_residue = outcome.emotional_residue
             next_pull = outcome.next_chapter_pull
+            uncertain_note = outcome.uncertain_note.strip() or "not_applicable"
             section = "## Prose-only Reconstruction\n" + details
             context_scope = "prose_only"
         else:
@@ -2074,6 +2071,7 @@ class NovelWorkflowOrchestrator:
             reader_desire = "not_applicable"
             emotional_residue = "not_applicable"
             next_pull = "not_applicable"
+            uncertain_note = "not_applicable"
             section = (
                 "## Editorial Dimensions\n"
                 + details
@@ -2102,6 +2100,7 @@ class NovelWorkflowOrchestrator:
             f"- context_scope: {context_scope}\n"
             "- independence_note: 独立原生会话，按角色最小上下文执行。\n\n"
             f"- human_likeness: {human_likeness}\n"
+            f"- uncertain_note: {uncertain_note}\n"
             f"- reader_desire: {reader_desire}\n"
             f"- emotional_residue: {emotional_residue}\n"
             f"- next_chapter_pull: {next_pull}\n\n"
@@ -2393,6 +2392,7 @@ class NovelWorkflowOrchestrator:
             sequence_id,
             retries=retries,
             options=_decision_options(decision_kind),
+            decision_kind=decision_kind,
         )
 
     def _finish_chapter(
@@ -2404,13 +2404,23 @@ class NovelWorkflowOrchestrator:
         writer_session: SessionIdentity,
         retries: int,
     ) -> WorkflowResult:
-        attest_chapter_ready_candidate(
-            self.root,
-            slug,
-            sequence_id,
-            writer_session.session_id,
-            workflow_authority=self._workflow_authority,
+        # A retry after git_checkpoint_failed finds the sequence already
+        # complete: the persisted attestation and sequence advance must not
+        # be replayed (both reject a second run), only ready + checkpoint.
+        sequence_complete = (
+            chapter_sequence_status(self.root, slug, sequence_id).get(
+                "status"
+            )
+            == "complete"
         )
+        if not sequence_complete:
+            attest_chapter_ready_candidate(
+                self.root,
+                slug,
+                sequence_id,
+                writer_session.session_id,
+                workflow_authority=self._workflow_authority,
+            )
         book_project.advance_state(
             self.root,
             slug,
@@ -2420,50 +2430,51 @@ class NovelWorkflowOrchestrator:
             create_git_checkpoint=False,
             workflow_authority=self._workflow_authority,
         )
-        try:
-            advance_chapter_sequence(
-                self.root,
-                slug,
-                sequence_id,
-                writer_session.session_id,
+        if not sequence_complete:
+            try:
+                advance_chapter_sequence(
+                    self.root,
+                    slug,
+                    sequence_id,
+                    writer_session.session_id,
+                )
+            except Exception:
+                book_project.advance_state(
+                    self.root,
+                    slug,
+                    chapter,
+                    "editorial_reviewed",
+                    evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+                )
+                return self._decision_result(
+                    slug,
+                    request,
+                    chapter,
+                    sequence_id,
+                    message="本章尚未形成可恢复版本，请选择下一步。",
+                    retries=retries,
+                    decision_kind="sequence_finalization_failed",
+                )
+            sequence = chapter_sequence_status(
+                self.root, slug, sequence_id
             )
-        except Exception:
-            book_project.advance_state(
-                self.root,
-                slug,
-                chapter,
-                "editorial_reviewed",
-                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
-            )
-            return self._decision_result(
-                slug,
-                request,
-                chapter,
-                sequence_id,
-                message="本章尚未形成可恢复版本，请选择下一步。",
-                retries=retries,
-                decision_kind="sequence_finalization_failed",
-            )
-        sequence = chapter_sequence_status(
-            self.root, slug, sequence_id
-        )
-        if sequence["effective_status"] != "complete":
-            book_project.advance_state(
-                self.root,
-                slug,
-                chapter,
-                "editorial_reviewed",
-                evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
-            )
-            return self._decision_result(
-                slug,
-                request,
-                chapter,
-                sequence_id,
-                message="本章状态尚未一致，请选择下一步。",
-                retries=retries,
-                decision_kind="sequence_inconsistent",
-            )
+            if sequence["effective_status"] != "complete":
+                book_project.advance_state(
+                    self.root,
+                    slug,
+                    chapter,
+                    "editorial_reviewed",
+                    evidence=f"reviews/ch{chapter:02d}-chapter-editor.md",
+                )
+                return self._decision_result(
+                    slug,
+                    request,
+                    chapter,
+                    sequence_id,
+                    message="本章状态尚未一致，请选择下一步。",
+                    retries=retries,
+                    decision_kind="sequence_inconsistent",
+                )
         self._save_control(
             slug,
             request=request,
@@ -2472,18 +2483,22 @@ class NovelWorkflowOrchestrator:
             phase="complete",
             retries=retries,
         )
-        checkpoint = checkpoint_book(
-            self.root,
-            slug,
-            f"chapter: ch{chapter:02d} ready",
-            tag=(
-                f"checkpoint/ch{chapter - 4:02d}-ch{chapter:02d}"
-                if chapter % 5 == 0
-                else None
-            ),
-        )
+        try:
+            checkpoint = checkpoint_book(
+                self.root,
+                slug,
+                f"chapter: ch{chapter:02d} ready",
+                tag=(
+                    f"checkpoint/ch{chapter - 4:02d}-ch{chapter:02d}"
+                    if chapter % 5 == 0
+                    else None
+                ),
+            )
+        except (BookGitError, OSError):
+            checkpoint = None
         git_ok = (
-            checkpoint.get("commit_hash") is not None
+            checkpoint is not None
+            and checkpoint.get("commit_hash") is not None
             and checkpoint.get("remote_count") == 0
             and book_git_status(self.root, slug).get("dirty") is False
         )
@@ -3177,9 +3192,16 @@ def main(argv: list[str] | None = None) -> int:
     complete = sub.add_parser("complete-role")
     complete.add_argument("slug")
     complete.add_argument("--from-file", type=Path)
-    complete.add_argument("--session-id")
+    complete.add_argument(
+        "--session-id",
+        help="本次角色执行使用的宿主真实会话 ID（必填；不接受合成 control id）。",
+    )
     complete.add_argument("--session-instance-id")
-    complete.add_argument("--role", choices=("blind-reader", "chapter-editor"))
+    complete.add_argument(
+        "--role",
+        choices=("blind-reader", "chapter-editor"),
+        help="并行双审下完成哪个角色；存在多个未完成角色时必须显式指定。",
+    )
     complete.add_argument("--provider", default="unknown")
     complete.add_argument("--model", default="unknown")
     complete.add_argument("--agent-harness", default="native-host")

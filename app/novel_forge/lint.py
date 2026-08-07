@@ -41,6 +41,10 @@ _RULES = {
         "blocking",
         "禁止连续使用“不是 X，而是 Y / 不是 X，是 Y”式否定翻转",
     ),
+    "not-only-flip": (
+        "advisory",
+        "疑似“不仅/不只是 X，而/更/而是 Y”式拔高句，建议改为具体动作或物件呈现",
+    ),
     "explanation-tic": (
         "advisory",
         "疑似作者解释 / 总结腔，建议改为动作、对话或物件呈现",
@@ -109,6 +113,13 @@ _WORD_COUNT_RE = re.compile(r"(?<![第])[零一二三四五六七八九十百千
 # 不是X，而是Y / 不是X，是Y within a clause.
 _NOT_IS_FLIP_RE = re.compile(
     r"不是([^，。；！？\n]{1,25})(?:，(?:而是|是)|(?:而是|是))([^，。；！？\n]{1,25})"
+)
+
+# 不仅/不仅仅/不只是 X，而/更/而是 Y — the stock elevation tic. Advisory only
+# (docs/49 §4); 而且 is a normal conjunction and stays excluded.
+_NOT_ONLY_FLIP_RE = re.compile(
+    r"不(?:仅(?:仅|只是)?|只是)[^，。；！？\n]{1,25}"
+    r"(?:，(?:而是|更是|更|反而|而(?!且))|而是|更是)[^，。；！？\n]{1,25}"
 )
 
 _WORKFLOW_META_RE = re.compile(
@@ -336,6 +347,13 @@ def _detect_rhythm_monotony(
     return findings
 
 
+# Reduplication across a comma: a >=2-char word repeated as "X了，X得..."
+# ("他沉默了，沉默得让人心慌") — the mechanical echo docs/49 §4 targets.
+_CLAUSE_REDUPLICATION_RE = re.compile(
+    r"([一-鿿]{2})(?:了|着|过)[^，。；！？\n]{0,20}，[^，。；！？\n]{0,6}\1得"
+)
+
+
 def _detect_mechanical_triplet(
     paragraphs: list[tuple[list[int], str]],
 ) -> list[LintFinding]:
@@ -345,6 +363,52 @@ def _detect_mechanical_triplet(
 
     for line_nums, para_text in paragraphs:
         sentences = _split_sentences(para_text)
+        # Rule 3 (clause level): three or more consecutive clauses
+        # sharing the same >=2-char CJK opening prefix
+        # ("那些A，那些B，那些C"). Two-part parallelism stays allowed.
+        clause_hit: tuple[str, str, str] | None = None
+        for sentence in sentences:
+            clauses = [
+                clause.strip().lstrip("\"'「『“‘")
+                for clause in re.split(r"[，、；]", sentence)
+                if clause.strip()
+            ]
+            for i in range(len(clauses) - 2):
+                a, b, c = clauses[i], clauses[i + 1], clauses[i + 2]
+                prefix = a[:2]
+                if (
+                    re.fullmatch(r"[一-鿿]{2}", prefix)
+                    and b[:2] == prefix
+                    and c[:2] == prefix
+                ):
+                    clause_hit = (a, b, c)
+                    break
+            if clause_hit:
+                break
+        if clause_hit:
+            a, b, c = clause_hit
+            findings.append(
+                LintFinding(
+                    rule_code="mechanical-triplet",
+                    severity=severity,
+                    line_number=line_nums[0],
+                    message=message,
+                    evidence=f"{a} / {b} / {c}",
+                )
+            )
+        # Rule 4 (clause level): a >=2-char word reduplicated across a
+        # comma as "X了，X得..." ("他沉默了，沉默得让人心慌").
+        reduplication = _CLAUSE_REDUPLICATION_RE.search(para_text)
+        if reduplication:
+            findings.append(
+                LintFinding(
+                    rule_code="mechanical-triplet",
+                    severity=severity,
+                    line_number=line_nums[0],
+                    message=message,
+                    evidence=reduplication.group(0),
+                )
+            )
         if len(sentences) < 3:
             continue
         for i in range(len(sentences) - 2):
@@ -646,11 +710,10 @@ def _detect_simile_density(text: str, char_count: int) -> list[LintFinding]:
     A simile every two or three paragraphs means the writer keeps explaining
     one image with a second image because the first one was not accurate.
     Threshold calibrated on the v3 trial chapters: 1.6/1000 (restrained) vs
-    3.5/1000 (clearly mechanical).
+    3.5/1000 (clearly mechanical). Short fragments are checked too; the
+    per-1000 density threshold absorbs their small sample size.
     """
     findings: list[LintFinding] = []
-    if char_count < 500:
-        return findings
     count = len(_SIMILE_RE.findall(text))
     density = count / char_count * 1000
     if density >= _SIMILE_DENSITY_THRESHOLD:
@@ -772,6 +835,24 @@ def lint_text(text: str) -> list[LintFinding]:
                 )
             )
 
+        # Not-only-flip: advisory sibling of not-is-flip for the
+        # 不仅/不只是...而/更 elevation tic, with the same exemptions.
+        no_severity, no_message = _RULES["not-only-flip"]
+        for m in _NOT_ONLY_FLIP_RE.finditer(line):
+            if in_question:
+                continue
+            if any(s <= m.start() < e for s, e in quote_spans):
+                continue
+            findings.append(
+                LintFinding(
+                    rule_code="not-only-flip",
+                    severity=no_severity,
+                    line_number=idx,
+                    message=no_message,
+                    evidence=_truncate(line, m.start(), m.end()),
+                )
+            )
+
         # Explanation tics (single-pass combined regex instead of 9-pattern loop)
         severity, message = _RULES["explanation-tic"]
         for m in _EXPLANATION_COMBINED_RE.finditer(line):
@@ -887,6 +968,45 @@ def lint_file(path: Path) -> list[LintFinding]:
     """Lint a single Markdown file (UTF-8, BOM tolerated)."""
     text = path.read_text(encoding="utf-8-sig")
     return lint_text(text)
+
+
+# Advisory rules aggregated into the Chapter Editor's machine_diagnostics
+# hint (docs/49 §4-2). They stay a low-cost sample: never a standalone
+# verdict, only a prompt to check whether the pattern is chapter-wide.
+EDITOR_ADVISORY_RULES: tuple[str, ...] = (
+    "explanation-tic",
+    "rhythm-monotony",
+    "mechanical-triplet",
+    "simile-density",
+)
+
+
+def summarize_advisories(
+    findings: list[LintFinding],
+    rule_codes: tuple[str, ...] = EDITOR_ADVISORY_RULES,
+    max_chars: int = 240,
+) -> str:
+    """Aggregate advisory findings per rule into one bounded hint string.
+
+    Each rule contributes its count plus up to two truncated evidence
+    samples. Returns "" when no finding matches ``rule_codes``.
+    """
+    parts: list[str] = []
+    for code in rule_codes:
+        group = [f for f in findings if f.rule_code == code]
+        if not group:
+            continue
+        samples = [
+            (f.evidence or "").replace("\n", " ")[:24]
+            for f in group[:2]
+            if f.evidence
+        ]
+        suffix = f"（{'；'.join(samples)}）" if samples else ""
+        parts.append(f"{code}×{len(group)}{suffix}")
+    if not parts:
+        return ""
+    summary = "lint 抽样提示：" + "；".join(parts) + "。"
+    return summary[:max_chars]
 
 
 def format_report(path: Path | str, findings: list[LintFinding]) -> str:

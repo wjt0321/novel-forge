@@ -40,7 +40,8 @@ def test_blind_reader_task_judges_life_not_only_clarity_or_mystery():
     assert "身体、物件和位置" in prompt.text
     assert "解释性修补" in prompt.text
     assert "convincing" in prompt.text
-    assert "uncertain 默认不触发修订" in prompt.text
+    assert "uncertain 不视为通过" in prompt.text
+    assert "指出哪段像通用、工整或解释充分" in prompt.text
     assert "synthetic" in prompt.text
     assert "最多一条 structural MUST" in prompt.text
     assert "人工编排感" in prompt.text
@@ -66,7 +67,7 @@ def test_lean_editor_samples_must_scope_without_routing_the_patch():
     assert "只用于成本观测" in prompt.text
     assert "Python 仍按现行章节级集中修订" in prompt.text
     assert "只确认 Blind Reader 指出的问题是否遍布全章" in prompt.text
-    assert "机器纹理提示" in prompt.text
+    assert "lint 抽样" in prompt.text
     assert "不是文学结论" in prompt.text
     assert "最多一条 structural MUST" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS

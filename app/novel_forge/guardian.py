@@ -459,6 +459,10 @@ def prepare_writer_capsule(
     handoff_sha256 = _sha256(handoff_path)
     if handoff_sha256 != handoff.get("handoff_sha256"):
         raise GuardianError("当前章节 handoff 已被修改，不能创建 writer capsule。")
+    # Minimal (lean) capsules keep the bounded handoff out of the writer
+    # workspace; the writer package carries everything the role needs and
+    # ingest re-validates the source handoff by hash instead.
+    embed_handoff = writer_context_mode != "minimal"
 
     capsule_id = f"cap-ch{chapter:02d}-{uuid.uuid4().hex[:12]}"
     prompt = render_formal_writer_instructions(
@@ -479,6 +483,8 @@ def prepare_writer_capsule(
         "sequence_id": sequence_id,
         "session_id": session_id,
         "handoff_sha256": handoff_sha256,
+        "handoff_path": handoff_path.relative_to(book_dir).as_posix(),
+        "handoff_embedded": embed_handoff,
         "prompt_template_id": prompt.template_id,
         "prompt_sha256": prompt_sha256,
         "target_path": target,
@@ -498,7 +504,8 @@ def prepare_writer_capsule(
     (capsule / "draft").mkdir(exist_ok=True)
     if target_file.is_file():
         (capsule / "draft/正文.md").write_bytes(target_file.read_bytes())
-    (capsule / "handoff.md").write_bytes(handoff_path.read_bytes())
+    if embed_handoff:
+        (capsule / "handoff.md").write_bytes(handoff_path.read_bytes())
     writer_package: dict[str, Any] | None = None
     if writer_context_mode is not None:
         writer_package = compile_writer_package(
@@ -539,6 +546,8 @@ def prepare_writer_capsule(
         encoding="utf-8",
     )
     protected_names = list(_CAPSULE_PROTECTED_FILES)
+    if not embed_handoff:
+        protected_names.remove("handoff.md")
     if (capsule / "writer-context.md").is_file():
         protected_names.append("writer-context.md")
     protected_hashes = {
@@ -569,6 +578,7 @@ def prepare_writer_capsule(
         "sequence_id": sequence_id,
         "session_id": session_id,
         "handoff_sha256": handoff_sha256,
+        "handoff_embedded": embed_handoff,
         "prompt_template_id": prompt.template_id,
         "prompt_sha256": prompt_sha256,
         "target_path": target,
@@ -615,6 +625,80 @@ def _load_control(
     ):
         raise GuardianError(f"Guardian capsule 身份不合法：{capsule_id}")
     return path, control
+
+
+def rebind_writer_capsule_session(
+    root: Path,
+    slug: str,
+    capsule_id: str,
+    new_session_id: str,
+) -> dict[str, Any]:
+    """Rebind a prepared writer capsule control to the host's real session.
+
+    The relay dispatches with synthetic control ids but the evidence chain
+    must carry the real native session (docs/49 P1-1). Only a ``prepared``
+    capsule may be rebound; the control record and any linked regeneration
+    authorization are rewritten and re-signed by the control plane, while the
+    capsule workspace (``capsule.json`` and protected hashes) stays untouched.
+    """
+    root = Path(root).resolve()
+    book_dir = _book_dir(root, slug)
+    new_session_id = str(new_session_id or "").strip()
+    if not new_session_id:
+        raise GuardianError("rebind 需要非空的宿主 session_id。")
+    control_path, control = _load_control(book_dir, capsule_id)
+    if control.get("status") != "prepared":
+        raise GuardianError(
+            f"只有 prepared 状态的 writer capsule 可以 rebind session："
+            f"{control.get('status')}"
+        )
+    old_session_id = str(control.get("session_id") or "").strip()
+    if old_session_id == new_session_id:
+        return _public_control(control)
+    authorization_id = str(
+        control.get("regeneration_authorization_id") or ""
+    ).strip()
+    if authorization_id:
+        authorization_path = _authorization_path(root, slug, authorization_id)
+        try:
+            payload = json.loads(
+                authorization_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise GuardianError(
+                "rebind 需要同步 regeneration authorization 但记录损坏。"
+            ) from exc
+        if (
+            isinstance(payload, dict)
+            and payload.get("authorization_id") == authorization_id
+        ):
+            signed = _signed_receipt(
+                root,
+                slug,
+                {
+                    **{key: value for key, value in payload.items()
+                       if key != "guardian_auth"},
+                    "session_id": new_session_id,
+                },
+            )
+            _atomic_json(authorization_path, signed)
+    control["session_id"] = new_session_id
+    control["updated_at"] = _now()
+    _atomic_json(control_path, control)
+    return _public_control(control)
+
+
+def _public_control(control: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "capsule_id": control.get("capsule_id"),
+        "slug": control.get("slug"),
+        "chapter": control.get("chapter"),
+        "sequence_id": control.get("sequence_id"),
+        "session_id": control.get("session_id"),
+        "status": control.get("status"),
+        "operation": control.get("operation"),
+        "target_path": control.get("target_path"),
+    }
 
 
 def _supersede_prepared_capsules(
@@ -1141,6 +1225,15 @@ def ingest_writer_capsule(
         path = capsule / name
         if not path.is_file() or _sha256(path) != expected:
             reasons.append(f"protected_input_changed:{name}")
+    if not control.get("handoff_embedded", True):
+        # Minimal capsules reference the source handoff instead of embedding
+        # it; the source file must still match the prepared hash.
+        handoff_source = book_dir / str(control.get("handoff_path") or "")
+        if (
+            not handoff_source.is_file()
+            or _sha256(handoff_source) != control.get("handoff_sha256")
+        ):
+            reasons.append("handoff_source_changed")
 
     draft = capsule / "draft/正文.md"
     target = book_dir / Path(

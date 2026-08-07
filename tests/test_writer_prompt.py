@@ -87,6 +87,18 @@ def test_formal_writer_patch_prompt_preserves_unaffected_prose():
     assert len(prompt.text) <= MAX_FORMAL_WRITER_PROMPT_CHARS
 
 
+def test_formal_writer_patch_prompt_forbids_new_explanatory_paragraphs():
+    prompt = render_formal_writer_instructions(
+        2,
+        operation="patch",
+        patch_directive="章末独白｜原文：他明白了｜修订目标：让因果落进动作",
+    )
+
+    assert "新增因果必须落进动作、停顿、物件后果" in prompt.text
+    assert "禁止新增解释性段落" in prompt.text
+    assert len(prompt.text) <= MAX_FORMAL_WRITER_PROMPT_CHARS
+
+
 @pytest.mark.parametrize("chapter", [0, -1, True])
 def test_formal_writer_prompt_rejects_invalid_chapter(chapter):
     with pytest.raises(WriterPromptError, match="chapter"):

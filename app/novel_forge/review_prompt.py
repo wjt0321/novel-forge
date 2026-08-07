@@ -61,7 +61,8 @@ def render_review_instructions(
         delivery = (
             "只把简短 JSON 结论写入动作指定的 result_file：verdict、must、"
             "human_likeness、reader_desire、emotional_residue、"
-            "next_chapter_pull、summary 和 evidence_quote。每条 MUST 用紧凑对象"
+            "next_chapter_pull、summary、evidence_quote 和 uncertain_note。"
+            "每条 MUST 用紧凑对象"
             "标注 scope=local|structural|blocking，并保留位置、原文和理由；该分类"
             "只用于成本观测，不决定修订路径。evidence_quote 必须逐字来自当前"
             "正文：打开正文文件直接复制完整原句，不要凭记忆改写或截断；若找不到，"
@@ -94,7 +95,9 @@ def render_review_instructions(
 纯对白，不按固定句数判错。
 
 `human_likeness` 只用 `convincing|uncertain|synthetic`：具体人物的私欲、关系和不整齐
-余波成立才是 convincing；好读但仍有通用、工整或解释充分的段落是 uncertain，uncertain 默认不触发修订；
+余波成立才是 convincing；好读但仍有通用、工整或解释充分的段落是 uncertain。uncertain 不视为通过：
+给 pass 必须 human_likeness=convincing 且 reader_desire=continue；给 uncertain 时必须在 uncertain_note
+用一句具体说明指出哪段像通用、工整或解释充分，说明为空则结果无效。
 人物主要执行规划、对白主要解释、重复反应或旁白持续替读者总结时是 synthetic。synthetic 必须引用最能
 代表人工编排感的正文原句，并最多一条 structural MUST；convincing 则引用最具人物特异性的原句。
 `reader_desire` 只用 `continue|conditional|stop`，不能填数字。其他 MUST 仍只用于不改就会破坏人物
@@ -116,7 +119,7 @@ def render_review_instructions(
 {micro_rules}
 
 先独立检查因果与连续性；文学纹理上只确认 Blind Reader 指出的问题是否遍布全章、是否值得消耗
-唯一一次修订。机器纹理提示只是低成本抽样，不是文学结论，不得据此单独判错。若存在不改就会破坏
+唯一一次修订。机器纹理与 lint 抽样提示只是低成本抽样，不是文学结论，不得据此单独判错。若存在不改就会破坏
 人物选择、逻辑、可读性或核心钩子的问题，返回 `verdict=needs_revision` 并一次列全；分布式人工编排
 最多一条 structural MUST。每条 MUST 标注 scope=local|structural|blocking，并保留位置、原文和理由；
 该分类只用于成本观测，Python 仍按现行章节级集中修订。evidence_quote 必须逐字来自当前正文：打开

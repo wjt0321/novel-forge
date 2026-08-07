@@ -523,6 +523,7 @@ def _must_reviews() -> tuple[ReviewOutcome, ReviewOutcome]:
             verdict="needs_revision",
             findings=(finding,),
             human_likeness="uncertain",
+            uncertain_note="追兵压力进入过晚的段落读起来工整但通用。",
             reader_desire="conditional",
             emotional_residue="场面存在压力，但选择尚未咬紧。",
             next_chapter_pull="修订后才能判断是否愿意继续。",
@@ -1566,7 +1567,7 @@ def test_missing_command_backend_starts_native_relay(
 
     capsule = Path(action["capsule"]["path"])
     (capsule / "draft/正文.md").write_text(
-        _prose("native completion without a host session id"),
+        _prose("native completion with a host session id"),
         encoding="utf-8",
     )
     telemetry_file = tmp_path / "writer-telemetry.json"
@@ -1587,6 +1588,8 @@ def test_missing_command_backend_starts_native_relay(
             str(tmp_path),
             "complete-role",
             "demo",
+            "--session-id",
+            "native-writer-session-01",
             "--telemetry-file",
             str(telemetry_file),
         ]

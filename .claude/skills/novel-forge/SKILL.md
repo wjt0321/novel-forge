@@ -26,7 +26,7 @@ Writer 暂存正文
 ```powershell
 python tools/novel-workflow.py --root <绝对根目录> start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 python tools/novel-workflow.py --root <绝对根目录> next-action <slug>
-python tools/novel-workflow.py --root <绝对根目录> complete-role <slug>
+python tools/novel-workflow.py --root <绝对根目录> complete-role <slug> --session-id <宿主真实会话 ID>
 # 第二版仍有 MUST、停在作者决定时，由作者授权一次续修
 python tools/novel-workflow.py --root <绝对根目录> authorize-revision <slug> --reference <作者决定依据>
 ```
@@ -55,17 +55,17 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 ### Blind Reader
 
-只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。`uncertain` 默认不触发修订；若判 `synthetic`，必须给逐字证据、`needs_revision` 和恰好一条 `structural` MUST。
+只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。`uncertain` 不视为通过：pass 必须 `convincing`+`continue`；给 `uncertain` 必须附一句具体 `uncertain_note`（哪段像通用/工整/解释充分），说明为空则结果无效。若判 `synthetic`，必须给逐字证据、`needs_revision` 和恰好一条 `structural` MUST。每条开放 MUST 的原文 evidence 必须与正文逐字匹配，编造引文会被判无效。
 
 ### Chapter Editor
 
-只读 capsule；只写 result_file。独立核对逻辑，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理提示只是核对线索，不是文学结论。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句。不要输出分析矩阵、hard-anchor 表或技术字段。
+只读 capsule；只写 result_file。独立核对逻辑，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理与 lint 抽样提示只是核对线索，不是文学结论，不得据此单独判错。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句；每条开放 MUST 的原文 evidence 必须与正文逐字匹配。不要输出分析矩阵、hard-anchor 表或技术字段。
 
 ## 自动处理与停止点
 
-- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后只回 Writer 一次；第二版仍有 MUST，进入用户决定，禁止无限重试。用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后恢复一次集中修订 + 完整双审），不是无限 retry。
+- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后只回 Writer 一次；第二版仍有 MUST，进入用户决定，禁止无限重试。用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后恢复一次集中修订 + 完整双审），不是无限 retry。正文硬门失败、表面修订耗尽与 checkpoint 失败也会停在可授权 decision；checkpoint 失败时 authorize-revision 只重试 checkpoint 并保留已晋升草稿。
 - Lean 双审并行：Writer 完成后一次签发 Blind Reader 与 Chapter Editor 两张卡（`next-action` 领取，可并行委派、完成顺序不限）；并行完成时用 `complete-role <slug> --role blind-reader|chapter-editor` 指明角色。Editor 无 Blind 结论时独立审稿。
-- 双审通过前，不能有正式章节、Generation 和两份 Review、Guardian Receipt 或 Git checkpoint；Python 晋升后才创建它们。
+- 双审通过前，不能有正式章节、Generation 和两份 Review、Guardian Receipt 或 Git checkpoint；晋升前 Python 先按 record_review 同源规则校验双审结论，校验失败不产生任何正式副作用；Python 晋升后才创建它们。
 - `ready` 不等于作者批准，也不等于可以发布；不配置 remote。
 - 未知遥测保持 null。不要伪造模型、token、Session、会话终态或作者授权。ACP 只用于事后取证。
 
@@ -78,7 +78,7 @@ Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地�
 
 ## 45 号迭代默认规则
 
-- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/450 CJK，总计不超过 2800）；`full` 只作对照。Scene Package 的私人欲望、关系摩擦和感知偏差仍在原文件，不新增步骤。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`。
+- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/450 CJK，总计不超过 2800）；`full` 只作对照。Scene Package 的私人欲望、关系摩擦和感知偏差仍在原文件，不新增步骤。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`；两条 Patch 路径都禁止新增解释性段落，新增因果必须落进动作/停顿/物件后果。
 - 仅当全部开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；Python 精确替换后必须重跑完整硬门和 Blind Reader + Chapter Editor。
 - 同卷固定主要 Writer 模型；切换先执行 `approve-writer-model` 记录作者小样校准。模型、Session、哈希与 runtime 仍不交给创作角色猜。
 - `native-isolated` 与 `managed-relay` 可正式生产；`exploration` 只能保留暂存稿/双审结果，永远不能 formal ready。

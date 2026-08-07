@@ -33,6 +33,7 @@ EXPERTISE_AUDIT_SECTION = "5b. 专业判断审计"
 DIALOGUE_INTENT_FIELDS: tuple[tuple[str, ...], ...] = (
     ("关键对白意图", "关键对白"),
 )
+STORY_CONTRACT_SECTION = "0a. 用户硬锚合同"
 CHAPTER_HANDOFF_SECTION = "0b. 章际交接"
 CHAPTER_HANDOFF_FIELDS: tuple[tuple[str, ...], ...] = (
     ("上一章正文路径",),
@@ -109,8 +110,8 @@ MAX_HANDOFF_TOTAL_CHARS = 28_000
 # causal responsibility, and professional audit remain available to editors.
 WRITER_VISIBLE_SCENE_SECTIONS: tuple[str, ...] = (
     "0. 边界",
-    "0a. 用户硬锚合同",
-    "0b. 章际交接",
+    STORY_CONTRACT_SECTION,
+    CHAPTER_HANDOFF_SECTION,
     "1. 场景压力",
     "2. 在场者状态",
     "3. Beat 因果链",
@@ -118,6 +119,14 @@ WRITER_VISIBLE_SCENE_SECTIONS: tuple[str, ...] = (
     "5. 信息预算",
     "6. 人物性呼吸段",
     "7. 场景余波",
+)
+
+# The Chapter Editor receives the same counterpart sections, except the user
+# story contract, which is injected once as its own dedicated review input.
+EDITOR_SCENE_SECTIONS: tuple[str, ...] = tuple(
+    section
+    for section in WRITER_VISIBLE_SCENE_SECTIONS
+    if section != STORY_CONTRACT_SECTION
 )
 
 # Short, role-specific literary rules distilled from deidentified production
@@ -229,6 +238,37 @@ EDITORIAL_VERDICTS: tuple[str, ...] = ("ready_for_editor_decision", "needs_revis
 REVIEW_VERDICTS: tuple[str, ...] = ("pass", "needs_revision")
 PASSING_VERDICTS = frozenset({"pass", "ready_for_editor_decision"})
 
+# Analysis fields each review role must deliver. Single source shared by the
+# native relay validation (workflow.py) and the book-project record_review
+# preflight (book_project.py); duplicated definitions were the historical
+# source of validation drift (docs/49 §2.4).
+REVIEW_ANALYSIS_FIELDS: dict[str, tuple[str, ...]] = {
+    "blind-reader": (
+        "reconstruction_space",
+        "reconstruction_body",
+        "reconstruction_constraints",
+        "reconstruction_emotion",
+        "reconstruction_dialogue",
+        "memorable_image_1",
+        "memorable_image_2",
+        "memorable_image_3",
+    ),
+    "chapter-editor": (
+        "editorial_causality",
+        "editorial_agency",
+        "editorial_dialogue",
+        "editorial_texture",
+        "editorial_continuity",
+    ),
+}
+# Flat aliases kept for book_project preflight and its tests.
+BLIND_RECONSTRUCTION_FIELDS: tuple[str, ...] = REVIEW_ANALYSIS_FIELDS[
+    "blind-reader"
+]
+EDITORIAL_DIMENSION_FIELDS: tuple[str, ...] = REVIEW_ANALYSIS_FIELDS[
+    "chapter-editor"
+]
+
 # Shared lint/template language. These remain advisory at the lint layer;
 # contextual severity belongs to the line/texture review gates.
 EXPLANATION_TIC_PATTERNS: tuple[str, ...] = (
@@ -244,6 +284,14 @@ EXPLANATION_TIC_PATTERNS: tuple[str, ...] = (
     r"说到底",
     r"不是告别，是",
     r"不是结束，是",
+    # Viewpoint leaks and stock imagery (docs/49 §4). Advisory at the lint
+    # layer; they flag locations for the reviewers, not verdicts.
+    r"[他她]不知道的是",
+    r"没人知道",
+    r"命运的(?:车轮|齿轮|轨迹)",
+    r"时间仿佛(?:凝固|静止)",
+    r"空气中弥漫着",
+    r"说不清道不明",
 )
 
 # --- Creative evidence --------------------------------------------------------

@@ -672,9 +672,22 @@ def chapter_ready_candidate_is_attested(
             not isinstance(record, dict)
             or record.get("schema") != CHAPTER_SEQUENCE_SCHEMA
             or record.get("slug") != slug
-            or record.get("status") != "running"
-            or record.get("active_session_id") != session_id
         ):
+            continue
+        completed_sessions = record.get("completed_sessions")
+        # A completed sequence attests equally: it witnessed this exact
+        # candidate and finished the chapter with the same session. This is
+        # what makes a checkpoint retry able to re-enter ready.
+        active = (
+            record.get("status") == "running"
+            and record.get("active_session_id") == session_id
+        )
+        completed = (
+            record.get("status") == "complete"
+            and isinstance(completed_sessions, dict)
+            and completed_sessions.get(str(chapter)) == session_id
+        )
+        if not (active or completed):
             continue
         candidates = record.get("ready_candidates")
         candidate = (

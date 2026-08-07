@@ -36,8 +36,10 @@ from .book_git import (
 from .lint import lint_file
 from .models import NovelForgeError
 from .planning_spec import (
+    BLIND_RECONSTRUCTION_FIELDS,
     CHAPTER_STATES,
     DRAFT_MODES,
+    EDITORIAL_DIMENSION_FIELDS,
     EDITORIAL_VERDICTS,
     FORWARD_STATE_TRANSITIONS,
     MAX_DRAFT_MUTATIONS_PER_CHAPTER,
@@ -89,26 +91,9 @@ def _local_git_checkpoint(
         }
 
 
-BLIND_RECONSTRUCTION_FIELDS: tuple[str, ...] = (
-    "reconstruction_space",
-    "reconstruction_body",
-    "reconstruction_constraints",
-    "reconstruction_emotion",
-    "reconstruction_dialogue",
-    "memorable_image_1",
-    "memorable_image_2",
-    "memorable_image_3",
-)
 BLIND_READER_PULL_FIELDS: tuple[str, ...] = (
     "emotional_residue",
     "next_chapter_pull",
-)
-EDITORIAL_DIMENSION_FIELDS: tuple[str, ...] = (
-    "editorial_causality",
-    "editorial_agency",
-    "editorial_dialogue",
-    "editorial_texture",
-    "editorial_continuity",
 )
 
 
@@ -490,6 +475,7 @@ def parse_review(text: str) -> dict[str, Any]:
             _field("reader_desire"),
             ("continue", "conditional", "stop", "not_applicable"),
         ),
+        "uncertain_note": _field("uncertain_note"),
         "emotional_residue": _field("emotional_residue"),
         "next_chapter_pull": _field("next_chapter_pull"),
         **{
@@ -652,6 +638,19 @@ def _review_validation_errors(
                 "blind-reader 通过时 human_likeness 必须是 convincing；"
                 "uncertain/synthetic 应给 needs_revision。"
             )
+        if (
+            role == "blind-reader"
+            and parsed["human_likeness"] == "uncertain"
+            and (
+                not parsed["uncertain_note"]
+                or parsed["uncertain_note"].strip().lower()
+                in {"-", "null", "unknown", "not_applicable", "待填写"}
+            )
+        ):
+            errors.append(
+                "blind-reader 给 uncertain 必须填写 uncertain_note，"
+                "用一句具体说明指出哪段像通用、工整或解释充分。"
+            )
         if role == "blind-reader" and parsed["verdict"] == "pass":
             if parsed["reader_desire"] != "continue":
                 errors.append(
@@ -694,6 +693,141 @@ def _review_validation_errors(
                     errors.append(
                         "blind-reader pass 必须来自不同于写作 run_id 的独立会话。"
                     )
+    return errors
+
+
+def review_outcome_preflight_errors(
+    *,
+    role: str,
+    number: int,
+    prose: str,
+    verdict: str,
+    evidence_quote: str,
+    analysis: dict[str, str],
+    human_likeness: str = "not_applicable",
+    reader_desire: str = "not_applicable",
+    emotional_residue: str = "not_applicable",
+    next_chapter_pull: str = "not_applicable",
+    previous_chapter_quote: str = "",
+    previous_prose: str | None = None,
+    review_session_id: str = "",
+    writer_run_id: str = "",
+    uncertain_note: str = "",
+    extra_text: str = "",
+) -> list[str]:
+    """Model-dependent record_review checks runnable before promotion.
+
+    ``record_review`` certifies the rendered review only after promotion,
+    when formal chapter files, generations and checkpoints already exist.
+    Every check that can fail because of model output (rather than because
+    of binding/generation bookkeeping, which is deterministic at record
+    time) is mirrored here against the staged prose so a failed review
+    never leaves formal side effects behind. Keep the rules in sync with
+    ``_review_validation_errors``; the shared constants are the single
+    source for both.
+    """
+    errors: list[str] = []
+    valid_verdicts = (
+        EDITORIAL_VERDICTS if role == "chapter-editor" else REVIEW_VERDICTS
+    )
+    if verdict not in valid_verdicts:
+        errors.append(
+            f"\u5ba1\u7a3f\u7f3a\u5c11\u5408\u6cd5 verdict\uff08{role} \u5141\u8bb8\uff1a"
+            f"{', '.join(valid_verdicts)}\uff09\u3002"
+        )
+    if role in {"blind-reader", "consistency-guard", "chapter-editor"}:
+        quote = evidence_quote.strip()
+        if not quote:
+            errors.append(f"{role} \u5173\u952e\u5ba1\u7a3f\u7f3a\u5c11 evidence_quote\u3002")
+        elif quote not in prose:
+            errors.append(
+                f"{role} \u7684 evidence_quote \u672a\u5728\u5f53\u524d\u6b63\u6587\u4e2d\u627e\u5230\u3002"
+            )
+    if (
+        number > 1
+        and role in SERIAL_REVIEW_ROLES
+        and previous_prose is not None
+    ):
+        previous_quote = previous_chapter_quote.strip()
+        if not previous_quote:
+            errors.append(f"{role} \u7f3a\u5c11 previous_chapter_quote\u3002")
+        elif previous_quote not in previous_prose:
+            errors.append(
+                f"{role} \u7684 previous_chapter_quote \u672a\u5728\u4e0a\u4e00\u7ae0\u6b63\u6587\u4e2d\u627e\u5230\u3002"
+            )
+    if role in {"blind-reader", "chapter-editor"}:
+        substantive_fields = (
+            BLIND_RECONSTRUCTION_FIELDS
+            if role == "blind-reader"
+            else EDITORIAL_DIMENSION_FIELDS
+        )
+        missing_substantive = [
+            field
+            for field in substantive_fields
+            if not analysis.get(field)
+            or analysis[field].strip() in {"-", "null", "unknown", "\u5f85\u586b\u5199"}
+        ]
+        if missing_substantive:
+            errors.append(
+                f"{role} \u7f3a\u5c11\u5b9e\u8d28\u5ba1\u7a3f\u5b57\u6bb5\uff1a"
+                + "\u3001".join(missing_substantive)
+            )
+    if role == "blind-reader" and human_likeness == "uncertain":
+        note = uncertain_note.strip().lower()
+        if note in {"", "-", "null", "unknown", "not_applicable", "待填写"}:
+            errors.append(
+                "blind-reader 给 uncertain 必须填写 uncertain_note，"
+                "用一句具体说明指出哪段像通用、工整或解释充分。"
+            )
+    if role == "blind-reader" and verdict == "pass":
+        if human_likeness != "convincing":
+            errors.append(
+                "blind-reader \u901a\u8fc7\u65f6 human_likeness \u5fc5\u987b\u662f convincing\uff1b"
+                "uncertain/synthetic \u5e94\u7ed9 needs_revision\u3002"
+            )
+        if reader_desire != "continue":
+            errors.append(
+                "blind-reader \u901a\u8fc7\u65f6 reader_desire \u5fc5\u987b\u662f continue\uff1b"
+                "conditional/stop \u5e94\u7ed9 needs_revision\u3002"
+            )
+        pull_values = {
+            "emotional_residue": emotional_residue,
+            "next_chapter_pull": next_chapter_pull,
+        }
+        missing_pull = [
+            field
+            for field in BLIND_READER_PULL_FIELDS
+            if not pull_values.get(field)
+            or pull_values[field].strip().lower()
+            in {"-", "null", "unknown", "\u5f85\u586b\u5199"}
+        ]
+        if missing_pull:
+            errors.append(
+                "blind-reader pass \u7f3a\u5c11\u8bfb\u8005\u8ffd\u8bfb\u8bc1\u636e\uff1a"
+                + "\u3001".join(missing_pull)
+            )
+        writer_session = writer_run_id.strip()
+        review_session = review_session_id.strip()
+        if writer_session.lower() in {"", "unknown", "unrecorded"}:
+            errors.append(
+                "blind-reader pass \u8981\u6c42 generation \u8bb0\u5f55\u771f\u5b9e run_id\uff0c"
+                "\u4e0d\u80fd\u4f7f\u7528 unknown\u3002"
+            )
+        elif review_session == writer_session:
+            errors.append(
+                "blind-reader pass \u5fc5\u987b\u6765\u81ea\u4e0d\u540c\u4e8e\u5199\u4f5c run_id \u7684\u72ec\u7acb\u4f1a\u8bdd\u3002"
+            )
+    combined_text = "\n".join(
+        [
+            evidence_quote,
+            previous_chapter_quote,
+            *analysis.values(),
+            extra_text,
+        ]
+    )
+    errors.extend(
+        _future_chapter_reference_errors(combined_text, number, role)
+    )
     return errors
 
 

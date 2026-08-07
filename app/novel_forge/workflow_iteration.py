@@ -10,6 +10,7 @@ from pathlib import Path, PurePath
 from typing import Any, Iterable
 
 from . import book_project
+from .book_memory import canon_context_digest
 
 WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
 WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 450}
@@ -96,7 +97,7 @@ def _heading_key(value: str) -> str:
     return re.sub(r"[\s#：:（）()]+", "", value).lower()
 
 
-def _extract_markdown_sections(text: str, selectors: tuple[str, ...]) -> str:
+def extract_markdown_sections(text: str, selectors: tuple[str, ...]) -> str:
     """Return selected level-two sections in source order."""
     wanted = tuple(_heading_key(item) for item in selectors)
     chunks: list[str] = []
@@ -118,6 +119,22 @@ def _extract_markdown_sections(text: str, selectors: tuple[str, ...]) -> str:
     if selected and current:
         chunks.append("\n".join(current).strip())
     return "\n\n".join(chunk for chunk in chunks if chunk)
+
+
+_PREVIOUS_CHAPTER_LEDGER_PREFIXES = (
+    "- 上一章正文路径",
+    "- 上一章正文 SHA-256",
+    "- 上一章正文SHA-256",
+)
+
+
+def _strip_previous_chapter_ledger(text: str) -> str:
+    """Drop previous-chapter path/SHA ledger lines; writers need only the quote."""
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.strip().startswith(_PREVIOUS_CHAPTER_LEDGER_PREFIXES)
+    )
 
 
 def compile_writer_package(
@@ -161,7 +178,7 @@ def compile_writer_package(
         except Exception:
             previous = ""
     previous_ending = _bounded(previous, 500, tail=True)
-    story_obligations = _extract_markdown_sections(
+    story_obligations = extract_markdown_sections(
         scene,
         (
             "0. 边界",
@@ -177,6 +194,7 @@ def compile_writer_package(
     )
     if not story_obligations:
         story_obligations = scene
+    story_obligations = _strip_previous_chapter_ledger(story_obligations)
     p0 = _bounded(
         "## 当前故事义务\n"
         + _bounded(story_obligations, 1000)
@@ -185,7 +203,7 @@ def compile_writer_package(
         WRITER_CONTEXT_BUDGETS["P0"],
     )
 
-    human_pressure = _extract_markdown_sections(
+    human_pressure = extract_markdown_sections(
         scene,
         (
             "1c. 决策问题",
@@ -194,12 +212,19 @@ def compile_writer_package(
             "7. 场景余波",
         ),
     )
-    memory_parts = []
-    for name in ("characters.md", "canon.md", "worldbuilding.md"):
-        value = _read_if_file(book_dir / "memory" / name)
-        if value:
-            memory_parts.append(value)
-    direct_memory = _bounded("\n\n".join(memory_parts), 220)
+    memory_parts = [
+        canon_context_digest(
+            root,
+            slug,
+            chapter,
+            max_chars=4_000,
+            sections=("P0 硬事实", "P1 活跃叙事"),
+        ),
+        _read_if_file(book_dir / "memory" / "worldbuilding.md"),
+    ]
+    direct_memory = _bounded(
+        "\n\n".join(part for part in memory_parts if part), 220
+    )
     story = _read_if_file(book_dir / "planning" / "story-engine.md")
     promise_lines = [
         line for line in story.splitlines()
@@ -221,7 +246,7 @@ def compile_writer_package(
         + "\n\n"
         + _read_if_file(volume_voice)
     )
-    voice_fingerprint = _extract_markdown_sections(
+    voice_fingerprint = extract_markdown_sections(
         voice_source,
         (
             "叙事距离",

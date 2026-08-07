@@ -32,3 +32,25 @@ def test_texture_analysis_keeps_varied_short_prose_low_risk():
     assert report["risk_level"] == "low"
     assert report["hint"] == ""
     assert report["blocking"] is False
+
+
+def test_repeated_ngrams_catch_two_char_refrain():
+    body = "。".join(
+        [
+            "他沉默了很久",
+            "她沉默着点头",
+            "屋里只剩沉默",
+            "沉默压了下来",
+            "他再次沉默",
+            "沉默没有散开",
+            "她打破沉默",
+            "沉默又回来了",
+        ]
+    )
+
+    report = analyze_literary_texture(body)
+    repeated = report["metrics"]["repeated_ngrams"]
+
+    assert any(
+        item["text"] == "沉默" and item["count"] >= 8 for item in repeated
+    )
