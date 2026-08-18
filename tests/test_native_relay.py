@@ -8,6 +8,7 @@ import json
 
 import pytest
 from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.novel_forge import book_project
@@ -4793,3 +4794,170 @@ def test_lean_writer_retry_after_promotion_routes_to_decision_not_bare_error(
     persisted = relay._load_state("demo")
     assert persisted["phase"] == "decision_required"
     assert persisted["decision_kind"] == "native_role_failed"
+
+
+def test_lean_writer_completion_rejects_subagent_done_envelope(
+    tmp_path: Path,
+):
+    """Adapter defect 1 (archive 2026-08-18): a host subagent completion
+    envelope written over ``draft/正文.md`` is not staged prose; the relay
+    must treat it as a technical transport failure and re-open the Writer
+    action instead of running text gates on the envelope."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    draft = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    envelope = json.dumps(
+        {"state": "done", "output": "正文留在子代理沙盒里"},
+        ensure_ascii=False,
+    )
+    draft.write_text(envelope, encoding="utf-8")
+
+    result = _complete_minimal(relay, "demo")
+
+    assert result.user_state == "running"
+    assert "重试" in result.message
+    state = relay._load_state("demo")
+    assert state["phase"] == "awaiting_writer"
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
+    retry_action = relay.next_action("demo")
+    assert retry_action["role"] == "writer"
+
+
+def test_lean_writer_completion_rejects_native_completion_envelope(
+    tmp_path: Path,
+):
+    """Adapter defect 1 variant: the novel-forge completion payload shape
+    (status/session/operation_handle) must also be rejected as prose."""
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    draft = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    draft.write_text(
+        json.dumps(
+            {
+                "schema": "novel-forge-native-completion/v1",
+                "status": "completed",
+                "session": {"session_id": "forged"},
+                "operation_handle": {
+                    "kind": "native-session",
+                    "value": "forged",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _complete_minimal(relay, "demo")
+
+    assert result.user_state == "running"
+    assert "重试" in result.message
+    assert relay._load_state("demo")["phase"] == "awaiting_writer"
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
+
+
+def test_lean_writer_completion_rejects_pre_dispatch_stale_draft(
+    tmp_path: Path,
+):
+    """Adapter defect 2/6: a staged body whose mtime predates the Writer
+    action dispatch and whose digest equals the pre-dispatch snapshot was
+    never touched by the current Writer session."""
+    import os
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    draft = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    prose = _prose("陈旧正文")
+    draft.write_text(prose, encoding="utf-8")
+    # Body written before the action dispatch: rewind the mtime so the
+    # file looks planted ahead of the Writer session.
+    state = relay._load_state("demo")
+    observation = state["active_call_observation"]
+    dispatched = datetime.fromisoformat(
+        observation["started_at"]
+    ).timestamp()
+    stale = dispatched - 3600.0
+    os.utime(draft, (stale, stale))
+    # The pre-dispatch snapshot was taken before the prose existed, so
+    # simulate the residue case by refreshing the observation digest to
+    # match the planted body.
+    observation["body_before"] = {
+        "sha256": hashlib.sha256(draft.read_bytes()).hexdigest(),
+        "cjk_chars": relay._cjk_char_count(prose),
+        "literary_texture_risk": "low",
+    }
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _complete_minimal(relay, "demo")
+
+    assert result.user_state == "running"
+    assert "重试" in result.message
+    assert relay._load_state("demo")["phase"] == "awaiting_writer"
+    assert not (
+        root / "books/demo/chapters/e01/ch-01/正文.md"
+    ).exists()
+
+
+def test_lean_writer_completion_allows_rewritten_body_with_same_text(
+    tmp_path: Path,
+):
+    """Defect 2 regression guard: a Writer that rewrote the staged body in
+    place (fresh mtime) with text identical to the pre-dispatch snapshot
+    is a legitimate completion and must not be rejected."""
+    import os
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    draft = Path(writer_action["capsule"]["path"]) / "draft/正文.md"
+    prose = _prose("原地重写")
+    draft.write_text(prose, encoding="utf-8")
+    # Simulate a pre-dispatch snapshot that already contained the same
+    # prose, then have the Writer rewrite it (fresh mtime).
+    state = relay._load_state("demo")
+    observation = state["active_call_observation"]
+    observation["body_before"] = {
+        "sha256": hashlib.sha256(draft.read_bytes()).hexdigest(),
+        "cjk_chars": relay._cjk_char_count(prose),
+        "literary_texture_risk": "low",
+    }
+    relay._state_path("demo").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    now = datetime.now(UTC).timestamp()
+    os.utime(draft, (now, now))
+
+    result = _complete_minimal(relay, "demo")
+
+    assert result.message == "正在自动审稿。"
+    assert relay.next_action("demo")["role"] == "blind-reader"

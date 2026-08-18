@@ -3702,6 +3702,95 @@ class NativeWorkflowRelay:
             if finding.severity == "blocking"
         )
 
+    def _adapter_contamination_findings(
+        self,
+        state: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Detect staged bodies that the current Writer session never wrote.
+
+        Two adapter-layer failure shapes (archive 2026-08-18, defects 1/2/6):
+
+        1. The host subagent completion envelope was written over
+           ``draft/正文.md`` when the dispatch used ``output`` pointing at
+           the canonical draft path; the staged body then parses as a
+           lifecycle JSON instead of prose.
+        2. The staged file predates the current Writer action dispatch and
+           its digest still equals the pre-dispatch snapshot, meaning the
+           current Writer session never touched it (stale residue or a
+           pre-planted body).
+
+        Both are reported as technical transport failures so the bounded
+        retry re-opens the Writer action and a fresh Writer dispatched with
+        ``output:false`` can rewrite the body from its own session.
+        """
+        try:
+            staged_body = self._staged_body_path(state)
+        except WorkflowError:
+            return ()
+        try:
+            raw = staged_body.read_bytes()
+        except OSError:
+            return ()
+        text = raw.decode("utf-8-sig", errors="replace").strip()
+        if text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                state_value = str(parsed.get("state") or "").strip()
+                status_value = str(parsed.get("status") or "").strip()
+                if (
+                    state_value in {"done", "error"}
+                    or (
+                        status_value == "completed"
+                        and "session" in parsed
+                    )
+                    or "operation_handle" in parsed
+                ):
+                    return (
+                        "暂存正文是宿主子代理完成回执而不是正文"
+                        "（派发 Writer 时 output 参数必须保持 false，"
+                        "不得指向 draft/正文.md）",
+                    )
+        observation = state.get("active_call_observation")
+        started_at = (
+            str(observation.get("started_at") or "").strip()
+            if isinstance(observation, Mapping)
+            else ""
+        )
+        if not started_at:
+            return ()
+        try:
+            dispatched = datetime.fromisoformat(started_at).timestamp()
+        except ValueError:
+            return ()
+        try:
+            mtime = staged_body.stat().st_mtime
+        except OSError:
+            return ()
+        if mtime >= dispatched - 5.0:
+            return ()
+        body_before = (
+            observation.get("body_before")
+            if isinstance(observation, Mapping)
+            else None
+        )
+        before_sha = (
+            str(body_before.get("sha256") or "").strip()
+            if isinstance(body_before, Mapping)
+            else ""
+        )
+        if before_sha and hashlib.sha256(raw).hexdigest() != before_sha:
+            # Content changed despite the old mtime; the digest no longer
+            # matches the pre-dispatch snapshot, so do not treat the file
+            # as untouched residue.
+            return ()
+        return (
+            "暂存正文的修改时间早于本次 Writer 动作签发时间且内容"
+            "与派发前一致，文件不是本次 Writer 会话产出",
+        )
+
     def _staged_hard_gate_findings(
         self,
         state: dict[str, Any],
@@ -3882,6 +3971,13 @@ class NativeWorkflowRelay:
         prepared = state.get("capsule")
         if not isinstance(prepared, dict):
             raise WorkflowError("Writer 动作缺少 Capsule 绑定。")
+        adapter_findings = self._adapter_contamination_findings(state)
+        if adapter_findings:
+            raise WorkflowError(
+                "；".join(adapter_findings)
+                + "。恢复：以 output:false 重新派发 Writer 由其重写正文；"
+                "Lead 不得亲手写 draft/正文.md。"
+            )
         if not self.strict_audit:
             surface_findings = self._capsule_surface_findings(prepared)
             if not surface_findings:

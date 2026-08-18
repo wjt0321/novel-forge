@@ -278,6 +278,27 @@
         "guardian_file_count": 9
       },
       "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded."
+    },
+    {
+      "sample_id": "failure-lean-sandbox-redirect-2026-08-18-05",
+      "category": "failure",
+      "label_basis": "Lead wrote draft/正文.md to recover Worker sandbox output that the subagent output mechanism overwrote with completion JSON; workflow stalled at awaiting_writer; no formal chapter produced",
+      "workflow_interpretation": "Workflow execution was incomplete because the host subagent system did not propagate the Writer session's writes back to the parent working directory, and the subagent `output` parameter consumed the canonical draft path as its completion artifact slot; recovery required Lead-level touch of draft/正文.md, which by project rule blocks formal_ready permanently for this chapter. This labels the workflow defect, not the prose.",
+      "aggregate_snapshot": {
+        "book_file_count": 49,
+        "book_byte_count": 210044,
+        "formal_chapter_count": 0,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "awaiting_writer": 1
+        },
+        "evidence_file_count": 0,
+        "staging_file_count": 6,
+        "local_git_present": true,
+        "local_git_commit_count": 1,
+        "guardian_file_count": 3
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded."
     }
   ],
   "capture_history": [
@@ -294,6 +315,13 @@
       "external_local_git_directories": 3,
       "external_guardian_directories": 4,
       "note": "Latest Lean attempt plus one unclassified active project were reduced to aggregates; stale unmapped local support directories were also removed."
+    },
+    {
+      "captured_on": "2026-08-18",
+      "book_projects": 1,
+      "external_local_git_directories": 1,
+      "external_guardian_directories": 1,
+      "note": "Single-book cleanup after a Lean Native workflow test run; the Writer subagent produced compliant prose in its sandbox but the host subagent output mechanism overwrote the canonical draft path with completion JSON, forcing Lead-level recovery that by project rule disqualifies formal_ready."
     }
   ]
 }

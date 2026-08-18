@@ -39,6 +39,14 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 成本观测不进入角色上下文、不改变路由；未知 token/耗时保持 null，不能因此重做正文或审稿。
 
+## 宿主子代理派发合同
+
+- 派发到 pi-subagent 类宿主时 `output` 参数必须保持 `false`（或指向非 canonical 临时路径）；`output` 指向 `draft/正文.md` 会被宿主当作完成回执槽位覆写，complete-role 会把该文件判为运输污染并重开 Writer。
+- workflowScript 的长 task 文本用字符串数组 `.join('\n')` 构造；不要在反引号模板字面量里内嵌带引号的 shell 命令。
+- 角色子代理只写动作允许路径；禁止运行 pytest、lint、git 或 canonical 产物路径之外的任何命令。
+- complete-role 提示正文不是本次 Writer 产出时：用 `output:false` 派发新 Writer 读 capsule 重写；前一位 Writer 的 transcript 是恢复来源，Lead 不得亲手写 `draft/正文.md`。
+- Windows 上 stop 子代理后 `.local-book-git` 可能残留锁定句柄；物理删除失败时先重命名 canonical 路径，`docs/examples/book-workflow-samples/` 的脱敏聚合目录是持久记录。
+
 - `next-action <slug>` 默认是简明角色交接卡，不显示 JSON、哈希、Session 或 Guardian。只有宿主程序集成使用 `--json`。
 - 每次只执行卡片上的一个角色。创建角色后必须使用宿主官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；created、accepted、progress、idle、available 或文件稳定都不算完成。
 - 所有角色（Writer/Blind Reader/Chapter Editor/Patch）一律经 Agent 子代理等独立会话执行；Lead 不得亲自写任何角色文件，包括 `draft/正文.md`、`local-patch/replacements.json` 和各 `result_file`。Lead 直接写出角色结果的章节按 `exploration` 处理，永远不能 formal ready。

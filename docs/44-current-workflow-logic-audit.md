@@ -76,6 +76,7 @@ Editor 都从零开始计算运输重试。文学结论的第二版仍有 MUST �
 | 正文硬门失败（如不足 5000 CJK） | Writer 完成时先对暂存正文跑正式文本门禁，进入有界表面修订轮；耗尽后停在可授权的 `surface_revision_required` 决策 | 带缺陷正文进入双审/晋升后死锁 |
 | 晋升/收尾阶段 BookProjectError | 路由为可授权的 `hard_gate_failed` 决策（一次集中修订 + 完整双审，或停止） | 裸抛到 CLI 顶部，或耗尽重试停在不可授权的 `native_role_failed` |
 | 章节 Git checkpoint 失败 | 停在 `git_checkpoint_failed` 决策；`authorize-revision` 保留已晋升草稿与双审证据，只重试 ready/checkpoint 尾段 | 重放已完成的双审与序列推进，或除 stop 外无路可走 |
+| 暂存正文是宿主完成回执，或 mtime 早于本次 Writer 派发且摘要与派发前一致 | 判技术运输失败并有界重试，重开 Writer；以 `output:false` 派发新 Writer 重写 | 把回执 JSON 当正文跑文本门禁，或 Lead 亲手改写正文 |
 | 门禁失败前 capsule 已 imported | `authorize-revision` 明确拒绝不安全的暂存修订重放并提示停止 | 静默空转的重试循环 |
 | 双审结论未通过 record_review 同源校验 | 晋升前先用 `review_outcome_preflight_errors` 校验，失败路由为作者决策且无正式章节/Generation/Receipt/checkpoint | 先晋升后校验，失败时正式副作用已落盘 |
 
@@ -268,3 +269,12 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 2. 动作快照 zip 收敛：每次动作签发与完成的哈希比对（防改 `app/`、`tools/`、`tests/` 控制面）保持不变；字节备份 zip 只在 3 类节点生成——章节开始（首次签发）、晋升（ready）、进入作者决策（decision_required）。中间动作只写/更新哈希快照，不再打包 zip。
 3. 章节开始由 state 内 `chapter_zip_issued` 标记判定（每章首签打一次，重启后不重打）；晋升与决策由完成观测的 `workflow_effect`（promotion/author_decision）驱动 refresh 打 zip。strict_audit 与 lean 共用同一代码路径。
 4. 中间动作篡改仍按哈希比对检出并路由角色重试。字节恢复语义：当前动作自带 zip（章节开始、晋升、决策节点）或可回退到保留的章首基线 zip 时执行；lean 控制面层（`app/`/`tools/`/`tests/` 哈希）的中间动作仅检出不恢复字节。章首 zip 作为整章字节基线保留（章首动作完成时不再被自身消耗），由 `stop` 或下一章签发作废。并行双审下两角色共用观测上下文导致的 write-once 观测冲突不再阻断完整性 refresh，zip/快照照常写入。
+
+## 2026-08-18：宿主适配层正文污染检测
+
+`complete-role` 接受 Writer 完成前新增两类暂存正文来源校验（archive/history.md 2026-08-18 缺陷 1/2/6）：
+
+1. 暂存正文可解析为宿主子代理完成回执（`state: done|error`、`status: completed` 且带 `session`，或带 `operation_handle`）时，判为适配层运输污染；
+2. 暂存正文 mtime 早于本次 Writer 动作签发时间、且摘要与派发前快照一致时，判为非本次 Writer 会话产出。
+
+两类都按技术运输失败走有界重试并重开 Writer；恢复路径是以 `output:false` 重新派发 Writer 由其重写正文，Lead 不得亲手写 `draft/正文.md`。内容相对派发前快照已变化但 mtime 异常时放行，避免误伤原地重写的合规正文。

@@ -2,17 +2,16 @@
   "schema": "novel-forge-book-workflow-cleanup/v2",
   "completed_on": "2026-07-31",
   "removed": {
-    "book_projects": 12,
-    "external_local_git_directories": 12,
-    "external_guardian_directories": 15
+    "book_projects": 13,
+    "external_local_git_directories": 13,
+    "external_guardian_directories": 16
   },
   "latest_run": {
-    "completed_on": "2026-07-31",
-    "book_projects": 2,
-    "external_local_git_directories": 3,
-    "external_guardian_directories": 4,
-    "unmapped_local_git_directories": 1,
-    "unmapped_guardian_directories": 2
+    "completed_on": "2026-08-18",
+    "book_projects": 1,
+    "external_local_git_directories": 1,
+    "external_guardian_directories": 1,
+    "note": "Single Lean Native workflow test cleanup; subagent sandbox output did not propagate back, and Lead had to touch the canonical draft path during recovery."
   },
   "run_history": [
     {
@@ -26,6 +25,13 @@
       "book_projects": 2,
       "external_local_git_directories": 3,
       "external_guardian_directories": 4
+    },
+    {
+      "completed_on": "2026-08-18",
+      "book_projects": 1,
+      "external_local_git_directories": 1,
+      "external_guardian_directories": 1,
+      "note": "Single Lean Native workflow test cleanup; subagent sandbox output did not propagate back, and Lead had to touch the canonical draft path during recovery."
     }
   ],
   "verified_remaining": {
