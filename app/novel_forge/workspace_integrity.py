@@ -20,6 +20,10 @@ _IGNORED_DIRECTORY_NAMES = frozenset(
         "__pycache__",
     }
 )
+# Cheap sha-level probes into .git for strict-audit snapshots: refs, HEAD,
+# config, and the index detect branch resets, checkouts, and config edits
+# without hashing the (potentially huge) object database.
+_GIT_META_FILES = ("HEAD", "ORIG_HEAD", "config", "index", "packed-refs")
 _T = TypeVar("_T")
 
 
@@ -44,8 +48,38 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def snapshot_workspace(root: Path) -> dict[str, str]:
-    """Snapshot every project path creative roles are forbidden to mutate."""
+def _snapshot_git_meta(root: Path, snapshot: dict[str, str]) -> None:
+    """Record hash markers for safety-relevant .git metadata files."""
+    git_dir = root / ".git"
+    if not git_dir.is_dir():
+        return
+    for name in _GIT_META_FILES:
+        path = git_dir / name
+        if path.is_file() and not path.is_symlink():
+            snapshot[f".git/{name}"] = f"file:{_file_sha256(path)}"
+    refs_dir = git_dir / "refs"
+    if refs_dir.is_dir():
+        for current, _, files in os.walk(refs_dir):
+            for name in sorted(files):
+                path = Path(current) / name
+                if path.is_symlink():
+                    continue
+                relative = path.relative_to(root).as_posix()
+                snapshot[relative] = f"file:{_file_sha256(path)}"
+
+
+def is_git_meta_path(relative: str) -> bool:
+    """True when a snapshot key refers to .git metadata."""
+    return relative.startswith(".git/")
+
+
+def snapshot_workspace(root: Path, git_meta: bool = False) -> dict[str, str]:
+    """Snapshot every project path creative roles are forbidden to mutate.
+
+    With ``git_meta`` the snapshot additionally covers safety-relevant
+    .git metadata (refs/HEAD/config/index); the object database stays
+    excluded to keep the cost bounded.
+    """
     root = Path(root).resolve()
     if not root.is_dir():
         return {}
@@ -71,6 +105,8 @@ def snapshot_workspace(root: Path) -> dict[str, str]:
                 snapshot[relative] = f"symlink:{os.readlink(path)}"
             else:
                 snapshot[relative] = f"file:{_file_sha256(path)}"
+    if git_meta:
+        _snapshot_git_meta(root, snapshot)
     return snapshot
 
 

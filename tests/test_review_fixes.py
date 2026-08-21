@@ -287,6 +287,143 @@ def test_original_lock_timeout_constant_is_positive():
 
 
 # ---------------------------------------------------------------------------
+# strict audit: .git metadata is now covered by the workspace snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_workspace_git_meta_covers_refs_and_head(tmp_path: Path):
+    from app.novel_forge.workspace_integrity import (
+        is_git_meta_path,
+        snapshot_workspace,
+        workspace_delta,
+    )
+
+    (tmp_path / ".git" / "refs" / "heads").mkdir(parents=True)
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (tmp_path / ".git" / "config").write_text("[core]\n")
+    (tmp_path / ".git" / "refs" / "heads" / "main").write_text("a" * 40)
+
+    before = snapshot_workspace(tmp_path, git_meta=True)
+    assert ".git/HEAD" in before
+    assert ".git/config" in before
+    assert ".git/refs/heads/main" in before
+    # Default stays backwards compatible: no .git entries.
+    assert not any(
+        is_git_meta_path(key) for key in snapshot_workspace(tmp_path)
+    )
+
+    (tmp_path / ".git" / "refs" / "heads" / "main").write_text("b" * 40)
+    delta = workspace_delta(
+        before, snapshot_workspace(tmp_path, git_meta=True)
+    )
+    assert delta.modified == (".git/refs/heads/main",)
+
+
+def test_strict_relay_flags_git_ref_tampering_as_mutation(tmp_path: Path):
+    relay = NativeWorkflowRelay(
+        tmp_path / "repo",
+        capsule_root=tmp_path / "capsules",
+        strict_audit=True,
+    )
+    git_dir = tmp_path / "repo" / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    heads = git_dir / "refs" / "heads"
+    heads.mkdir(parents=True)
+    (heads / "main").write_text("a" * 40 + "\n", encoding="utf-8")
+
+    relay.start("demo", _request(), chapter=1)
+    relay.next_action("demo")
+
+    # Simulate a role resetting a branch behind Python's back.
+    (heads / "main").write_text("b" * 40 + "\n", encoding="utf-8")
+
+    result = relay.complete_role("demo", {"role_result": {"role": "writer"}})
+
+    # The tamper must be detected and routed to technical recovery, not
+    # silently accepted.
+    assert isinstance(result, WorkflowResult)
+    state = relay._load_state("demo")
+    assert state["phase"] != "complete"
+    assert int(state.get("technical_retry_count") or 0) >= 1
+
+
+# ---------------------------------------------------------------------------
+# observation attribution: each parallel review role keeps its own context
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_review_observations_are_attributed_per_role(
+    tmp_path: Path,
+):
+    from dataclasses import asdict
+
+    from app.novel_forge.workflow import SessionIdentity
+    from tests.test_native_relay import (
+        ScriptedBackend,
+        _complete_minimal,
+        _review_capsule_context,
+        _review_capsule_instructions,
+    )
+    from tests.test_workflow import _pass_reviews, _prose
+
+    root = tmp_path / "repo"
+    relay = NativeWorkflowRelay(
+        root,
+        capsule_root=tmp_path / "capsules",
+        strict_audit=False,
+    )
+    backend = ScriptedBackend([], [_pass_reviews()])
+    relay.start("demo", _request(), chapter=1)
+    writer_action = relay.next_action("demo")
+    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("观测归属"),
+        encoding="utf-8",
+    )
+    _complete_minimal(relay, "demo")
+
+    blind_action = relay.next_action("demo")
+    assert blind_action["role"] == "blind-reader"
+    editor_card = relay._role_action("demo", "chapter-editor")
+    state = relay._load_state("demo")
+    observations = state["role_call_observations"]
+    assert set(observations) == {"blind-reader", "chapter-editor"}
+    assert observations["blind-reader"]["action_id"] == blind_action["action_id"]
+    assert observations["chapter-editor"]["action_id"] == editor_card["action_id"]
+    assert (
+        observations["blind-reader"]["action_id"]
+        != observations["chapter-editor"]["action_id"]
+    )
+
+    blind_session = SessionIdentity(
+        session_id="native-blind-01",
+        session_instance_id="blind-instance-01",
+        provider="blind-provider",
+        model="blind-model",
+        agent_harness="native-host",
+        role="blind-reader",
+    )
+    blind = backend.run_review(
+        blind_session,
+        role="blind-reader",
+        context=_review_capsule_context(blind_action),
+        instructions=_review_capsule_instructions(blind_action),
+        reasoning_effort="medium",
+    )
+    Path(blind_action["result_file"]).write_text(
+        json.dumps(asdict(blind), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    _complete_minimal(relay, "demo", role="blind-reader")
+
+    # The blind reader's telemetry must land under its OWN action id, not
+    # under the chapter-editor card that was written last.
+    observations_dir = root / ".local-guardian/demo/workflow-observations/ch01"
+    recorded = {path.name for path in observations_dir.glob("*.json")}
+    assert f"{blind_action['action_id']}.json" in recorded
+
+
+# ---------------------------------------------------------------------------
 # #8: the local-patch path must re-run the full-chapter hard gates
 # ---------------------------------------------------------------------------
 

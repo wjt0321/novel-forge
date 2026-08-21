@@ -67,6 +67,22 @@ class ChapterRepository:
         return cur.fetchall()
 
     @staticmethod
+    def counts_by_book(conn: sqlite3.Connection) -> dict[int, dict[str, int]]:
+        """Per-book chapter totals and approved counts in one query."""
+        cur = conn.execute(
+            """SELECT book_id,
+                      COUNT(*) AS total,
+                      COALESCE(SUM(CASE WHEN state = 'approved' THEN 1 ELSE 0 END), 0)
+                          AS approved
+               FROM chapters
+               GROUP BY book_id"""
+        )
+        return {
+            row["book_id"]: {"total": row["total"], "approved": row["approved"]}
+            for row in cur.fetchall()
+        }
+
+    @staticmethod
     def update_current_revision(
         conn: sqlite3.Connection,
         chapter_id: int,
@@ -133,6 +149,21 @@ class RevisionRepository:
         )
         return cur.fetchall()
 
+    @staticmethod
+    def revision_numbers(
+        conn: sqlite3.Connection, revision_ids: list[int]
+    ) -> dict[int, int]:
+        """Map revision ids to their numbers in one query."""
+        ids = [rid for rid in revision_ids if rid is not None]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        cur = conn.execute(
+            f"SELECT id, revision_number FROM revisions WHERE id IN ({placeholders})",
+            ids,
+        )
+        return {row["id"]: row["revision_number"] for row in cur.fetchall()}
+
 
 class FindingRepository:
     @staticmethod
@@ -170,6 +201,29 @@ class FindingRepository:
         )
         for row in cur.fetchall():
             counts[row["severity"]] = row["cnt"]
+        return counts
+
+    @staticmethod
+    def lint_counts_for_book(
+        conn: sqlite3.Connection, book_id: int
+    ) -> dict[int, dict[str, int]]:
+        """Unresolved lint counts grouped by revision for one book."""
+        cur = conn.execute(
+            """SELECT lf.revision_id AS rid, lf.severity AS severity,
+                      COUNT(*) AS cnt
+               FROM lint_findings lf
+               JOIN revisions r ON r.id = lf.revision_id
+               JOIN chapters c ON c.id = r.chapter_id
+               WHERE c.book_id = ? AND lf.resolved = 0
+               GROUP BY lf.revision_id, lf.severity""",
+            (book_id,),
+        )
+        counts: dict[int, dict[str, int]] = {}
+        for row in cur.fetchall():
+            per_revision = counts.setdefault(
+                row["rid"], {"blocking": 0, "advisory": 0}
+            )
+            per_revision[row["severity"]] = row["cnt"]
         return counts
 
     @staticmethod
@@ -274,6 +328,28 @@ class FindingRepository:
         )
         for row in cur.fetchall():
             counts[row["severity"]] = row["cnt"]
+        return counts
+
+    @staticmethod
+    def open_review_counts_for_book(
+        conn: sqlite3.Connection, book_id: int
+    ) -> dict[int, dict[str, int]]:
+        """Unresolved review counts grouped by revision for one book."""
+        cur = conn.execute(
+            """SELECT rf.revision_id AS rid, rf.severity AS severity,
+                      COUNT(*) AS cnt
+               FROM review_findings rf
+               JOIN chapters c ON c.id = rf.chapter_id
+               WHERE c.book_id = ? AND rf.resolved = 0
+               GROUP BY rf.revision_id, rf.severity""",
+            (book_id,),
+        )
+        counts: dict[int, dict[str, int]] = {}
+        for row in cur.fetchall():
+            per_revision = counts.setdefault(
+                row["rid"], {"S1": 0, "S2": 0, "S3": 0, "S4": 0}
+            )
+            per_revision[row["severity"]] = row["cnt"]
         return counts
 
     @staticmethod

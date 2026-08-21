@@ -296,3 +296,10 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 10. 规则单源收敛：CJK 计数统一到 planning_spec.count_cjk_chars（含 U+3007/Ext-A/兼容区），门禁、lint 计数、密度分母、状态展示共用；CLAUDE.md 模板的 5000 CJK 与场景包 0b 标题改由 planning_spec 常量注入；删除 project_templates 中 399 行无引用的 agent 定义死代码。
 11. legacy 链修复：export_book 的 pandoc 子进程移出数据库事务（转换失败不再出现磁盘有产物而 exports 表无痕）；init_db 错误路径关闭连接并备份前 WAL checkpoint；CLI 捕获 schema 版本与 sqlite 错误；audit limit 下界校验。
 12. 低危批次：证据层容忍单条损坏记录并在 evidence-status 输出 invalid_records；memory fact.valid_from/promise.planted_chapter 拒绝 null；review capsule 路径拒绝反斜杠并校验 resolve 包含关系；book_git 用 shutil.which 解析 git 绝对路径；book_project 状态写入原子化；capsule 重置不跟随符号链接；深夜 N 点时间排序回绕；序列完成判定要求非空 run_id。
+
+## 2026-08-21（二）：审查遗留项收尾
+
+1. 死代码清理：_complete_review 中 strict 分支后不可达的 lean patch 派发块、两处 strict-only 路径上的恒死三元式（writer-planning 角色卡）、恒真 elif 均已移除；顺带修复 _complete_review 内遗漏的 role_result 非 dict 解析加固。
+2. strict_audit 下 .git 元数据纳入快照：snapshot_workspace 新增 git_meta 参数，覆盖 HEAD/ORIG_HEAD/config/index/packed-refs 与 refs/** 的 sha 标记（不含对象库，成本有界）。.git 变更只检出并路由作者决定，不做自动删除或恢复（避免程序化改 .git）；字节备份 zip 仍排除 .git。
+3. 双审观测按角色归属：_write_action 为 blind-reader / chapter-editor 各存独立观测上下文（state.role_call_observations），complete-role 按 completion 角色取对应上下文；并行双审下先完成者的遥测不再记到后签发卡片名下，也不再因 write-once 冲突被丢弃。
+4. legacy 链 N+1 查询收敛：list_books 用单条 GROUP BY 取每书章节数与 approved 数；list_chapters 以三条批量聚合替代每章三次查询；API get_chapter 改用单连接的 chapter_detail（原先一次请求开约六个连接）。响应形状不变。

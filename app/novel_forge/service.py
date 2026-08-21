@@ -40,6 +40,7 @@ from app.novel_forge.repository import (
     BookRepository,
     ChapterRepository,
     ExportRepository,
+    FactRepository,
     FindingRepository,
     RevisionRepository,
     SceneContractRepository,
@@ -440,17 +441,19 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
     def list_books(self) -> list[BookSummary]:
         with self._conn() as conn:
             rows = BookRepository.list(conn)
+            counts = ChapterRepository.counts_by_book(conn)
             summaries = []
             for row in rows:
-                chapters = ChapterRepository.list_by_book(conn, row["id"])
-                approved = sum(1 for c in chapters if c["state"] == "approved")
+                per_book = counts.get(
+                    row["id"], {"total": 0, "approved": 0}
+                )
                 summaries.append(
                     BookSummary(
                         id=row["id"],
                         slug=row["slug"],
                         title=row["title"],
-                        chapter_count=len(chapters),
-                        approved_count=approved,
+                        chapter_count=per_book["total"],
+                        approved_count=per_book["approved"],
                         created_at=row["created_at"],
                     )
                 )
@@ -546,18 +549,26 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
             if book is None:
                 raise NovelForgeError(f"Book not found: {slug}")
             rows = ChapterRepository.list_by_book(conn, book["id"])
+            # Batched lookups instead of three queries per chapter.
+            revision_ids = [row["current_revision_id"] for row in rows]
+            lint_by_revision = FindingRepository.lint_counts_for_book(
+                conn, book["id"]
+            )
+            review_by_revision = FindingRepository.open_review_counts_for_book(
+                conn, book["id"]
+            )
+            revision_numbers = RevisionRepository.revision_numbers(
+                conn, revision_ids
+            )
             summaries = []
             for row in rows:
                 rev_id = row["current_revision_id"]
-                lint_counts = FindingRepository.lint_counts_for_revision(conn, rev_id)
-                review_counts = FindingRepository.open_review_counts_for_revision(
-                    conn, rev_id
+                lint_counts = lint_by_revision.get(
+                    rev_id, {"blocking": 0, "advisory": 0}
                 )
-                rev_row = None
-                if row["current_revision_id"]:
-                    rev_row = RevisionRepository.get_by_id(
-                        conn, row["current_revision_id"]
-                    )
+                review_counts = review_by_revision.get(
+                    rev_id, {"S1": 0, "S2": 0, "S3": 0, "S4": 0}
+                )
                 summaries.append(
                     ChapterSummary(
                         id=row["id"],
@@ -565,10 +576,10 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                         number=row["number"],
                         title=row["title"],
                         state=ChapterState(row["state"]),
-                        current_revision_id=row["current_revision_id"],
-                        current_revision_number=rev_row["revision_number"]
-                        if rev_row
-                        else None,
+                        current_revision_id=rev_id,
+                        current_revision_number=(
+                            revision_numbers.get(rev_id) if rev_id else None
+                        ),
                         open_s1=review_counts["S1"],
                         open_s2=review_counts["S2"],
                         open_s3=review_counts["S3"],
@@ -1050,4 +1061,69 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                 "S2": review_counts["S2"],
                 "S3": review_counts["S3"],
                 "S4": review_counts["S4"],
+            }
+
+    def chapter_detail(self, slug: str, number: int) -> dict:
+        """One-connection variant of the API chapter payload.
+
+        Returns the same shape the API exposes (no prose body); replaces
+        five separate service calls that each opened their own connection.
+        """
+        with self._conn() as conn:
+            book = BookRepository.get_by_slug(conn, slug)
+            if book is None:
+                raise NovelForgeError(f"Book not found: {slug}")
+            row = ChapterRepository.get_by_book_and_number(conn, book["id"], number)
+            if row is None:
+                raise NovelForgeError(f"Chapter {number} not found in book {slug}.")
+            data = dict(row)
+            current_revision = None
+            rev_id = data.get("current_revision_id")
+            if rev_id:
+                rev = RevisionRepository.get_by_id(conn, rev_id)
+                if rev is not None:
+                    data["current_revision_number"] = rev["revision_number"]
+                    current_revision = {
+                        "id": rev["id"],
+                        "number": rev["revision_number"],
+                        "hash": rev["content_hash"],
+                        "file_path": rev["file_path"],
+                    }
+            else:
+                data["current_revision_number"] = None
+            lint_counts = FindingRepository.lint_counts_for_revision(conn, rev_id)
+            review_counts = FindingRepository.open_review_counts_for_revision(
+                conn, rev_id
+            )
+            canon_rows = FactRepository.list_canon_by_chapter(conn, row["id"])
+            canon_facts = [
+                {
+                    "kind": r["kind"],
+                    "subject": r["subject"],
+                    "predicate": r["predicate"],
+                    "object": r["object"],
+                    "evidence": r["evidence"],
+                }
+                for r in canon_rows
+            ]
+            return {
+                "id": data["id"],
+                "book_id": data["book_id"],
+                "number": data["number"],
+                "title": data["title"],
+                "state": ChapterState(data["state"]).value,
+                "current_revision": current_revision,
+                "current_revision_id": data.get("current_revision_id"),
+                "current_revision_number": data.get("current_revision_number"),
+                "current_hash": data.get("current_hash"),
+                "finding_counts": {
+                    "blocking": lint_counts["blocking"],
+                    "advisory": lint_counts["advisory"],
+                    "S1": review_counts["S1"],
+                    "S2": review_counts["S2"],
+                    "S3": review_counts["S3"],
+                    "S4": review_counts["S4"],
+                },
+                "canon_facts": canon_facts,
+                # No full body returned.
             }

@@ -56,6 +56,7 @@ from .writer_prompt import WriterPromptError
 from .workspace_integrity import (
     create_workspace_backup,
     create_workspace_backup_from_snapshot,
+    is_git_meta_path,
     remove_created_paths,
     restore_workspace_paths,
     snapshot_workspace,
@@ -156,6 +157,15 @@ class _StateFileLock:
 def _chapter_target_path(chapter: int) -> str:
     """Return the canonical final-prose path for one chapter."""
     return f"chapters/e{chapter:02d}/ch-{chapter:02d}/正文.md"
+
+
+def _split_git_meta(
+    paths: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split path tuples into .git-metadata and everything else."""
+    git = tuple(path for path in paths if is_git_meta_path(path))
+    normal = tuple(path for path in paths if not is_git_meta_path(path))
+    return git, normal
 
 
 LEAN_PROTECTED_CONTROL_PLANE_PATHS = (
@@ -788,7 +798,7 @@ class NativeWorkflowRelay:
         integrity_root = self._integrity_root(slug)
         _atomic_json(
             self._snapshot_path(slug, action_id),
-            snapshot_workspace(integrity_root),
+            snapshot_workspace(integrity_root, git_meta=self.strict_audit),
         )
         if zip_required:
             create_workspace_backup(
@@ -1646,16 +1656,35 @@ class NativeWorkflowRelay:
                     "Lead 禁止亲自写正文；必须委派 Writer 角色。"
                     "Lead 等待正文落盘后执行 complete-role；无需填写技术表单。"
                 )
-        active_observation = state.get("active_call_observation")
-        if (
-            not isinstance(active_observation, dict)
-            or active_observation.get("action_id") != action["action_id"]
-        ):
-            state["active_call_observation"] = self._call_observation_context(
-                slug,
-                state,
-                action,
+        action_role = str(action.get("role") or "")
+        if action_role in {"blind-reader", "chapter-editor"}:
+            # Parallel dual review issues two cards back to back; a single
+            # shared observation pointer would attribute both roles' calls
+            # to whichever card was written last (and drop one record to
+            # the write-once collision). Store one context per role.
+            role_observations = state.get("role_call_observations")
+            role_observations = (
+                role_observations if isinstance(role_observations, dict) else {}
             )
+            existing = role_observations.get(action_role)
+            if (
+                not isinstance(existing, dict)
+                or existing.get("action_id") != action["action_id"]
+            ):
+                role_observations[action_role] = (
+                    self._call_observation_context(slug, state, action)
+                )
+                state["role_call_observations"] = role_observations
+            state["active_call_observation"] = role_observations[action_role]
+        else:
+            active_observation = state.get("active_call_observation")
+            if (
+                not isinstance(active_observation, dict)
+                or active_observation.get("action_id") != action["action_id"]
+            ):
+                state["active_call_observation"] = (
+                    self._call_observation_context(slug, state, action)
+                )
         action["display_state"] = display_workflow_state(
             str(state.get("phase") or ""),
             patch_round=int(state.get("patch_round") or 0),
@@ -1688,7 +1717,7 @@ class NativeWorkflowRelay:
         integrity_root = self._integrity_root(slug)
         _atomic_json(
             self._snapshot_path(slug, action["action_id"]),
-            snapshot_workspace(integrity_root),
+            snapshot_workspace(integrity_root, git_meta=self.strict_audit),
         )
         if is_chapter_start:
             create_workspace_backup(
@@ -1837,7 +1866,10 @@ class NativeWorkflowRelay:
         if not isinstance(before, dict):
             raise WorkflowError("原生角色仓库快照格式无效。")
         integrity_root = self._integrity_root(slug)
-        delta = workspace_delta(before, snapshot_workspace(integrity_root))
+        delta = workspace_delta(
+            before,
+            snapshot_workspace(integrity_root, git_meta=self.strict_audit),
+        )
         try:
             action_path = (
                 self._role_action_path(slug, role)
@@ -1924,6 +1956,12 @@ class NativeWorkflowRelay:
         unexpected_deleted = tuple(
             path for path in delta.deleted if path not in permitted_delta
         )
+        # .git metadata changes (strict audit) are flagged but never
+        # auto-removed or auto-restored: touching .git programmatically is
+        # riskier than leaving the evidence for the author decision.
+        git_created, normal_created = _split_git_meta(unexpected_created)
+        git_modified, normal_modified = _split_git_meta(unexpected_modified)
+        git_deleted, normal_deleted = _split_git_meta(unexpected_deleted)
         backup_path = self._backup_path(slug, action_id)
         restore_source = backup_path
         if not restore_source.is_file() and chapter_zip_action_id and (
@@ -1935,48 +1973,64 @@ class NativeWorkflowRelay:
             candidate = self._backup_path(slug, chapter_zip_action_id)
             if candidate.is_file():
                 restore_source = candidate
-        if unexpected_created or unexpected_modified or unexpected_deleted:
-            remove_created_paths(integrity_root, unexpected_created)
-            if restore_source.is_file():
-                restore_workspace_paths(
-                    integrity_root,
-                    restore_source,
-                    before,
-                    unexpected_modified + unexpected_deleted,
-                )
-                restored = workspace_delta(
-                    before,
-                    snapshot_workspace(integrity_root),
-                )
-                restored_unexpected = (
-                    tuple(
-                        path
-                        for path in restored.created
-                        if path not in permitted_delta
+        if (
+            normal_created
+            or normal_modified
+            or normal_deleted
+            or git_created
+            or git_modified
+            or git_deleted
+        ):
+            if normal_created or normal_modified or normal_deleted:
+                remove_created_paths(integrity_root, normal_created)
+                if restore_source.is_file():
+                    restore_workspace_paths(
+                        integrity_root,
+                        restore_source,
+                        before,
+                        normal_modified + normal_deleted,
                     )
-                    + tuple(
-                        path
-                        for path in restored.modified
-                        if path not in permitted_delta
+                    restored = workspace_delta(
+                        before,
+                        snapshot_workspace(
+                            integrity_root, git_meta=self.strict_audit
+                        ),
                     )
-                    + tuple(
-                        path
-                        for path in restored.deleted
-                        if path not in permitted_delta
+                    restored_unexpected = (
+                        tuple(
+                            path
+                            for path in restored.created
+                            if path not in permitted_delta
+                        )
+                        + tuple(
+                            path
+                            for path in restored.modified
+                            if path not in permitted_delta
+                        )
+                        + tuple(
+                            path
+                            for path in restored.deleted
+                            if path not in permitted_delta
+                        )
                     )
-                )
-                if restored_unexpected:
-                    raise WorkflowError("项目控制面自动恢复失败。")
+                    if restored_unexpected:
+                        raise WorkflowError("项目控制面自动恢复失败。")
             # Keep the snapshot/backup on failure: they are the forensic
             # record of what the role actually changed, and the sibling
             # parallel reviewer may still need the shared baseline. Stale
             # files are keyed by action_id and never re-read after the
             # action is retired.
-            reason = "control_plane_mutation" if (
-                control_plane_mutated
-                or unexpected_modified
-                or unexpected_deleted
-            ) else "unexpected_project_artifact"
+            reason = (
+                "control_plane_mutation"
+                if (
+                    control_plane_mutated
+                    or normal_modified
+                    or normal_deleted
+                    or git_modified
+                    or git_deleted
+                )
+                else "unexpected_project_artifact"
+            )
             raise NativeWorkspaceMutationError(
                 reason,
                 detail=self._workspace_mutation_detail(allowed, action),
@@ -2337,14 +2391,13 @@ class NativeWorkflowRelay:
                 sequence_id=sequence_id,
             )
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
+        # Strict-audit only path (the lean branch above returned): the
+        # planning role card is always writer-planning here.
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": action_id,
             "kind": "run_role",
-            "role": (
-                "writer-planning" if self.strict_audit else "writer"
-            ),
-            **({"stage": "planning"} if not self.strict_audit else {}),
+            "role": "writer-planning",
             "session": {
                 "mode": "new",
                 "must_be_independent": True,
@@ -2676,20 +2729,14 @@ class NativeWorkflowRelay:
                     sequence_id=sequence_id,
                 )
             book_dir = self.root / "books" / slug
+            # Strict-audit only path (the lean branch above returned).
             action = {
                 "schema": NATIVE_ACTION_SCHEMA,
                 "action_id": (
                     f"native-action-{uuid.uuid4().hex[:16]}"
                 ),
                 "kind": "run_role",
-                "role": (
-                    "writer-planning" if self.strict_audit else "writer"
-                ),
-                **(
-                    {"stage": "planning"}
-                    if not self.strict_audit
-                    else {}
-                ),
+                "role": "writer-planning",
                 "session": {
                     "mode": "new",
                     "must_be_independent": True,
@@ -2839,6 +2886,14 @@ class NativeWorkflowRelay:
                 if isinstance(role_result, dict)
                 else ""
             )
+            if completion_role in {"blind-reader", "chapter-editor"}:
+                # Attribute the call to this role's own card context, not
+                # to whichever parallel card was written last.
+                role_observations = state.get("role_call_observations")
+                if isinstance(role_observations, dict):
+                    role_observation = role_observations.get(completion_role)
+                    if isinstance(role_observation, dict):
+                        observation = role_observation
             current_role = (
                 completion_role
                 if str(state.get("phase") or "")
@@ -3253,7 +3308,7 @@ class NativeWorkflowRelay:
                     )
                 )
             )
-        elif not self.strict_audit:
+        else:
             # Aggregate lint advisories alongside the texture hint as one
             # bounded low-cost sample (docs/49 §4-2); it never decides a
             # verdict, it only asks the editor to check chapter-wide spread.
@@ -5799,8 +5854,11 @@ class NativeWorkflowRelay:
         completion: dict[str, Any],
     ) -> WorkflowResult:
         phase = str(state["phase"])
-        completion_role = str(
-            (completion.get("role_result") or {}).get("role") or ""
+        role_result = completion.get("role_result")
+        completion_role = (
+            str(role_result.get("role") or "")
+            if isinstance(role_result, dict)
+            else ""
         )
         if phase == "awaiting_double_review":
             role = (
@@ -5954,30 +6012,9 @@ class NativeWorkflowRelay:
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
                 return result
-            if not self.strict_audit:
-                state.update(
-                    {
-                        "must_findings": list(must),
-                        "parent_generation_id": state["generation_id"],
-                        "patch_round": 1,
-                    }
-                )
-                self._reset_active_retry(state, "patch-writer")
-                self._prepare_lean_writer_action(
-                    slug,
-                    state,
-                    request=request,
-                    chapter=chapter,
-                    sequence_id=sequence_id,
-                    must_findings=must,
-                    parent_generation_id=str(state["generation_id"]),
-                    reuse_preferred=True,
-                )
-                return WorkflowResult(
-                    user_state="running",
-                    message="发现问题，正在自动修订。",
-                    sequence_id=sequence_id,
-                )
+            # Strict-audit only path (the lean branch at the top of this
+            # method already returned): a dedicated patch writer session is
+            # always created here.
             writer_session_id = str(
                 (state.get("writer_session") or {}).get("session_id")
                 or ""

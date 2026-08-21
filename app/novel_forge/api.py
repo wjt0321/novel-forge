@@ -40,41 +40,9 @@ def create_app(root: Path) -> FastAPI:
     @app.get("/books/{slug}/chapters/{number}")
     def get_chapter(slug: str, number: int) -> dict:
         try:
-            chapter = svc.get_chapter(slug, number)
-            current_revision = svc.get_current_revision(slug, number)
-            finding_counts = svc.get_chapter_finding_counts(slug, number)
-            canon_rows = svc.list_canon_facts_for_chapter(slug, number)
-            canon_facts = [
-                {
-                    "kind": r["kind"],
-                    "subject": r["subject"],
-                    "predicate": r["predicate"],
-                    "object": r["object"],
-                    "evidence": r["evidence"],
-                }
-                for r in canon_rows
-            ]
-            return {
-                "id": chapter.id,
-                "book_id": chapter.book_id,
-                "number": chapter.number,
-                "title": chapter.title,
-                "state": chapter.state.value,
-                "current_revision": {
-                    "id": current_revision.id,
-                    "number": current_revision.revision_number,
-                    "hash": current_revision.content_hash,
-                    "file_path": current_revision.file_path,
-                }
-                if current_revision
-                else None,
-                "current_revision_id": chapter.current_revision_id,
-                "current_revision_number": chapter.current_revision_number,
-                "current_hash": chapter.current_hash,
-                "finding_counts": finding_counts,
-                "canon_facts": canon_facts,
-                # No full body returned.
-            }
+            # Single-connection detail payload (was five separate calls,
+            # each opening its own database connection).
+            return svc.chapter_detail(slug, number)
         except NovelForgeError as exc:
             raise HTTPException(status_code=404, detail=exc.message)
 
