@@ -662,7 +662,7 @@ def test_adapter_set_promise_target_requires_confirm(
             "5",
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"

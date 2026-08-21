@@ -201,10 +201,14 @@ def verify_review_capsule(
             raise ReviewCapsuleError("review capsule 文件项无效。")
         logical_name = str(item.get("logical_name") or "")
         relative = str(item.get("path") or "")
+        # Reject backslashes explicitly: on Windows, Path.joinpath would
+        # treat them as separators and a crafted name could escape the
+        # capsule directory even though PurePosixPath sees one part.
         parts = PurePosixPath(relative).parts
         if (
             logical_name not in _FILE_NAMES
             or not relative
+            or "\\" in relative
             or PurePosixPath(relative).is_absolute()
             or ".." in parts
         ):
@@ -213,6 +217,7 @@ def verify_review_capsule(
         if (
             not path.is_file()
             or path.is_symlink()
+            or not path.resolve().is_relative_to(capsule_dir.resolve())
             or _sha256(path) != item.get("sha256")
             or path.stat().st_size != item.get("bytes")
         ):

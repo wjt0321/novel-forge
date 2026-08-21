@@ -23,7 +23,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-_CJK_RE = re.compile(r"[一-鿿]")
+from .planning_spec import CJK_CHAR_RE
+
+_CJK_RE = CJK_CHAR_RE  # shared single-source CJK metric (planning_spec)
+
 _SENTENCE_END_RE = re.compile(r"[。！？]")
 _QUOTE_SPAN_RE = re.compile(r'["“「][^"”」]*["”」]')
 _SIMILE_RE = re.compile(r"(?<![想图画录雕影头塑摄])像|仿佛|好似|宛如|犹如")

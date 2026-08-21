@@ -27,7 +27,9 @@ from app.novel_forge.models import (
     ResearchEntry,
     ScenePlan,
     StoryEngine,
+    validate_book_slug,
 )
+from app.novel_forge.planning_spec import MIN_FORMAL_CJK, count_cjk_chars
 from app.novel_forge.repository import (
     AuditRepository,
     BlindExperienceRepository,
@@ -934,7 +936,7 @@ class AutonomousWritingService:
             checks["scene_count_ok"] = 4 <= scene_count <= 6
             checks["has_revision"] = current_revision_id is not None
             checks["word_count"] = word_count
-            checks["word_count_ok"] = word_count >= 5000
+            checks["word_count_ok"] = word_count >= MIN_FORMAL_CJK
             checks["unresolved_plot_support"] = unresolved_plot_support
             checks["unresolved_plot_support_ok"] = unresolved_plot_support == 0
             checks["bc_plot_support_count"] = len(bc_entries)
@@ -1112,6 +1114,7 @@ class AutonomousWritingService:
         """
         import re
 
+        validate_book_slug(slug)
         book_dir = self.root / "library" / slug
         if not book_dir.exists():
             alt_dir = self.root / "books" / slug
@@ -1225,4 +1228,4 @@ class AutonomousWritingService:
 
 def _count_cjk_han(text: str) -> int:
     """Count CJK Unified Ideographs (Han characters) in text."""
-    return len(re.findall(r"[\u4e00-\u9fff]", text))
+    return count_cjk_chars(text)

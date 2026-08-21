@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 from . import book_project
 from .book_memory import canon_context_digest
+from .planning_spec import CJK_CHAR_RE
 
 WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
 WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 450}
@@ -29,7 +30,7 @@ CHAPTER_RISK_LEVELS = frozenset(
 )
 HIGH_RISK_LEVELS = CHAPTER_RISK_LEVELS - {"standard"}
 
-_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_CJK_RE = CJK_CHAR_RE  # shared single-source CJK metric (planning_spec)
 
 
 def _now() -> str:

@@ -367,7 +367,7 @@ def test_adapter_init_novel_project_requires_confirm(tmp_path: Path, capsys):
             "悬疑",
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"

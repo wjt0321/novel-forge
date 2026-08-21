@@ -1140,7 +1140,7 @@ def test_adapter_exposes_guardian_capsule_without_prose(
         ]
     )
     denied = json.loads(capsys.readouterr().out)
-    assert code == 0
+    assert code == 1
     assert denied["error"]["code"] == "confirmation_required"
 
     code = adapter_main(

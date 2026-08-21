@@ -19,12 +19,16 @@ from typing import Any
 
 from .book_git import initialize_book_git
 from .guardian_contract import guardian_contract
+from .models import SLUG_RE
 from .planning_spec import (
+    CHAPTER_HANDOFF_SECTION,
     CHAPTER_STATES,
     EVIDENCE_DIRECTORIES,
     HUMAN_NARRATIVE_POLICIES,
     LITERARY_MICRO_RULES_VERSION,
+    MAX_DRAFT_MUTATIONS_PER_CHAPTER,
     MECHANISM_CLAUSES,
+    MIN_FORMAL_CJK,
     REVIEW_ROLES,
     genre_preset,
     render_literary_micro_rules,
@@ -169,7 +173,7 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
 
 ## 闭环
 1. Python 直接签发 Writer 的正文动作；Writer 可在写作过程中做必要规划或最多 5 次
-   题材、事实边界、重名检索，但不回传规划表。正式章至少 5000 CJK。
+   题材、事实边界、重名检索，但不回传规划表。正式章至少 {MIN_FORMAL_CJK} CJK。
 2. Python 跑表面门并冻结 `控制面冻结稿.md`；双审前正文仍留在 diff 区，不创建 Generation。
 3. 新 Blind Reader Session 只读暂存正文；通过后才创建新 Chapter Editor Session。
 4. 两审通过后 Python 晋升正文，再建立 Generation、Guardian、Review、状态和本地 Git。
@@ -927,105 +931,6 @@ def _planning_research_boundaries_md() -> str:
 """
 
 
-def _agent_context_collector_md() -> str:
-    return """---
-name: novel-forge-context-collector
-description: "Collect one bounded chapter context packet without drafting prose."
----
-
-# Context Collector
-
-只收集，不写正文。输出一页以内的写作包：
-
-1. 目标、阻力、选择、即时成本各一句。
-2. 当前章直接相关的 Canon/人物已知/人物猜测，合计不超过 8 条。
-3. 上一章末段只保留连续动作和一个短引，不加载整章。
-4. 相关承诺最多 3 条，世界规则最多 3 条。
-5. voice bible 只摘本章距离、节奏和一个 exemplar 短段。
-6. 列出未加载材料及原因。
-
-正式序列由 `begin-chapter-sequence` 自动核对/重建派生索引并生成
-`chXX-handoff.md`；单章诊断仍可直接运行 `memory-status` /
-`build-memory-context`。
-不得读取全书审稿史、全部 Canon、其他章节规划或模板说明。上一章有
-source-hygiene blocking 时停止。事实缺口只记 candidate，不自行补全。
-"""
-
-
-def _agent_writer_md() -> str:
-    return """---
-name: novel-forge-writer
-description: "Draft exactly one Novel Forge chapter inside an assigned isolated capsule."
-model: inherit
----
-
-# Writer
-
-你是本章唯一 Writer。`model: inherit` 只表示继承宿主当前父会话的模型选择，不绑定
-任何厂商或模型名称；宿主实际返回的 `resolvedModel` 才是正式来源真相。
-
-1. 只读取分配给你的 capsule 内 `capsule.json`、`guardian-contract.json`、
-   `instructions.md` 与 `handoff.md`。
-2. 只写 `draft/正文.md`，不得创建脚本、runtime、回执、审稿、状态或 Git 记录。
-   完成时只通过宿主正式结果通道返回 capsule 内相对路径 `draft/正文.md`，不得猜测、
-   拼接或回报宿主绝对路径。
-3. 只完成一章；正文达到 `instructions.md` 的完整章节目标后停止。
-4. 不读取完整 Skill、验证器、其他章节、旧会话、旧审稿或 `books/` 控制面。
-5. 有 MUST 时优先复用当前 Writer 宿主会话执行 Patch，只处理合并后的 MUST，不顺手处理 MAY。
-6. 无法遵守 capsule-only 边界时返回失败，不得降级为主会话直写。
-"""
-
-
-def _agent_consistency_guard_md() -> str:
-    return """# Consistency Guard
-
-## 角色
-写后检查员，不写正文。
-
-## 任务
-在完成一段正文后，读：
-1. 刚写的 `chapters/eXX/ch-XX/正文.md`
-2. 本章生成的 `memory/context-cache/chXX-memory.md`
-3. `memory/worldbuilding.md`
-4. 上一章结尾与当前章相关实体的 Canon 记录
-5. Canon 中未回收承诺及计划兑现窗口
-6. `planning/scene-package-chXX.md` 的认知账本与因果归属账本
-7. 第 2 章起核对 `0b. 章际交接`，并用 review-binding 的上一章正文 SHA-256 锁定来源
-
-## 检查清单
-- [ ] 实体名称与已记录一致
-- [ ] 角色认知不超过其已知信息
-- [ ] 正文没有把人物假设、怀疑或专业判断静默升级成 Canon 事实
-- [ ] 重要条件的提出者、执行者、知情者与后果承担者和因果归属账本一致
-- [ ] 已标记“未决/误判”的假设没有被后文旁白提前认证为正确
-- [ ] 时间线无矛盾
-- [ ] 上一章结尾短引、本章开头短引、时间/地点/动作与转场类型彼此一致
-- [ ] 已埋承诺有回收或明确未回收
-- [ ] 本章内容与 `memory/future/00-index.md` 中的承诺及兑现窗口对齐；偏离时明确标记“偏离：X”并说明处理方式
-- [ ] 无现代语汇/网络用语出现在非现代背景
-- [ ] 无突兀背景卸货句
-- [ ] 正文产生的新事实、事件、知识变化与承诺已整理为 candidate；未批准项未写入 Canon
-
-## 输出
-报告写入 `reviews/chXX-consistency-guard.md`（格式见 `reviews/review-template.md`）：
-- 问题（最多 3 条）
-- 位置（场景/行）
-- 建议修订方向
-- 承诺状态：兑现 / 保持未回收 / 延后 / **偏离：X**
-- verdict: pass / needs_revision
-- `evidence_quote` 必须逐字存在于本章正文；第 2 章起 `previous_chapter_quote` 必须逐字存在于上一章正文
-
-## 复审协议
-复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的不一致，而不是仅核对原 finding 是否被删除。
-
-## 边界
-- 不生成新正文。
-- 不修改 `chapters/`、`memory/canon/` 与 SQLite；只可提交候选记录供晋升。
-- `aesthetic-does-not-override-facts`: 文学效果不能成为静默改写既成事实的理由。
-- `world-not-protagonist-proof`: 世界不能通过巧合、微表情或旁白持续为主角的判断背书。
-"""
-
-
 def _dot_gitignore() -> str:
     return """# Per-book ignore rules for books/<slug>/
 .snapshots/
@@ -1033,94 +938,6 @@ memory/context-cache/
 .novel-forge/
 __pycache__/
 *.pyc
-"""
-
-
-def _agent_chapter_editor_md() -> str:
-    return """---
-name: novel-forge-chapter-editor
-description: "Run the final independent chapter-level editorial review after Blind Reader."
----
-
-# Chapter Editor
-
-最后一个默认审稿环节，只审读，不重写正文。
-
-1. 先只读正文，重建事件链、人物选择、代价、停止点和三个画面。
-2. 再读一页式 scene package、当前记忆包和上一章末段；不读旧专业审稿。
-3. 每轮都完整完成五项检查，不得只核对上一轮 finding：因果与有限认知、
-   人物和世界的独立目标、对白与信息流、
-   句子肌理及跨章连续性。
-4. 机器报告出现句长塌缩、章内模式饱和、Voice 范文表层复制或低量跨章复读时，
-   结合原文判断它是有意复沓还是模板化填充；极端逐字复用覆盖、长段复制和损坏对白
-   属于上游 blocking，不得由本角色豁免。
-5. 第 2 章起核对上一章末明确决定；若本章行动反转，必须能在正文前段找到新的触发，
-   不能让 scene package 用解释替正文补桥。
-6. 只有发现具体专业风险时，才请求一个 specialist review；不得默认扩成六审。
-7. 检查编辑控制面是否泄漏进正文：人物不得逐项背诵替代解释、反证或因果审计。
-8. 检查人物可替换性、对白是否退化为整齐记录，以及局部 patch 是否形成集中解释段。
-   不得按固定台词句数或固定动作间隔判错。
-
-通过宿主正式结果通道返回结构化报告，不直接写 `reviews/`。每条 MUST/MAY 都要有
-原文证据和读者效果；
-MUST 最多 5 条。第 2 章起填写 `previous_chapter_quote`。verdict 只能是
-`ready_for_editor_decision` / `needs_revision`。复审必须重读完整修订稿。
-报告必须逐项填写 `editorial_causality`、`editorial_agency`、
-`editorial_dialogue`、`editorial_texture`、`editorial_continuity`；
-空字段不能通过 record-review。
-`ready_for_editor_decision` 不是作者批准。
-"""
-
-
-def _agent_blind_reader_md() -> str:
-    return """---
-name: novel-forge-blind-reader
-description: "Blind-read only the current prose in a fresh isolated review session."
----
-
-# Blind Reader
-
-## 角色
-盲读者。必须运行在不同于 writer `run_id` 的独立会话，只读当前章的
-`正文.md`——严禁读取 `planning/`、`memory/`、voice-bible、其他章节或任何规划材料。
-用"规划知识"填补正文未渲染的画面，正是本环节要抓的作弊。同一写作会话若只能自检，
-必须填写 `context_scope=simulated_blind` 并给 `needs_revision`，不能冒充 pass。
-
-## 任务
-仅凭正文重建以下六项：
-1. **空间**：场景布局、出入口、人物相对位置。
-2. **身体**：谁的身体处于什么状态（伤、累、冷、汗），身体与环境的接触点。
-3. **行动约束**：此刻什么动作做不到，为什么（时间、钱、伤、规则）。
-4. **情绪轨迹**：开场到章末情绪如何移动，由什么具体事件推动。
-5. **对话动态**：每个话轮谁说、对谁说、想要什么。
-6. **可记忆画面**：至少 3 个，每个必须附原文引用（≤2 句）。
-
-## 输出
-通过宿主正式结果通道返回结构化报告，不直接写 `reviews/`。
-- 六项重建结果逐项给出；任何一项重建失败即 MUST，注明卡在哪个位置、正文缺什么信息。
-- 每条结论必须有原文证据；禁止抽象赞扬。
-- `human_likeness: convincing | uncertain | synthetic`。只有 `convincing`
-  可以配合 verdict=pass；若节奏像清单、物件循环像模板配额、叙述知道未来章节、
-  正文带工作流语言、人物逐项列完替代解释、高压对白退化为整齐问答记录，或局部
-  修订留下明显接缝，必须结合读者效果给 uncertain/synthetic 与 needs_revision。
-- `reader_desire: continue | conditional | stop`。只有 `continue` 可以配合
-  verdict=pass；必须填写 `emotional_residue` 与 `next_chapter_pull`，回答一个真人
-  是否会自愿继续读，而不是正文是否“符合模板”。
-- 报告必须填写 `reconstruction_space`、`reconstruction_body`、
-  `reconstruction_constraints`、`reconstruction_emotion`、
-  `reconstruction_dialogue` 与三个 `memorable_image_N`；空字段不能通过
-  record-review。
-- verdict: pass / needs_revision
-
-## 复审协议
-复审时必须重读修订后的**完整正文**（依然只读正文，不读规划材料）与对应 patch 记录，确认修改没有产生新的画面缺口，而不是仅核对原 finding 是否被删除。
-
-## 边界
-- 不重写正文。
-- 不评价文学价值。
-- `model-score-not-approval`: pass 只表示本轮盲读可重建，不是作者批准。
-- `role-name-not-independence`: 记录真实 reviewer/provider/model；只换提示词或角色名不算独立。
-- 只报告一件事：仅凭正文，读者能不能看见。
 """
 
 
@@ -1180,7 +997,7 @@ def _reviews_review_template_md() -> str:
 
 
 def _planning_scene_package_template_md() -> str:
-    return """# Scene Package — 第XX章「标题」
+    return f"""# Scene Package — 第XX章「标题」
 
 > 一页式写作契约。只写会改变正文的内容，不写文学说明书。
 
@@ -1188,7 +1005,7 @@ def _planning_scene_package_template_md() -> str:
 - 开始动作 / 停止动作：
 - 承接压力 / 本章不解决：
 
-## 0b. 章际交接（ch02+）
+## {CHAPTER_HANDOFF_SECTION}（ch02+）
 > “本章开头原文”可在起草后回填，但必须在 formal gate 前成为真实短引。
 > 转场类型：same_day_continuous / cross_day / flashback / parallel。
 > 若本章推翻上一章末的明确决定，必须引用当前正文前 40% 内真实出现的触发事件。
@@ -1354,236 +1171,6 @@ def _planning_dialogue_ledger_template_md() -> str:
 """
 
 
-def _agent_texture_editor_md() -> str:
-    return """# Texture Editor
-
-## 角色
-文字肌理编辑。只管句子与分句的工艺，不管结构、因果与设定。在 line-editor 通过后执行；只审读，不重写正文。
-
-## 审稿维度（仅此六项，逐项给证据）
-1. **分句堆叠**：逗号串起的均匀微短分句。病不在多，在于连续动作没有主次，
-   每个分句都像同样重量的打点。
-2. **排比铺陈**：叙述者为显文采的机械三连。先问"这串排比是谁的"——民俗、童谣、人物的仪式性复沓、对白里的排比，合法；叙述者逞才的，才算病。
-3. **比喻**：检查它是否改变理解、行动或人物关系；只装饰气氛的弱比喻应删。
-4. **解释腔**：叙述者替读者总结情绪/规矩/主题（含动作中段背规矩条文）。注意区分"百科式设定宣讲"与"有声音、贴处境的讲者陈述"——后者在立章与插叙中合法。
-5. **句长方差**：句内与段内是否有呼吸；均匀短句与均匀长句都报警，但不追求
-   某个数值。
-6. **套话与悬浮词**：冷光闪烁、空气凝固、时光荏苒类；没有落到具体物象的抽象词。
-7. **语域适配**：对照 `memory/voice-bible.md` 的语域地图（0 隐形摄像机 / 1 贴身 / 2 讲者现身 / 3 讲者抒情），判断每段的叙述者在场度是否匹配其功能——开场切入是否够快、行动是否隐形、插叙是否有讲者导航或物件过渡、收束是否收在画面而非点评。场景包 beat 表有语域声明时，逐拍对照；场景包声明章型（交锋/立章/过场/收束）时，按章型校准（立章放宽对白占比与信息密度预期）。
-
-另：**机锋是合法资产**。长在人物处境上的反讽、自嘲和俏皮话不得仅因偏离
-中性文风而被删除；只有打断当前张力时才 MAY。
-
-## 声音指纹漂移（有 exemplar 时必做）
-运行 `voice_signature` 比较本章与本书 exemplar。统计只用于定位需要回读的段落，
-不设文学达标数值，不要求 Writer 把正文调到某个句长、段落或对白比例。重点判断：
-本章是否仍有相同的叙事距离与信息释放方式，同时避免复制范文的具体名词、标志动作、
-章末物件和句法骨架。单项漂移默认 MAY；只有原文已形成可定位的机械读感时才提 MUST。
-
-## 输出
-写入 `reviews/chXX-texture-editor.md`：最多 8 条 MUST/MAY，每条含位置、原文证据、读者效果、修订意图；附 verdict: pass / needs_revision。MUST 用于：排比/堆叠造成的机械节奏、解释替代呈现、硬禁令违例。
-
-## 复审协议
-复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的肌理问题，而不是仅核对原 finding 是否被删除。
-
-## 边界
-不评价结构、因果、人物动机与设定；不生成新正文。
-- `no-deliberate-defects`: 不得建议故意加入错字、病句或随机噪声来制造人味。
-"""
-
-
-def _agent_causal_editor_md() -> str:
-    return """# Causal Editor
-
-## 角色
-叙事因果编辑。只审读，不重写正文。
-
-## 输入
-1. 第一遍先只读正文，独立重建 beat 因果、知识来源、动作机制、不可逆条件与停止点。
-2. 保存重建结果后，再读 `planning/scene-package-chXX.md`、`planning/action-draft-chXX.md` 与 `planning/dialogue-ledger-chXX.md`（如有）。
-3. 最后读取上一章末尾与必要 `memory/` 事实，核对连续性边界。
-
-## 反锚定协议
-- 必须先只读正文；不得因为场景包写了“不可逆”就认定正文选择已经不可逆。
-- 报告先列“prose-only reconstruction”，再列“planning delta”。正文缺失与规划错误分开归责。
-- 特别复核规划反证五项：时间/日历、动作机制、知识来源、不可逆性与场景停止点。
-
-## MUST
-- 场景包缺少目标、阻力、人物摩擦或立即后果；“立章”不能把决策问题全部豁免。
-- 关键 beat 无法说明如何导致下一 beat。
-- 正文关键事件、动机、规则或谜团没有动作稿/信息账本来源。
-- 重点信息没有来源、知情者或行动后果。
-- 正文把观察直接写成唯一解释，认知账本却没有替代解释、置信度或可推翻证据。
-- 条件的提出者、执行者、知情者或后果承担者与因果归属账本不一致。
-- 人物的重要判断全部被世界立即验证，没有误判风险、未决状态或独立于主角的对抗意志。
-- 专业判断缺少证据、未证前提、执行条件、成本或风险，却被正文当成能力证明。
-- 关键对白不改变计划、权力、认知或关系。
-- 新生造术语超出场景包第 5 节术语预算，或术语以解释而非身体/动作落地。
-
-## 输出
-写入 `reviews/chXX-causal-editor.md`：最多 6 条 MUST/MAY，含位置、证据、断裂的因果/信息责任、应回退层级（场景包/动作稿/对白账本/正文）、修订意图；附 verdict: pass / needs_revision。
-
-## 复审协议
-复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的因果断裂，而不是仅核对原 finding 是否被删除。
-
-## 边界
-不生成新正文；不把文采偏好当作因果问题。
-- `single-winner-branch`: 对分支实验只评因果代价；必须保留单一胜者，不得建议拼接全部候选。
-- `aesthetic-does-not-override-facts`: 审美偏好不得压过事实、人物认知与因果责任。
-- `world-not-protagonist-proof`: 不得把“主角持续正确”误判为人物能动性；世界和其他人物必须保有独立意志。
-- `expertise-must-be-executable`: 听起来专业不等于可执行，缺条件与风险的专业结论必须退回规划层。
-"""
-
-
-def _agent_line_editor_md() -> str:
-    return """# Line Editor
-
-## 角色
-行文编辑，管对白与信息流。在 causal-editor 通过后执行；句子工艺（分句、比喻、句长）归 texture-editor，不在本角色重复审。只审读，不重写正文。
-
-## 审稿维度
-1. 对白归属：称呼、动作、位置、物件或明确反应是否足够。
-2. 对白行动性：是否只为解释设定、复述信息或整齐排比而存在。
-3. 重复簇：相邻段是否近义重复且未改变局势。
-4. 解释性旁白：叙述者是否替读者总结情绪、主题或认知（句子级的解释腔由 texture-editor 复核）。
-5. 能力证明循环：是否反复出现“观察 → 原理解释/履历背书 → 正确判断 → 他人惊讶”。
-6. 呼吸段：是否具备标注的人物功能；若场景包声明“不新增信息”，正文是否仍偷偷加入线索、推断或设定。
-
-## 输出
-写入 `reviews/chXX-line-editor.md`：最多 6 条 MUST/MAY，含位置、原文证据、读者效果、修订意图；附 verdict: pass / needs_revision。MUST 用于归属不明、重复造成信息停滞、解释取代关键行动或能力证明循环支配整场。
-
-## 复审协议
-复审时必须重读修订后的**完整正文**与对应 patch 记录，确认修改没有产生新的行文问题，而不是仅核对原 finding 是否被删除。
-
-## 边界
-不擅自统一文风，不以禁词命中替代上下文判断，不生成新正文。
-- `world-not-protagonist-proof`: 删除解释时保留人物的观察与选择，不替人物补一个新的确定答案。
-- `expertise-must-be-executable`: 优先让专业能力通过提问、下注、操作和后果显形，不保留重复的履历背书。
-"""
-
-
-def _agent_orchestrator_md() -> str:
-    policy_lines = _human_narrative_policy_lines()
-    return f"""---
-name: novel-forge-orchestrator
-description: "Coordinate the deterministic Novel Forge three-role workflow without authoring role artifacts."
----
-
-# Orchestrator
-
-维护状态和证据，不写正文。状态链：
-`{_STATE_CHAIN}`
-
-## 自动生产唯一入口
-- 创作任务禁止先探索仓库实现。首个写操作必须是
-  `python tools/novel-workflow.py ... start`；没有命令 Backend 时自动进入原生会话
-  Relay，随后只循环 `next-action → 宿主官方终态 → complete-role`。
-- Python 状态机决定下一步；宿主只负责创建、等待和回传。创作角色只写当前书 diff 区
-  动作指定的单一文件，ACP 只用于事后取证，不参与生产控制。
-- 默认 Lean 不携带 `completion_template`：Lead 等官方终态后执行 `complete-role`，
-  无需填写技术表单或拼装宿主 session ID。Writer 只接收 Writer Capsule，审稿角色只接收
-  `review_capsule.path`，Lead 不搬运正文。严格审计才使用完整终态信封。
-- 新书先由确定性控制面通过 `init-novel-project` 初始化；创作角色不得直接写
-  `books/`，不得自行创建正文、规划、审稿或 ready Git 恢复点。
-- `NOVEL_FORGE_HARNESS_COMMAND` 只启用可选 headless 命令 Backend，不是用户选项。
-- 高权限只属于无模型推理的确定性控制面；Lead 和三个角色无权改规则或代做彼此产物。
-- 必须使用宿主官方 wait / join 等到角色终态；创建成功、已接单、进度消息或文件暂时稳定都不算完成。
-- 创建角色后立即保存宿主返回的真实 `operation_handle.kind/value`。句柄 kind
-  决定调用 Task Output、background output、mailbox 或其他宿主官方结果通道；
-  禁止把 agent ID 猜成 task ID、把角色名当作 TaskOutput ID，或凭自造名称查询。
-- 禁止固定 sleep、短轮询或以文件出现猜测完成。Writer、Blind Reader 和 Chapter
-  Editor 每个角色默认至少等待 30 分钟；角色仍处于 working/progress 时继续等待，
-  不得为节省 Lead 时间提前 stop。只有官方 failed/cancelled/timed_out 终态或用户明确
-  停止才退役角色。
-- `idle_notification`、idle 或 available 只表示角色可接收新消息，不是报告已送达。
-  completed 必须同时取得 `novel-forge-role-result/v1` 的 `role_result`，且 role
-  与当前角色一致，并绑定 session_id、session_instance_id 和原 operation handle；
-  完成信封错误先原地补交；实质结果无效时才废弃该 session 并新开同角色 session。
-  Writer、Blind Reader、Chapter Editor 与 Patch Writer 各自最多自动重试两次，
-  互不占用预算。
-- 请求模型、角色 frontmatter 和环境默认值都只是选择意图。正式记录必须使用宿主终态
-  返回的 `resolvedModel`；若实际模型与请求不同，如实记录实际值，不得把偏好写成来源。
-- 无法创建或等待真实独立角色时停止，只说明“本章未开始”。
-- 创作任务中的 Lead 和角色不得创建、修改、修复、包装、安装或配置 Harness
-  / SessionBackend；headless 缺失时不得自行设置命令桥或要求用户部署。
-- `degraded_exploration` 只有用户明确要求探索稿时才允许；不得因工具受限自行降级，
-  也不得把探索稿称为完成。
-- Writer 可在写作过程中做最多 5 次题材、事实边界和重名检索；不单独交付规划表，
-  不得借此阅读工作流源码。
-- 默认 `lean_native` 使用当前书 diff Capsule、当前书写入检查、轻量代码控制面保护和
-  Python 自动记账；`--strict-audit` 才启用仓库外 Capsule、完整技术信封与全仓快照。
-
-## 默认闭环
-1. Python 初始化项目并生成最小连续性与场景材料，直接签发 Writer `stage=draft`；
-   日常 Lean 不要求角色读取 Harness 合同或回传规划表。
-2. 用户要 1 章时运行 `begin-chapter-sequence --chapter-count 1`；用户要连续多章
-   时按请求建立序列，但最多 4 章，五章及以上必须拆分。起草前确认
-   `memory-status=clean`，并运行 `build-memory-context`。
-3. 每次 launch directive 只允许当前一章。Lead 创建并等待新的原生 Writer；Python
-   准备当前书 `.novel-forge/diff/chNN/writer/` Capsule。Lean 只快照当前书和受保护的
-   代码入口；strict audit 才使用仓库外 Capsule 与全仓快照。
-4. Guardian 按 `{FORMAL_WRITER_PROMPT_ID}` 编译短小的 `instructions.md`。Writer 只读
-   capsule 内的 `instructions.md` 与 `handoff.md`，只写 `draft/正文.md`；确定性控制面
-   在 capsule 外生成 runtime 与隔离证明，并用 `record-capsule-runtime` 写入外置
-   Guardian sidecar。Writer 不接收完整 Skill、句长、段落长度、对白占比等数字目标，
-   也不得照抄 Voice exemplar 的具体名词、动作、收束物件或句法骨架。handoff 只含
-   过滤后的 Story Brief；完整 Scene Package 的决策审计只供 Chapter Editor 使用。
-   Writer 的正式 `role_result` 只返回 capsule 内相对路径 `draft/正文.md`；宿主绝对
-   路径由确定性控制面掌握，不要求角色发现或回报。
-5. Writer 结束后先在 diff 区跑表面检查并冻结 `控制面冻结稿.md`，不导入正式章节、不创建
-   Generation。额外脚本、路径逃逸、保护输入变化或越界修改会退役当前 Writer。
-6. 破折号、省略号和否定翻转命中时在同一暂存正文集中修订，最多三轮；普通 MAY 与
-   advisory 不触发额外写作。
-7. Strict audit 才要求累计 `session-audit` 与完整 runtime；Lean 未知遥测保持 null，
-   不得因此废弃有效正文。
-8. 在不同会话自动运行 blind-reader，再运行 chapter-editor；Claude Code 分别使用
-   `novel-forge-blind-reader` 与 `novel-forge-chapter-editor`。Blind Reader 正式记录后才能启动 Chapter Editor。
-   不得暂停询问是否开始审核。
-   Python 为两角色分别封存当前书 diff 区 Review Capsule；Lead 只传 Capsule 路径。
-   Python 合法刷新 Capsule 不算角色越界，manifest 与每个声明文件仍逐项验哈希。
-   无法创建独立审稿会话时返回机器状态 `review_session_required`，不得向用户抛出
-   “要不要审核”一类开放式问题。blind-reader 检查控制面泄漏、整齐问答、职业证明和
-   修补接缝；chapter-editor 每轮完整重审五项文学维度。Lean 只写各自简短
-   `result_file`；结果丢失时只换新当前角色，不由 Lead 代填。
-9. 同源 findings 合并后发回同一暂存正文，Python 立即生成 `修订.diff` 并全文双审。
-   第二版仍有 MUST 时进入 `human_decision_required`；用户明确选择重新生成后才签发
-   第三版授权。只有双审通过后才晋升正文并创建 Generation、Review 与 Git 恢复点。
-10. 上一章完整 `ready` 后结束该 writer session，运行
-   `advance-chapter-sequence`。只有返回 `launch_next_session=true` 才能按顺序
-   创建下一章的新 session；不得提前并发起草。
-
-## 成本边界
-- 每章独立会话；跨章只传有界 handoff，不携带旧会话消息、旧工具输出和审稿全文。
-- 一次只做一章；简短用户意图由 Guardian 编译成不超过 {MAX_FORMAL_WRITER_PROMPT_CHARS} 字符的正式提示词，
-  不重复注入完整 Skill。
-- Guardian 清单、哈希、预算和回执校验在本地执行，不占模型上下文；ACP 或完整
-  transcript 不是 formal 依赖，也不得为审计而回灌给 writer。
-- 2,000,000 cached-input tokens 是每章硬停止上限，不是应当吃满的目标。
-- 正文一次完整 Write，最多一次集中 Edit；禁止边查 CJK 边连续补写。
-- 规划和疑难因果核验可用 high；正文与默认审稿使用 standard/medium。
-- Max 只处理被明确命名的困难问题，不用于整章自由生成、模板、状态或证据。
-- 默认两角色；专业编辑只有 chapter-editor 指出具体风险时才调用一个。
-- MAY 和 advisory 不触发额外生成；第三版必须等待用户明确选择。
-
-## 回退
-- 机器 blocking 或行文问题 → `drafted`。
-- 因果/人物选择失效 → `scene_packaged`。
-- Canon 冲突、覆盖风险、作者取舍或预算耗尽 → `blocked`。
-- 用户明确要求探索稿且工具受限 → `degraded_exploration`，如实记录失败；
-  自动生产请求不得走此回退。
-
-## 不可绕过
-{policy_lines}
-
-- Formal writer 不得看到或修改 `books/` 控制面、验证器源码、evidence、状态文件或
-  其他章节；宿主无法落实 capsule-only 文件系统时，自动生产必须停止。
-- compromised capsule 必须废弃当前 session；不得在同一 session 中删除违规文件后
-  重新导入，也不得由 writer 自己填写隔离证明或 Guardian 回执。
-- 公开 `evidence/guardian-receipts/` 副本不能单独证明通过；必须匹配
-  `.local-guardian/<slug>/` 的签名权威账本与 imported 控制记录。
-"""
-
-
 # Mapping of relative path -> (template factory, factory args)
 # Paths are relative to books/<slug>/.
 TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
@@ -1724,7 +1311,7 @@ def init_book_project(root: Path, slug: str, title: str, genre: str) -> dict[str
 
     Returns metadata about created directories and files.
     """
-    if not slug or not slug.replace("-", "").replace("_", "").isalnum():
+    if not slug or not SLUG_RE.fullmatch(slug):
         raise ProjectTemplateError(
             f"Invalid book slug: {slug!r}. Use alphanumeric, dash, or underscore."
         )

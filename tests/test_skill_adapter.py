@@ -53,7 +53,7 @@ def test_init_book_requires_confirm(tmp_path: Path, capsys):
     code = main(
         ["--root", str(tmp_path), "init-book", "test", "--title", "Test Book"]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -103,7 +103,7 @@ def test_write_revision_requires_confirm_and_rejects_library_input(
             str(src),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -125,7 +125,7 @@ def test_write_revision_requires_confirm_and_rejects_library_input(
             str(lib_input),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "library" in data["error"]["message"].lower()
@@ -158,7 +158,7 @@ def test_lint_and_review_report_state_changed(tmp_path: Path, capsys):
     src.write_text("正文。\n", encoding="utf-8")
     svc.write_revision("test", 1, src)
 
-    code = main(["--root", str(tmp_path), "lint", "test", "1"])
+    code = main(["--root", str(tmp_path), "--confirm", "lint", "lint", "test", "1"])
     assert code == 0
     data = _json_output(capsys)
     assert data["ok"] is True
@@ -168,7 +168,7 @@ def test_lint_and_review_report_state_changed(tmp_path: Path, capsys):
     assert "body" not in json.dumps(data)
 
     ready_memo(svc, "test", 1)
-    code = main(["--root", str(tmp_path), "review", "test", "1"])
+    code = main(["--root", str(tmp_path), "--confirm", "review", "review", "test", "1"])
     assert code == 0
     data = _json_output(capsys)
     assert data["ok"] is True
@@ -191,7 +191,7 @@ def test_approve_chapter_requires_confirm(tmp_path: Path, capsys):
     code = main(
         ["--root", str(tmp_path), "approve-chapter", "test", "1", "--note", "ok"]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -202,10 +202,10 @@ def test_approve_chapter_requires_confirm(tmp_path: Path, capsys):
 
 def test_bad_slug_rejected(tmp_path: Path, capsys):
     code = main(["--root", str(tmp_path), "status", "../../etc"])
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
-    assert "Invalid book slug" in data["error"]["message"]
+    assert "无效的书目标识" in data["error"]["message"]
 
 
 def test_export_book_requires_confirm_and_returns_manifest(tmp_path: Path, capsys):
@@ -223,7 +223,7 @@ def test_export_book_requires_confirm_and_returns_manifest(tmp_path: Path, capsy
     code = main(
         ["--root", str(tmp_path), "export-book", "test", "--format", "markdown"]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -322,7 +322,7 @@ def test_session_audit_is_content_free_and_record_requires_confirm(
             str(log),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -373,7 +373,7 @@ def test_status_rejects_extra_arguments(tmp_path: Path, capsys):
     svc.init_book("test", "Test Book")
 
     code = main(["--root", str(tmp_path), "status", "test", "1", "extra"])
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "invalid_arguments"
@@ -384,7 +384,7 @@ def test_status_rejects_non_integer_chapter(tmp_path: Path, capsys):
     svc.init_book("test", "Test Book")
 
     code = main(["--root", str(tmp_path), "status", "test", "not-a-number"])
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "invalid_arguments"
@@ -397,7 +397,7 @@ def test_relative_root_rejected_and_not_created(tmp_path: Path, capsys, monkeypa
     rel_path = tmp_path / rel_name
 
     code = main(["--root", rel_name, "status", "test"])
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "invalid_root"
@@ -426,7 +426,7 @@ def test_write_revision_rejects_non_utf8_source(tmp_path: Path, capsys):
             str(src),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "business_error"
@@ -479,8 +479,8 @@ def test_lint_legacy_non_utf8_revision_returns_json_error(
     src.write_text("中文。\n", encoding="gbk")
     svc.write_revision("test", 1, src)
 
-    code = main(["--root", str(tmp_path), "lint", "test", "1"])
-    assert code == 0
+    code = main(["--root", str(tmp_path), "--confirm", "lint", "lint", "test", "1"])
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "business_error"
@@ -601,7 +601,7 @@ def test_adapter_reader_review_blocks_approval(tmp_path: Path, capsys):
     assert data["ok"] is True
     review_id = data["data"]["reader_review_id"]
 
-    code = main(["--root", str(tmp_path), "review", "test", "1"])
+    code = main(["--root", str(tmp_path), "--confirm", "review", "review", "test", "1"])
     assert code == 0
     data = _json_output(capsys)
     assert data["data"]["verdict"] == "REJECT"
@@ -625,7 +625,7 @@ def test_adapter_reader_review_blocks_approval(tmp_path: Path, capsys):
     assert data["ok"] is True
 
     ready_memo(svc, "test", 1)
-    code = main(["--root", str(tmp_path), "review", "test", "1"])
+    code = main(["--root", str(tmp_path), "--confirm", "review", "review", "test", "1"])
     assert code == 0
     data = _json_output(capsys)
     assert data["data"]["verdict"] == "APPROVE"
@@ -668,7 +668,7 @@ def test_adapter_quality_writes_reject_library_and_non_utf8(tmp_path: Path, caps
             str(lib_src),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "business_error"
@@ -688,7 +688,7 @@ def test_adapter_quality_writes_reject_library_and_non_utf8(tmp_path: Path, caps
             str(bad_src),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "UTF-8" in data["error"]["message"]
@@ -703,7 +703,7 @@ def test_init_workspace_requires_confirm(tmp_path: Path, capsys):
     svc.init_book("test", "Test Book")
 
     code = main(["--root", str(tmp_path), "init-workspace", "test"])
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -911,7 +911,7 @@ def test_write_revision_patch_requires_confirm_and_applies_patch(
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -981,7 +981,7 @@ def test_write_revision_patch_rejects_non_unique_and_missing_evidence(
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "2" in data["error"]["message"] or "unique" in data["error"]["message"].lower()
@@ -1012,7 +1012,7 @@ def test_write_revision_patch_rejects_non_unique_and_missing_evidence(
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "not found" in data["error"]["message"].lower() or "未找到" in data["error"]["message"]
@@ -1054,7 +1054,7 @@ def test_write_revision_patch_rejects_empty_replacement_and_invalid_inputs(
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "empty" in data["error"]["message"].lower() or "空" in data["error"]["message"]
@@ -1076,7 +1076,7 @@ def test_write_revision_patch_rejects_empty_replacement_and_invalid_inputs(
             str(bad_patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "UTF-8" in data["error"]["message"]
@@ -1097,7 +1097,7 @@ def test_write_revision_patch_rejects_empty_replacement_and_invalid_inputs(
             str(lib_patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "library" in data["error"]["message"].lower()
@@ -1144,7 +1144,7 @@ def test_write_revision_patch_rejects_overlapping_evidence(
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "overlap" in data["error"]["message"].lower() or "重叠" in data["error"]["message"]
@@ -1191,7 +1191,7 @@ def test_write_revision_patch_requires_reopen_reason_for_approved_chapter(
             "--allow-below-minimum",
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "reopen" in data["error"]["message"].lower() or "重开" in data["error"]["message"]
@@ -1342,7 +1342,7 @@ def test_write_revision_patch_blocks_dropping_below_minimum(tmp_path: Path, caps
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "below" in data["error"]["message"].lower() or "5000" in data["error"]["message"]
@@ -1429,7 +1429,7 @@ def test_write_revision_patch_4999_rejected_5000_accepted(tmp_path: Path, capsys
             str(patch_keep_low),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert "5000" in data["error"]["message"]
@@ -1501,7 +1501,7 @@ def test_write_revision_patch_5000_to_4999_rejected(tmp_path: Path, capsys):
             str(patch),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["message"]

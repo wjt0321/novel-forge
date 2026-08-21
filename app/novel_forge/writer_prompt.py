@@ -11,6 +11,33 @@ from .planning_spec import MIN_FORMAL_CJK
 FORMAL_WRITER_PROMPT_ID = "formal-writer/v1"
 MAX_FORMAL_WRITER_PROMPT_CHARS = 1200
 
+_LITERARY_BOUNDARY = (
+    "规划是后台故事义务，不得在正文中逐条证明。以当前人物会注意的事物组织"
+    "现场，不用作者全知替人物解释。允许人物误判、遗漏、自欺和反应迟半拍；"
+    "人物必须作出选择并承担具体私人代价，但人物不必立即理解选择的意义。"
+    "对白各方保留各自目的，不得退化为整齐问答记录，也不要机械插入动作。"
+    "身体、物件和位置必须连续；慎用完美证据链，禁止机械三连和解释性修补。"
+    "全文禁用破折号“——”、省略号“……”以及“不是 X，而是 Y / 不是 X，是 Y”"
+    "式否定翻转。提交前全文检索这三类模式并直接陈述；再静默复读一次，删除"
+    "动作已经表达、旁白又重复解释的句子，打破全文最明显的一种重复反应，"
+    "只输出最终正文，不输出检查过程。"
+)
+
+_DRAFT_TASK = (
+    "只读取 writer-context.md，并据此完成一篇完整章节。正文必须形成清晰的"
+    "场景压力、人物选择、行动后果和停止点；保持既有叙事距离与信息释放"
+    "方式，但不要复制 Voice exemplar 的具体措辞、动作、物件或句法。"
+)
+
+_PATCH_TASK_PREFIX = (
+    "读取 writer-context.md 与已预置的 draft/正文.md，按审稿结论完成一次"
+    "集中修订。只做最小且因果完整的改动，保留未受影响的正文，不得"
+    "借 patch 重写整章；不得把 finding 改写成解释段或审稿口吻。"
+    "优先把必要动机分散到动作、停顿、关系反应和物件后果中。"
+    "新增因果必须落进动作、停顿、物件后果，禁止新增解释性段落。修订后"
+    "仍须形成清晰的场景压力、人物选择、行动后果和停止点。"
+)
+
 
 class WriterPromptError(NovelForgeError):
     """Raised when a writer prompt cannot be rendered safely."""
@@ -22,6 +49,36 @@ class WriterPrompt:
 
     template_id: str
     text: str
+
+
+def _render(chapter: int, writing_task: str) -> str:
+    return (
+        f"# Formal Writer Instructions - 第 {chapter:02d} 章\n\n"
+        "你是本次 formal chapter writer，只负责当前一章。\n\n"
+        f"{writing_task}\n\n{_LITERARY_BOUNDARY}\n\n"
+        "唯一允许写入的文件是 draft/正文.md；同目录其他文件（如"
+        "控制面冻结稿.md）是控制面只读冻结稿，禁止写入或修改。"
+        "除 Markdown 章节标题外，"
+        f"文件中只能包含小说叙事正文；正式章节不少于 {MIN_FORMAL_CJK} 个"
+        " CJK 汉字。\n\n"
+        "不得创建脚本、状态、证据、审稿或 runtime 文件，不得尝试访问"
+        "书项目控制面。若输入冲突、能力不足或正式条件无法满足，不要伪造"
+        "结果，也不要创建替代文件；停止并向 Harness 返回阻断原因。\n"
+    )
+
+
+def patch_directive_budget(chapter: int) -> int:
+    """Return the exact directive budget for one patch prompt.
+
+    Derived from the total prompt budget so the per-directive limit and the
+    whole-prompt limit can never disagree.
+    """
+    directive_header = "\n\n本次只处理以下 MUST，不扩写 MAY 或无关段落：\n"
+    base = _render(chapter, _PATCH_TASK_PREFIX + directive_header)
+    budget = MAX_FORMAL_WRITER_PROMPT_CHARS - len(base)
+    if budget <= 0:
+        raise WriterPromptError("formal writer instructions 超过字符预算。")
+    return budget
 
 
 def render_formal_writer_instructions(
@@ -41,53 +98,21 @@ def render_formal_writer_instructions(
         raise WriterPromptError("operation 必须是 draft 或 patch。")
     if operation == "patch":
         directive = str(patch_directive or "").strip()
-        if len(directive) > 420:
-            raise WriterPromptError("MUST 修订指令超过字符预算。")
+        budget = patch_directive_budget(chapter)
+        if len(directive) > budget:
+            raise WriterPromptError(
+                "MUST 修订指令超过字符预算"
+                f"（最多 {budget} 字符，当前 {len(directive)}）。"
+            )
         directive_text = (
             "\n\n本次只处理以下 MUST，不扩写 MAY 或无关段落：\n"
             f"{directive}"
             if directive
             else ""
         )
-        writing_task = (
-            "读取 writer-context.md 与已预置的 draft/正文.md，按审稿结论完成一次"
-            "集中修订。只做最小且因果完整的改动，保留未受影响的正文，不得"
-            "借 patch 重写整章；不得把 finding 改写成解释段或审稿口吻。"
-            "优先把必要动机分散到动作、停顿、关系反应和物件后果中。"
-            "新增因果必须落进动作、停顿、物件后果，禁止新增解释性段落。修订后"
-            "仍须形成清晰的场景压力、人物选择、行动后果和停止点。"
-            f"{directive_text}"
-        )
+        text = _render(chapter, _PATCH_TASK_PREFIX + directive_text)
     else:
-        writing_task = (
-            "只读取 writer-context.md，并据此完成一篇完整章节。正文必须形成清晰的"
-            "场景压力、人物选择、行动后果和停止点；保持既有叙事距离与信息释放"
-            "方式，但不要复制 Voice exemplar 的具体措辞、动作、物件或句法。"
-        )
-    literary_boundary = (
-        "规划是后台故事义务，不得在正文中逐条证明。以当前人物会注意的事物组织"
-        "现场，不用作者全知替人物解释。允许人物误判、遗漏、自欺和反应迟半拍；"
-        "人物必须作出选择并承担具体私人代价，但人物不必立即理解选择的意义。"
-        "对白各方保留各自目的，不得退化为整齐问答记录，也不要机械插入动作。"
-        "身体、物件和位置必须连续；慎用完美证据链，禁止机械三连和解释性修补。"
-        "全文禁用破折号“——”、省略号“……”以及“不是 X，而是 Y / 不是 X，是 Y”"
-        "式否定翻转。提交前全文检索这三类模式并直接陈述；再静默复读一次，删除"
-        "动作已经表达、旁白又重复解释的句子，打破全文最明显的一种重复反应，"
-        "只输出最终正文，不输出检查过程。"
-    )
-    text = (
-        f"# Formal Writer Instructions - 第 {chapter:02d} 章\n\n"
-        "你是本次 formal chapter writer，只负责当前一章。\n\n"
-        f"{writing_task}\n\n{literary_boundary}\n\n"
-        "唯一允许写入的文件是 draft/正文.md；同目录其他文件（如"
-        " 控制面冻结稿.md）是控制面只读冻结稿，禁止写入或修改。"
-        "除 Markdown 章节标题外，"
-        f"文件中只能包含小说叙事正文；正式章节不少于 {MIN_FORMAL_CJK} 个"
-        " CJK 汉字。\n\n"
-        "不得创建脚本、状态、证据、审稿或 runtime 文件，不得尝试访问"
-        "书项目控制面。若输入冲突、能力不足或正式条件无法满足，不要伪造"
-        "结果，也不要创建替代文件；停止并向 Harness 返回阻断原因。\n"
-    )
+        text = _render(chapter, _DRAFT_TASK)
     if len(text) > MAX_FORMAL_WRITER_PROMPT_CHARS:
         raise WriterPromptError("formal writer instructions 超过字符预算。")
     return WriterPrompt(

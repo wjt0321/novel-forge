@@ -66,7 +66,7 @@ def test_add_research_entry_requires_confirm(tmp_path: Path) -> None:
         "--fiction-boundary",
         "boundary",
     )
-    assert code == 0
+    assert code == 1
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
 
@@ -159,7 +159,7 @@ def test_update_research_entry_requires_confirm(tmp_path: Path) -> None:
         "--verification-state",
         "verified",
     )
-    assert code == 0
+    assert code == 1
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
 
@@ -244,7 +244,7 @@ def test_set_chapter_plan_rejects_library_input(tmp_path: Path) -> None:
         "--plan-file",
         str(plan_file),
     )
-    assert code == 0
+    assert code == 1
     assert data["ok"] is False
     assert "library" in data["error"]["message"]
 
@@ -263,7 +263,7 @@ def test_set_chapter_plan_rejects_non_utf8(tmp_path: Path) -> None:
         "--plan-file",
         str(plan_file),
     )
-    assert code == 0
+    assert code == 1
     assert data["ok"] is False
     assert "UTF-8" in data["error"]["message"]
 

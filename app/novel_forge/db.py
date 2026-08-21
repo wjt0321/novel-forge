@@ -1004,6 +1004,12 @@ def init_db(root: Path) -> sqlite3.Connection:
                 "Migrating database from v%d to v%d at %s",
                 version, CURRENT_SCHEMA_VERSION, db_path,
             )
+            # Flush any WAL frames left by a previously crashed session so
+            # the file copy below captures every committed transaction.
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
             backup_path = _backup_db(db_path, target_version=CURRENT_SCHEMA_VERSION)
             try:
                 if version < 2:
@@ -1032,11 +1038,21 @@ def init_db(root: Path) -> sqlite3.Connection:
                     restored_from_backup = True
                 raise
         elif version > CURRENT_SCHEMA_VERSION:
+            # Close before raising: an open handle locks the db file on
+            # Windows and the caller never receives it to close.
+            conn.close()
             raise UnsupportedSchemaVersionError(version)
         # else: up to date, leave connection open for caller.
     except Exception:
         if not restored_from_backup:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
         raise
 
     return conn

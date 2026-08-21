@@ -7,8 +7,10 @@ import math
 import re
 from typing import Any
 
+from .planning_spec import CJK_CHAR_RE
+
 TEXTURE_SCHEMA = "novel-forge-literary-texture/v1"
-_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_CJK_RE = CJK_CHAR_RE  # shared single-source CJK metric (planning_spec)
 _DELAYED_REACTIONS = re.compile(
     r"停了一下|停住(?:了)?|没有立刻|看了很久|沉默(?:了)?(?:片刻|一会儿)?|"
     r"怔了一下|愣了一下|过了一会儿|慢慢(?:地)?"

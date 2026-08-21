@@ -1,6 +1,7 @@
 """Pydantic models for service boundaries and API responses."""
 
 import json
+import re
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,23 @@ class NovelForgeError(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+# Single source of truth for book slug safety: ASCII letters, digits,
+# dash, and underscore only. Rejects path separators, dots, whitespace,
+# and Unicode look-alikes so `root / "books" / slug` can never escape
+# the books directory (shared by every module that derives a path from
+# a slug).
+SLUG_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def validate_book_slug(slug: str) -> str:
+    """Validate one book slug and return it unchanged."""
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        raise NovelForgeError(
+            f"无效的书目标识：{slug!r}。只允许英文字母、数字、连字符和下划线。"
+        )
+    return slug
 
 
 class ReviewVerdict(str, Enum):

@@ -203,7 +203,7 @@ def test_adapter_requires_confirmation_and_accepts_report_file(tmp_path: Path, c
         "submit-blind-experience-review", "test", "1",
         "--report-file", str(report_file),
     ])
-    assert code == 0
+    assert code == 1
     data = json.loads(capsys.readouterr().out)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"

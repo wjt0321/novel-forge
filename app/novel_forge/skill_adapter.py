@@ -38,7 +38,7 @@ from app.novel_forge.book_memory import (
     rebuild_memory_index,
     record_candidate,
 )
-from app.novel_forge.models import ReviewFinding, ScenePlan
+from app.novel_forge.models import ReviewFinding, ScenePlan, validate_book_slug
 from app.novel_forge.guardian import (
     authorize_regeneration,
     guardian_contract,
@@ -63,6 +63,8 @@ MUTATING_OPS = {
     "write-revision",
     "add-finding",
     "resolve-finding",
+    "lint",
+    "review",
     "add-candidate-fact",
     "approve-fact",
     "reject-fact",
@@ -121,14 +123,15 @@ class _ArgparseAdapterError(Exception):
 
 
 def _is_valid_slug(slug: str) -> bool:
-    return bool(slug) and slug.replace("-", "").replace("_", "").isalnum()
+    try:
+        validate_book_slug(slug)
+    except NovelForgeError:
+        return False
+    return True
 
 
 def _validate_slug(slug: str) -> None:
-    if not _is_valid_slug(slug):
-        raise NovelForgeError(
-            f"Invalid book slug: {slug!r}. Use alphanumeric, dash, or underscore."
-        )
+    validate_book_slug(slug)
 
 
 def _print_json(obj: dict) -> None:
@@ -142,7 +145,10 @@ def _ok(operation: str, data: dict, state_changed: bool = False) -> int:
 
 def _fail(code: str, message: str) -> int:
     _print_json({"ok": False, "error": {"code": code, "message": message}})
-    return 0
+    # Non-zero exit for every failure so shell orchestrators that check
+    # returncode treat it as a failure; the JSON envelope above carries
+    # the structured error for hosts that parse stdout.
+    return 1
 
 
 def _argparse_error(message: str) -> None:
@@ -180,6 +186,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Return the vendor-neutral isolated writer capsule contract.",
     )
 
+    # Mutating: lint/review advance chapter state (see MUTATING_OPS).
     p = sub.add_parser("lint", help="Run prose lint on the current revision.")
     p.add_argument("slug", help="Book slug.")
     p.add_argument("number", type=int, help="Chapter number.")

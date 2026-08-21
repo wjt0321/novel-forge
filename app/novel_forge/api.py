@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from app.novel_forge.models import AuditEvent, Book, BookSummary, ChapterSummary
 from app.novel_forge.service import NovelForgeError, NovelForgeService
@@ -79,7 +79,10 @@ def create_app(root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail=exc.message)
 
     @app.get("/books/{slug}/audit")
-    def get_audit(slug: str, limit: int | None = None) -> list[AuditEvent]:
+    def get_audit(
+        slug: str,
+        limit: int | None = Query(default=None, ge=1, le=1000),
+    ) -> list[AuditEvent]:
         try:
             return svc.audit(slug, limit=limit)
         except NovelForgeError as exc:

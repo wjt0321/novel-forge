@@ -1,6 +1,7 @@
 """Business logic and state machine for Novel Forge."""
 
 import hashlib
+import contextlib
 import json
 import os
 import re
@@ -31,6 +32,7 @@ from app.novel_forge.models import (
     ChapterSummary,
     NovelForgeError,
     Revision,
+    validate_book_slug,
 )
 from app.novel_forge.repository import (
     AuditRepository,
@@ -53,9 +55,8 @@ from app.novel_forge.review_gates import ReviewGatesMixin
 def _atomic_write(path: Path, content: str, encoding: str = "utf-8") -> None:
     """Write content to path atomically via a temp file + os.replace.
 
-    On Windows, os.replace requires the destination to not exist or be on the
-    same filesystem, which is satisfied since the temp file is created in the
-    same directory.
+    The temp file is created in the destination directory so os.replace
+    stays on one filesystem (atomic on Windows and POSIX alike).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = tempfile.NamedTemporaryFile(
@@ -66,13 +67,18 @@ def _atomic_write(path: Path, content: str, encoding: str = "utf-8") -> None:
         delete=False,
     )
     try:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-    finally:
-        tmp.close()
-    os.replace(tmp.name, str(path))
-
+        try:
+            tmp.write(content)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        finally:
+            tmp.close()
+        os.replace(tmp.name, str(path))
+    except Exception:
+        # Never leak the temp file when the write or replace fails.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp.name)
+        raise
 
 
 class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixin):
@@ -351,10 +357,7 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
         }
 
     def init_book(self, slug: str, title: str) -> Book:
-        if not slug or not slug.replace("-", "").replace("_", "").isalnum():
-            raise NovelForgeError(
-                f"Invalid book slug: {slug!r}. Use alphanumeric, dash, or underscore."
-            )
+        validate_book_slug(slug)
 
         book_dir = self._book_dir(slug)
         if book_dir.exists():
@@ -477,7 +480,8 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
 
             # Scene Contract v2 template as revision 1.
             contract_revs_dir = self._scene_contract_revisions_dir(slug, number)
-            contract_revs_dir.mkdir(parents=True)
+            # exist_ok: a retried create after partial failure must not crash.
+            contract_revs_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             contract_path = contract_revs_dir / f"0001-{ts}-template.md"
             contract_template = self._scene_contract_template(number, title)
@@ -859,6 +863,11 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
         if fmt not in {"markdown", "docx", "epub", "pdf"}:
             raise NovelForgeError(f"Unsupported export format: {fmt}")
 
+        # Transaction 1: read inputs, compile markdown, and record the
+        # markdown export. The pandoc subprocess below must NOT run inside
+        # an open write transaction: a slow/hung pandoc would block other
+        # writers, and a failure would roll back the records while the
+        # compiled files stay on disk (unauditable disk/DB divergence).
         with self._conn() as conn:
             book = BookRepository.get_by_slug(conn, slug)
             if book is None:
@@ -913,22 +922,24 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                     ensure_ascii=False,
                 ),
             )
+            book_id = book["id"]
 
-            if fmt == "markdown":
-                return md_path
+        if fmt == "markdown":
+            return md_path
 
-            pandoc = find_pandoc()
-            if pandoc is None:
+        pandoc = find_pandoc()
+        if pandoc is None:
+            with self._conn() as conn:
                 ExportRepository.create(
                     conn,
-                    book_id=book["id"],
+                    book_id=book_id,
                     format=fmt,
                     status="failure",
                     message="Pandoc is not installed.",
                 )
                 AuditRepository.add(
                     conn,
-                    book_id=book["id"],
+                    book_id=book_id,
                     entity_type="export",
                     action="export",
                     details=json.dumps(
@@ -936,26 +947,27 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                         ensure_ascii=False,
                     ),
                 )
-                raise NovelForgeError(
-                    f"Pandoc is not installed. Cannot export to {fmt}."
-                )
+            raise NovelForgeError(
+                f"Pandoc is not installed. Cannot export to {fmt}."
+            )
 
-            exports_dir = self._exports_dir(slug)
-            out_path = exports_dir / f"{slug}.{fmt}"
-            try:
-                convert_with_pandoc(pandoc, md_path, out_path)
-            except Exception as exc:
-                message = str(exc)
+        exports_dir = self._exports_dir(slug)
+        out_path = exports_dir / f"{slug}.{fmt}"
+        try:
+            convert_with_pandoc(pandoc, md_path, out_path)
+        except Exception as exc:
+            message = str(exc)
+            with self._conn() as conn:
                 ExportRepository.create(
                     conn,
-                    book_id=book["id"],
+                    book_id=book_id,
                     format=fmt,
                     status="failure",
                     message=message,
                 )
                 AuditRepository.add(
                     conn,
-                    book_id=book["id"],
+                    book_id=book_id,
                     entity_type="export",
                     action="export",
                     details=json.dumps(
@@ -963,18 +975,20 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                         ensure_ascii=False,
                     ),
                 )
-                raise NovelForgeError(f"Export to {fmt} failed: {message}")
+            raise NovelForgeError(f"Export to {fmt} failed: {message}")
 
+        # Transaction 2: record the conversion outcome.
+        with self._conn() as conn:
             ExportRepository.create(
                 conn,
-                book_id=book["id"],
+                book_id=book_id,
                 format=fmt,
                 file_path=str(out_path.relative_to(self.root)),
                 status="success",
             )
             AuditRepository.add(
                 conn,
-                book_id=book["id"],
+                book_id=book_id,
                 entity_type="export",
                 action="export",
                 details=json.dumps(
@@ -982,7 +996,7 @@ class NovelForgeService(QualityMixin, PlanningMixin, ReviewGatesMixin, CanonMixi
                     ensure_ascii=False,
                 ),
             )
-            return out_path
+        return out_path
 
     # ------------------------------------------------------------------
     # Audit

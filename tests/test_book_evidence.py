@@ -916,7 +916,7 @@ def test_adapter_evidence_status_and_record_contract(tmp_path: Path, capsys):
         ]
     )
     denied = _json_output(capsys)
-    assert code == 0
+    assert code == 1
     assert denied["ok"] is False
     assert denied["error"]["code"] == "confirmation_required"
 

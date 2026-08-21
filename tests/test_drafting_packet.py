@@ -292,7 +292,7 @@ def test_adapter_build_drafting_packet_requires_confirm_and_no_content(
             "--allow-incomplete",
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"

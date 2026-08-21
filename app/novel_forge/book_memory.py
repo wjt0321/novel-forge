@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping
 
-from .models import NovelForgeError
+from .models import NovelForgeError, validate_book_slug
 
 
 MEMORY_SCHEMA_VERSION = 1
@@ -102,6 +102,7 @@ def _now() -> str:
 
 
 def _book_dir(root: Path, slug: str) -> Path:
+    validate_book_slug(slug)
     book_dir = Path(root) / "books" / slug
     if not book_dir.is_dir():
         raise BookMemoryError(f"books/ 项目不存在：{book_dir}")
@@ -173,7 +174,13 @@ def _validate_record_data(raw: Mapping[str, Any]) -> dict[str, Any]:
             _require_nonempty_string(data, field)
         if data["object"] is None or isinstance(data["object"], (dict, list)):
             raise BookMemoryError("fact.object 必须是标量值。")
-        _optional_chapter(data, "valid_from")
+        # valid_from is a required key and must be a real chapter number:
+        # None would crash the range comparison below (and violate the
+        # index's NOT NULL column) instead of raising a readable error.
+        if not isinstance(data.get("valid_from"), int) or isinstance(
+            data.get("valid_from"), bool
+        ) or data["valid_from"] < 1:
+            raise BookMemoryError("fact.valid_from 必须是正整数。")
         _optional_chapter(data, "valid_to")
         if data["valid_to"] is not None and data["valid_to"] < data["valid_from"]:
             raise BookMemoryError("fact.valid_to 不能早于 valid_from。")
@@ -195,7 +202,13 @@ def _validate_record_data(raw: Mapping[str, Any]) -> dict[str, Any]:
         _require_nonempty_string(data, "promise")
         if data["promise_status"] not in PROMISE_STATUSES:
             raise BookMemoryError(f"未知 promise_status：{data['promise_status']}")
-        for field in ("planted_chapter", "target_chapter", "resolved_chapter"):
+        # planted_chapter is required and NOT NULL in the index; reject
+        # None here with a readable message instead of a raw IntegrityError.
+        if not isinstance(data.get("planted_chapter"), int) or isinstance(
+            data.get("planted_chapter"), bool
+        ) or data["planted_chapter"] < 1:
+            raise BookMemoryError("promise.planted_chapter 必须是正整数。")
+        for field in ("target_chapter", "resolved_chapter"):
             _optional_chapter(data, field)
         related = data.get("related_entities", [])
         if not isinstance(related, list) or not all(

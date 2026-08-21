@@ -10,11 +10,10 @@ import stat
 import subprocess
 from typing import Any
 
-from .models import NovelForgeError
+from .models import SLUG_RE, NovelForgeError
 
 
 LOCAL_BOOK_GIT_DIRECTORY = ".local-book-git"
-_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _TAG_RE = re.compile(r"^checkpoint/ch\d{2,}-ch\d{2,}$")
 
 
@@ -37,13 +36,26 @@ def _remove_readonly_tree(path: Path) -> None:
 
 
 def _paths(root: Path, slug: str) -> tuple[Path, Path, Path]:
-    if not _SLUG_RE.fullmatch(slug):
+    if not SLUG_RE.fullmatch(slug):
         raise BookGitError(f"Invalid book slug: {slug!r}.")
     root = Path(root).resolve()
     book_dir = root / "books" / slug
     git_dir = root / LOCAL_BOOK_GIT_DIRECTORY / f"{slug}.git"
     pointer = book_dir / ".git"
     return book_dir, git_dir, pointer
+
+
+def _git_executable() -> str:
+    """Resolve git once to an absolute path.
+
+    Windows CreateProcess searches the current directory for bare names,
+    so running ["git", ...] with cwd=book_dir would execute a planted
+    book_dir/git.exe. Resolving via shutil.which pins PATH lookup.
+    """
+    resolved = shutil.which("git")
+    if resolved is None:
+        raise BookGitError("git executable not found.")
+    return resolved
 
 
 def _run(
@@ -54,7 +66,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     try:
         proc = subprocess.run(
-            ["git", *args],
+            [_git_executable(), *args],
             cwd=cwd,
             capture_output=True,
             text=True,

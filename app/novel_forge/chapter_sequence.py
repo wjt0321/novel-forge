@@ -234,13 +234,19 @@ def chapter_sequence_effective_for_chapter(
             completed_sessions = record.get("completed_sessions")
             if not isinstance(completed_sessions, dict):
                 completed_sessions = {}
+            # Require a non-empty run_id: None == None must not count as a
+            # verified session binding when the caller has no generation.
+            session_binding_verified = (
+                bool(generation_run_id)
+                and completed_sessions.get(str(chapter)) == generation_run_id
+            )
             structurally_complete = (
                 record.get("status") == "complete"
                 and record.get("completed_chapters") == record.get("chapters")
                 and record.get("current_index") == len(record.get("chapters", []))
                 and record.get("active_session_id") is None
                 and chapter in record.get("completed_chapters", [])
-                and completed_sessions.get(str(chapter)) == generation_run_id
+                and session_binding_verified
             )
             candidates.append(
                 {

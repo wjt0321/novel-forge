@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-import shutil
+import tempfile
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -34,7 +35,7 @@ from .book_git import (
     initialize_book_git,
 )
 from .lint import lint_file
-from .models import NovelForgeError
+from .models import NovelForgeError, validate_book_slug
 from .planning_spec import (
     BLIND_RECONSTRUCTION_FIELDS,
     CHAPTER_STATES,
@@ -101,7 +102,27 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text via temp file + atomic replace (crash-safe on Windows)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
 def book_dir_for(root: Path, slug: str) -> Path:
+    validate_book_slug(slug)
     book_dir = Path(root) / "books" / slug
     if not book_dir.is_dir():
         raise BookProjectError(f"books/ 项目不存在：{book_dir}")
@@ -1039,9 +1060,14 @@ def record_review(
     if not review_file.exists():
         raise BookProjectError(f"审稿文件不存在：{review_file}")
     try:
+        # Decode without newline translation, then normalize CRLF/CR to LF
+        # ourselves: writing text containing \r\n through a translated
+        # write would double the carriage returns (\r\r\n) and corrupt the
+        # stored review.
         text = review_file.read_bytes().decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise BookProjectError(f"审稿文件不是有效 UTF-8：{review_file} ({exc})")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
 
     parsed = parse_review(text)
     validation_errors = _review_validation_errors(
@@ -1068,11 +1094,41 @@ def record_review(
         raise BookProjectError(
             f"审稿历史记录已存在，不得覆盖：{history_target.name}"
         )
-    history_target.write_text(text, encoding="utf-8")
-    # The review may already sit at its canonical location (reviewers write
-    # directly into reviews/); only copy when source and target differ.
-    if review_file.resolve() != target.resolve():
-        shutil.copyfile(review_file, target)
+    _atomic_write_text(history_target, text)
+    # Write the exact validated bytes (not a fresh disk read): the review
+    # file is untrusted-role input and may change between the read above
+    # and the copy, which would seal unvalidated content as canonical.
+    # Atomic replace also avoids leaving a truncated canonical review.
+    # When the canonical file already holds equivalent content, leave the
+    # bytes untouched: reviewers may write directly into reviews/, and a
+    # needless rewrite would invalidate session-completion artifact hashes
+    # recorded against the original bytes.
+    needs_write = True
+    try:
+        current_normalized = (
+            target.read_bytes()
+            .decode("utf-8-sig", errors="replace")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+        needs_write = current_normalized != text
+    except OSError:
+        pass
+    if needs_write:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(text.encode("utf-8"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_name, target)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
     seal_artifact(root, slug, history_target, kind="review-history")
     seal_artifact(root, slug, target, kind="review")
 
@@ -1084,7 +1140,7 @@ def record_review(
     )
     state_text = _set_fields(state_text, updated_at=when)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(state_text, encoding="utf-8")
+    _atomic_write_text(state_path, state_text)
 
     return {
         "review_file": f"reviews/{target.name}",
@@ -1440,7 +1496,7 @@ def advance_state(
         fields["next_action"] = next_action
     state_text = _set_fields(state_text, **fields)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(state_text, encoding="utf-8")
+    _atomic_write_text(state_path, state_text)
     result = {
         "chapter_state": f"planning/chapter-state/{ch_id}.md",
         "from": from_state,
@@ -1481,7 +1537,7 @@ def set_draft_mode(
         status="planned" if current["draft_mode"] != mode else current["status"],
     )
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(state_text, encoding="utf-8")
+    _atomic_write_text(state_path, state_text)
     return {
         "chapter_state": state_path.relative_to(book_dir).as_posix(),
         "from": current["draft_mode"],
@@ -1507,7 +1563,7 @@ def bind_generation(
         updated_at=when,
     )
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(state_text, encoding="utf-8")
+    _atomic_write_text(state_path, state_text)
     return {
         "chapter_state": state_path.relative_to(book_dir).as_posix(),
         "generation_id": generation_id,
@@ -2151,7 +2207,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
             created.append(rel)
             if not dry_run:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+                _atomic_write_text(target, content)
             continue
         if rel == "memory/voice-bible.md" or rel in CREATE_ONLY_FILES:
             # Hand-maintained project assets are only created when missing.
@@ -2170,7 +2226,7 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
         else:
             updated.append(rel)
             if not dry_run:
-                target.write_text(content, encoding="utf-8")
+                _atomic_write_text(target, content)
     legacy_state_map = {
         "action_drafted": "scene_packaged",
         "dialogue_planned": "scene_packaged",
@@ -2190,7 +2246,8 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
             relative = state_path.relative_to(book_dir).as_posix()
             migrated_states.append(relative)
             if not dry_run:
-                state_path.write_text(
+                _atomic_write_text(
+                    state_path,
                     _set_fields(
                         state_text,
                         status=new_status,
@@ -2200,7 +2257,6 @@ def sync_tools(root: Path, slug: str, dry_run: bool = False) -> dict[str, Any]:
                             f"{new_status}"
                         ),
                     ),
-                    encoding="utf-8",
                 )
     if dry_run:
         try:

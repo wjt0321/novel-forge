@@ -10,7 +10,7 @@ import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
-from .planning_spec import EXPLANATION_TIC_PATTERNS
+from .planning_spec import EXPLANATION_TIC_PATTERNS, count_cjk_chars
 
 
 @dataclass
@@ -163,7 +163,9 @@ def _truncate(line: str, start: int, end: int, max_len: int = 40) -> str:
 
 
 def _count_cjk_chars(text: str) -> int:
-    return len(re.findall(r"[\u4e00-\u9fff]", text))
+    # Shared metric (planning_spec.count_cjk_chars) so lint counters and
+    # the formal-length gate always agree on what counts as CJK.
+    return count_cjk_chars(text)
 
 
 def _paragraphs_with_lines(text: str) -> list[tuple[list[int], str]]:

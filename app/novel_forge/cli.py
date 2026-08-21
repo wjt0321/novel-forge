@@ -2,10 +2,12 @@
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
 from app.novel_forge.autonomous import AutonomousError, AutonomousWritingService
+from app.novel_forge.db import UnsupportedSchemaVersionError
 from app.novel_forge.models import ScenePlan
 from app.novel_forge.service import NovelForgeError, NovelForgeService
 
@@ -792,10 +794,20 @@ COMMANDS = {
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    svc = NovelForgeService(args.root)
-    handler = COMMANDS[args.command]
     try:
+        svc = NovelForgeService(args.root)
+        handler = COMMANDS[args.command]
         return handler(svc, args)
+    except UnsupportedSchemaVersionError as exc:
+        print(
+            f"Error: database schema v{exc.version} is newer than this "
+            "version supports; upgrade the tool before opening it.",
+            file=sys.stderr,
+        )
+        return 1
+    except sqlite3.Error as exc:
+        print(f"Error: database failure: {exc}", file=sys.stderr)
+        return 1
     except NovelForgeError as exc:
         print(f"Error: {exc.message}", file=sys.stderr)
         return 1

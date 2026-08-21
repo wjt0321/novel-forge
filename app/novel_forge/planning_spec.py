@@ -9,6 +9,20 @@ per-book `tools/` shells and templates are generated from these values.
 
 from __future__ import annotations
 
+import re
+
+# --- CJK character metric ----------------------------------------------------
+# Single source of truth for the CJK count used by the formal-length gate,
+# lint counters, and density denominators. Covers the U+3007 ideographic
+# zero (〇), Extension A, the URO block, and compatibility ideographs.
+CJK_CHAR_RE = re.compile(r"[\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def count_cjk_chars(text: str) -> int:
+    """Return the number of CJK code points in ``text``."""
+    return len(CJK_CHAR_RE.findall(text))
+
+
 # --- Scene package structure ------------------------------------------------
 
 SCENE_PACKAGE_REQUIRED_SECTIONS: tuple[str, ...] = (

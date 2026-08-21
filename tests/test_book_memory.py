@@ -445,7 +445,7 @@ def test_adapter_memory_operations_require_confirmation_and_hide_bodies(
             str(source),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = _json_output(capsys)
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"

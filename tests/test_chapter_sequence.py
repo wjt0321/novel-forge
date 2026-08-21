@@ -293,7 +293,7 @@ def test_adapter_sequence_operations_are_json_only_and_confirmed(
         ]
     )
     denied = _json_output(capsys)
-    assert code == 0
+    assert code == 1
     assert denied["ok"] is False
     assert denied["error"]["code"] == "confirmation_required"
 

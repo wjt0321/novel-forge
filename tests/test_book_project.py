@@ -2181,7 +2181,7 @@ def test_adapter_set_draft_mode_requires_confirm_and_run_gate_asserts_mode(
         ]
     )
     denied = _json_output(capsys)
-    assert code == 0
+    assert code == 1
     assert denied["ok"] is False
     assert denied["error"]["code"] == "confirmation_required"
 
@@ -2215,7 +2215,7 @@ def test_adapter_set_draft_mode_requires_confirm_and_run_gate_asserts_mode(
         ]
     )
     mismatch = _json_output(capsys)
-    assert code == 0
+    assert code == 1
     assert mismatch["ok"] is False
     assert "稿件模式" in mismatch["error"]["message"]
 

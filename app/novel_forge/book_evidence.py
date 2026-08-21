@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from .artifact_integrity import artifact_integrity_errors, seal_artifact
-from .models import NovelForgeError
+from .models import NovelForgeError, validate_book_slug
 from .planning_spec import (
     ARC_AUDIT_INTERVAL,
     DRAFT_MODES,
@@ -521,6 +521,7 @@ def render_evidence_markdown(
 
 
 def _book_dir(root: Path, slug: str) -> Path:
+    validate_book_slug(slug)
     book_dir = Path(root) / "books" / slug
     if not book_dir.is_dir():
         raise BookEvidenceError(f"books/ 项目不存在：{book_dir}")
@@ -665,7 +666,14 @@ def find_evidence_record(
     """Find one immutable evidence record by globally unique ID."""
     book_dir = _book_dir(root, slug)
     for path in _all_evidence_paths(book_dir):
-        record = parse_evidence_markdown(path.read_text(encoding="utf-8-sig"))
+        try:
+            record = parse_evidence_markdown(
+                path.read_text(encoding="utf-8-sig")
+            )
+        except BookEvidenceError:
+            # A corrupted record must not disable the whole evidence layer;
+            # keep scanning so intact records stay reachable.
+            continue
         if record.id == record_id:
             return record, path
     raise BookEvidenceError(f"证据 id 不存在：{record_id}")
@@ -764,8 +772,19 @@ def evidence_status(
     """Return evidence inventory without returning record bodies."""
     book_dir = _book_dir(root, slug)
     records: list[tuple[EvidenceRecord, Path]] = []
+    invalid_record_ids: list[dict[str, str]] = []
     for path in _all_evidence_paths(book_dir):
-        record = parse_evidence_markdown(path.read_text(encoding="utf-8-sig"))
+        try:
+            record = parse_evidence_markdown(
+                path.read_text(encoding="utf-8-sig")
+            )
+        except BookEvidenceError as exc:
+            # Report corrupted records instead of failing the whole status
+            # scan: availability must not mask the integrity signal.
+            invalid_record_ids.append(
+                {"path": path.name, "error": str(exc)}
+            )
+            continue
         if chapter is not None:
             record_chapter = record.data.get("chapter")
             in_arc_range = (
@@ -1065,6 +1084,7 @@ def evidence_status(
         "chapter": chapter,
         "counts": counts,
         "record_ids": [record.id for record, _ in records],
+        "invalid_records": invalid_record_ids,
         "records": [
             {
                 "id": record.id,

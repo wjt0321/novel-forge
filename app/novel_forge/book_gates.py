@@ -34,6 +34,7 @@ from .planning_spec import (
     MIN_CAUSAL_RESPONSIBILITY_ROWS,
     MIN_CHAPTER_PARAGRAPHS,
     MIN_FORMAL_CJK,
+    count_cjk_chars,
     PLANNING_FALSIFICATION_FIELDS,
     PLANNING_FALSIFICATION_SECTION,
     PLACEHOLDER_TOKENS,
@@ -299,7 +300,7 @@ def check_chapter_text(chapter_text: str, mode: str = "formal") -> list[str]:
         return []
     blocking: list[str] = []
     if mode == "formal":
-        cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", chapter_text))
+        cjk = count_cjk_chars(chapter_text)
         if cjk < MIN_FORMAL_CJK:
             blocking.append(
                 f"正式章节不足 {MIN_FORMAL_CJK} 个 CJK 汉字（当前 {cjk}）"
@@ -364,7 +365,10 @@ def _time_rank(value: str) -> int | None:
                 hour += 12
         elif "中午" in value and hour < 11:
             hour += 12
-        elif "深夜" in value and hour < 6:
+        elif "深夜" in value and hour < 12:
+            # 深夜11点 means 23:00, not 11:00: any single-digit hour under
+            # 深夜 belongs to the late-evening side and must rank after
+            # the same-day evening hours.
             hour += 24
         return hour * 60
     period_ranks = (

@@ -5,8 +5,10 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import shutil
 import tempfile
+import time
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -15,7 +17,10 @@ from typing import Any, Mapping
 
 from . import book_memory
 from . import book_project
-from .artifact_integrity import record_session_completion
+from .artifact_integrity import (
+    ArtifactIntegrityError,
+    record_session_completion,
+)
 from .book_gates import check_chapter_text
 from .chapter_sequence import (
     ChapterSequenceError,
@@ -25,7 +30,7 @@ from .chapter_sequence import (
     rotate_chapter_session,
 )
 from .lint import lint_file, lint_text, summarize_advisories
-from .models import NovelForgeError
+from .models import NovelForgeError, validate_book_slug
 from .guardian import (
     GuardianError,
     authorize_regeneration,
@@ -47,6 +52,7 @@ from .review_capsule import (
     verify_review_capsule,
 )
 from .session_audit import audit_session_log
+from .writer_prompt import WriterPromptError
 from .workspace_integrity import (
     create_workspace_backup,
     create_workspace_backup_from_snapshot,
@@ -60,7 +66,7 @@ from .workflow_observability import (
     record_call_observation,
     sanitize_call_telemetry,
 )
-from .planning_spec import EDITOR_SCENE_SECTIONS
+from .planning_spec import EDITOR_SCENE_SECTIONS, count_cjk_chars
 from .workflow_iteration import (
     apply_local_replacements,
     evaluate_budget_breaker,
@@ -91,6 +97,60 @@ NATIVE_ACTION_SCHEMA = "novel-forge-native-action/v1"
 NATIVE_COMPLETION_SCHEMA = "novel-forge-native-completion/v1"
 NATIVE_RELAY_SCHEMA = "novel-forge-native-relay/v1"
 MAX_LEAN_SURFACE_PATCH_ROUNDS = 3
+# Phases that end or suspend the loop: a late role completion must never
+# move them back into an active phase (author-decision invariant, docs/49).
+_TERMINAL_PHASES = frozenset({"stopped", "complete", "decision_required"})
+
+_LOCK_TIMEOUT_SECONDS = 30.0
+_LOCK_STALE_SECONDS = 300.0
+
+
+class _StateFileLock:
+    """Best-effort cross-process mutex for one book's relay state.
+
+    Parallel dual review means two host processes can call complete-role
+    for the same book at the same time. The relay state is read-modify-write
+    (not merge-safe), so completions are serialized with an O_CREAT|O_EXCL
+    lock file next to state.json. A lock left by a crashed process is broken
+    after _LOCK_STALE_SECONDS.
+    """
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._fd: int | None = None
+
+    def __enter__(self) -> "_StateFileLock":
+        deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                self._fd = os.open(
+                    str(self._path),
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+            except FileExistsError:
+                try:
+                    age = time.time() - self._path.stat().st_mtime
+                except OSError:
+                    age = 0.0
+                if age > _LOCK_STALE_SECONDS:
+                    # Crashed holder: break the stale lock and retry.
+                    self._path.unlink(missing_ok=True)
+                    continue
+                if time.monotonic() >= deadline:
+                    raise WorkflowError(
+                        "另一个 complete-role 正在处理同一本书，请稍后重试。"
+                    )
+                time.sleep(0.05)
+                continue
+            else:
+                os.write(self._fd, f"{os.getpid()}".encode("ascii"))
+                return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+            self._path.unlink(missing_ok=True)
 
 
 def _chapter_target_path(chapter: int) -> str:
@@ -462,13 +522,7 @@ class NativeWorkflowRelay:
     @staticmethod
     def _cjk_char_count(text: str) -> int:
         """Count CJK code points for a prose observation summary."""
-        return sum(
-            1
-            for char in text
-            if "\u3400" <= char <= "\u4dbf"
-            or "\u4e00" <= char <= "\u9fff"
-            or "\uf900" <= char <= "\ufaff"
-        )
+        return count_cjk_chars(text)
 
     def _body_observation_summary(
         self,
@@ -795,16 +849,21 @@ class NativeWorkflowRelay:
             return
         preserved = path / "draft" / "正文.md"
         for child in path.iterdir():
+            # Unlink symlinks as links (never follow them): a symlinked
+            # directory pointing outside the capsule must not be rmtree'd.
+            if child.is_symlink():
+                child.unlink()
+                continue
             if child.name == "draft":
                 if not child.is_dir():
                     child.unlink()
                     continue
                 for leaf in child.iterdir():
                     if leaf != preserved:
-                        if leaf.is_dir():
-                            shutil.rmtree(leaf)
-                        else:
+                        if leaf.is_symlink() or not leaf.is_dir():
                             leaf.unlink()
+                        else:
+                            shutil.rmtree(leaf)
                 continue
             if child.is_dir():
                 shutil.rmtree(child)
@@ -1000,10 +1059,38 @@ class NativeWorkflowRelay:
         telemetry: Any = None,
     ) -> WorkflowResult:
         """Complete the current Lean action without a technical envelope."""
+        validate_book_slug(slug)
+        with _StateFileLock(self._lock_path(slug)):
+            return self._complete_minimal_impl(
+                slug,
+                session_id=session_id,
+                result_file=result_file,
+                session_instance_id=session_instance_id,
+                provider=provider,
+                model=model,
+                agent_harness=agent_harness,
+                role=role,
+                telemetry=telemetry,
+            )
+
+    def _complete_minimal_impl(
+        self,
+        slug: str,
+        *,
+        session_id: str | None = None,
+        result_file: Path | None = None,
+        session_instance_id: str | None = None,
+        provider: str = "unknown",
+        model: str = "unknown",
+        agent_harness: str = "native-host",
+        role: str | None = None,
+        telemetry: Any = None,
+    ) -> WorkflowResult:
+        """Serialized body of complete_minimal (caller holds the state lock)."""
         state = self._load_state(slug)
         if self.strict_audit:
             raise WorkflowError("严格审计模式必须提交完整角色终态。")
-        if state.get("phase") == "decision_required":
+        if state.get("phase") in _TERMINAL_PHASES:
             raise WorkflowError(
                 "当前没有可完成的角色动作；请按 status 或 next-action "
                 "列出的可达命令处理（authorize-revision / continue-budget / "
@@ -1145,10 +1232,22 @@ class NativeWorkflowRelay:
             )
         if telemetry is not None:
             completion["telemetry"] = telemetry
-        return self.complete_role(slug, completion)
+        # Already holding the state lock (called from _complete_minimal_impl):
+        # enter the serialized body directly to avoid re-acquiring.
+        return self._complete_role_impl(slug, completion)
 
     def _relay_dir(self, slug: str) -> Path:
         return self.root / ".local-guardian" / slug / "native-relay"
+
+    def _lock_path(self, slug: str) -> Path:
+        # Live outside the repository: strict-audit snapshots compare the
+        # whole repo tree, and a lock file inside it would look like an
+        # unexpected role-created artifact (and could not be unlinked while
+        # held on Windows).
+        key = hashlib.sha256(
+            f"{self.root}|{slug}".encode("utf-8")
+        ).hexdigest()[:32]
+        return Path(tempfile.gettempdir()) / f"novel-forge-lock-{key}.lock"
 
     def _state_path(self, slug: str) -> Path:
         return self._relay_dir(slug) / "state.json"
@@ -1251,6 +1350,7 @@ class NativeWorkflowRelay:
         return None
 
     def _load_state(self, slug: str) -> dict[str, Any]:
+        validate_book_slug(slug)
         path = self._state_path(slug)
         if not path.is_file():
             raise WorkflowError("当前没有运行中的原生工作流。")
@@ -1696,6 +1796,25 @@ class NativeWorkflowRelay:
         backup_path.unlink(missing_ok=True)
         return False
 
+    def _parallel_reviews_outstanding(
+        self,
+        state: dict[str, Any],
+        role: str | None,
+    ) -> bool:
+        """True when a sibling review role is still running in parallel."""
+        if str(state.get("phase") or "") != "awaiting_double_review":
+            return False
+        completed = set(
+            str(item) for item in state.get("completed_review_roles", [])
+        )
+        issued = [
+            str(item) for item in state.get("issued_review_roles", [])
+        ]
+        pending = [item for item in issued if item not in completed]
+        if role is not None:
+            pending = [item for item in pending if item != role]
+        return bool(pending)
+
     def _verify_workspace(
         self,
         slug: str,
@@ -1848,14 +1967,11 @@ class NativeWorkflowRelay:
                 )
                 if restored_unexpected:
                     raise WorkflowError("项目控制面自动恢复失败。")
-            # Middle actions carry no own byte backup (docs/49 §2.3): the
-            # hash comparison still detects the mutation and it is rejected
-            # below; byte restore applies only when a zip (own or the
-            # chapter-start fallback) exists. The chapter-start zip is kept
-            # as the chapter byte baseline, not consumed by its own action.
-            snapshot_path.unlink(missing_ok=True)
-            if action_id != chapter_zip_action_id:
-                backup_path.unlink(missing_ok=True)
+            # Keep the snapshot/backup on failure: they are the forensic
+            # record of what the role actually changed, and the sibling
+            # parallel reviewer may still need the shared baseline. Stale
+            # files are keyed by action_id and never re-read after the
+            # action is retired.
             reason = "control_plane_mutation" if (
                 control_plane_mutated
                 or unexpected_modified
@@ -1865,9 +1981,16 @@ class NativeWorkflowRelay:
                 reason,
                 detail=self._workspace_mutation_detail(allowed, action),
             )
-        snapshot_path.unlink(missing_ok=True)
-        if action_id != chapter_zip_action_id:
-            backup_path.unlink(missing_ok=True)
+        if self._parallel_reviews_outstanding(current_state, role):
+            # Parallel dual review: the snapshot/backup are shared between
+            # both role cards. The first finisher must leave them in place
+            # so the sibling completion does not fail verification and get
+            # spuriously re-issued; the last finisher consumes them.
+            pass
+        else:
+            snapshot_path.unlink(missing_ok=True)
+            if action_id != chapter_zip_action_id:
+                backup_path.unlink(missing_ok=True)
         if control_plane_mutated:
             raise NativeWorkspaceMutationError(
                 "control_plane_mutation",
@@ -1962,22 +2085,46 @@ class NativeWorkflowRelay:
                 require_body_history=self.strict_audit,
             )
             authorization_id = authorization["authorization_id"]
-        prepared = prepare_writer_capsule(
-            self.root,
-            slug,
-            sequence_id,
-            session.session_id,
-            capsule_dir,
-            _chapter_target_path(chapter),
-            regeneration_authorization_id=authorization_id,
-            patch_directive=(
-                "\n".join(f"- {item}" for item in must_findings)
-                if must_findings
-                else None
-            ),
-            writer_context_mode=request.writer_context_mode,
-            volume=request.volume,
-        )
+        try:
+            prepared = prepare_writer_capsule(
+                self.root,
+                slug,
+                sequence_id,
+                session.session_id,
+                capsule_dir,
+                _chapter_target_path(chapter),
+                regeneration_authorization_id=authorization_id,
+                patch_directive=(
+                    "\n".join(f"- {item}" for item in must_findings)
+                    if must_findings
+                    else None
+                ),
+                writer_context_mode=request.writer_context_mode,
+                volume=request.volume,
+            )
+        except WriterPromptError as exc:
+            # Oversized joined MUST directives must route to an author
+            # decision instead of crashing next-action/retry with a bare
+            # prompt-budget error (docs/49 decision routing).
+            result = self.orchestrator._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message="MUST 修订指令超过字符预算，请选择下一步。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="native_role_failed",
+                must_findings=must_findings,
+                parent_generation_id=state.get("parent_generation_id"),
+            )
+            state["phase"] = "decision_required"
+            state["decision_kind"] = "native_role_failed"
+            state["decision_message"] = (
+                f"{exc}；请精简 MUST 或停止后手动处理。"
+            )
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return result
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
@@ -2079,6 +2226,7 @@ class NativeWorkflowRelay:
         chapter: int = 1,
     ) -> WorkflowResult:
         """Initialize deterministic state and dispatch the first creative role."""
+        validate_book_slug(slug)
         request.validate()
         self.orchestrator._assert_project_is_managed(slug, chapter)
         book_dir = self.orchestrator._prepare_project(slug, request, chapter)
@@ -2663,14 +2811,33 @@ class NativeWorkflowRelay:
         completion: dict[str, Any],
     ) -> WorkflowResult:
         """Accept one official native terminal and issue the next action."""
+        validate_book_slug(slug)
+        with _StateFileLock(self._lock_path(slug)):
+            return self._complete_role_impl(slug, completion)
+
+    def _complete_role_impl(
+        self,
+        slug: str,
+        completion: dict[str, Any],
+    ) -> WorkflowResult:
+        """Serialized body of complete_role (caller holds the state lock)."""
         state = self._load_state(slug)
+        if str(state.get("phase") or "") in _TERMINAL_PHASES:
+            # A late host callback for a stopped/finished/decided workflow
+            # must never revive it: re-present the current user-facing
+            # result without mutating any state (docs/49 author-decision
+            # invariant).
+            return self.status(slug)
         telemetry = sanitize_call_telemetry(completion.get("telemetry"))
         current_tokens = telemetry.get("total_tokens")
         observation = state.get("active_call_observation")
         completion_role = ""
         try:
-            completion_role = str(
-                (completion.get("role_result") or {}).get("role") or ""
+            role_result = completion.get("role_result")
+            completion_role = (
+                str(role_result.get("role") or "")
+                if isinstance(role_result, dict)
+                else ""
             )
             current_role = (
                 completion_role
@@ -2762,12 +2929,22 @@ class NativeWorkflowRelay:
                 body_after=failed_body,
             )
             return result
-        except (GuardianError, WorkflowError, OSError, ValueError) as exc:
+        except (
+            GuardianError,
+            WorkflowError,
+            ChapterSequenceError,
+            ArtifactIntegrityError,
+            OSError,
+            ValueError,
+        ) as exc:
             state = self._load_state(slug)
             failed_body = self._body_observation_summary(slug, state)
             self._remember_failed_completion_session(state, completion)
-            failed_review_role = str(
-                (completion.get("role_result") or {}).get("role") or ""
+            role_result = completion.get("role_result")
+            failed_review_role = (
+                str(role_result.get("role") or "")
+                if isinstance(role_result, dict)
+                else ""
             )
             if failed_review_role in {"blind-reader", "chapter-editor"}:
                 state["failed_review_role"] = failed_review_role
@@ -3447,6 +3624,13 @@ class NativeWorkflowRelay:
         failure_detail: str = "",
     ) -> WorkflowResult:
         phase = str(state.get("phase") or "")
+        if phase in _TERMINAL_PHASES:
+            # Defense in depth: the dispatch loop raises WorkflowError for
+            # unknown phases and routes here; a state that turned terminal
+            # between load and failure (e.g. concurrent stop) must stay
+            # terminal instead of being silently revived into a new writer
+            # action.
+            return self.status(slug)
         if phase == "awaiting_blind_reader":
             state.pop("blind_outcome", None)
             state.pop("blind_outcome_source", None)
@@ -4225,6 +4409,17 @@ class NativeWorkflowRelay:
         return session
 
     @staticmethod
+    def _normalize_evidence_quote(value: Any) -> Any:
+        """Normalize one evidence_quote payload without raising.
+
+        An empty list is a valid (if unhelpful) model output shape; treat
+        it like a missing quote instead of raising IndexError.
+        """
+        if isinstance(value, list):
+            return value[0] if value else ""
+        return value
+
+    @staticmethod
     def _result_text(value: Any) -> str:
         if isinstance(value, str):
             return value.strip()
@@ -4410,6 +4605,10 @@ class NativeWorkflowRelay:
                     f"{role} hard_anchor_coverage 字段无效。"
                 )
             hard_anchor_coverage[name] = dict(item)
+        raw_quote = NativeWorkflowRelay._normalize_evidence_quote(
+            payload.get("evidence_quote")
+        )
+        evidence_quote_text = NativeWorkflowRelay._result_text(raw_quote)
         verdict = str(payload.get("verdict") or "").strip()
         if role == "chapter-editor" and verdict == "pass":
             verdict = "ready_for_editor_decision"
@@ -4466,15 +4665,7 @@ class NativeWorkflowRelay:
             ),
             analysis=dict(analysis),
             hard_anchor_coverage=hard_anchor_coverage,
-            evidence_quote=(
-                NativeWorkflowRelay._result_text(
-                    payload.get("evidence_quote", [""])[0]
-                )
-                if isinstance(payload.get("evidence_quote"), list)
-                else NativeWorkflowRelay._result_text(
-                    payload.get("evidence_quote") or ""
-                )
-            ),
+            evidence_quote=evidence_quote_text,
             previous_chapter_quote=str(
                 payload.get("previous_chapter_quote")
                 or "not_applicable"
@@ -4573,9 +4764,18 @@ class NativeWorkflowRelay:
         # docs/49 §4-5: every open MUST's evidence quote must also exist in
         # the reviewed prose; a fabricated citation invalidates the result
         # and routes to the same repair path as an invalid evidence_quote.
+        # An open MUST with NO evidence at all is equally invalid: it would
+        # otherwise drive the one-shot revision budget on an unverifiable
+        # claim (empty-evidence bypass).
         for finding in outcome.findings:
+            if finding.severity.upper() != "MUST":
+                continue
             evidence = finding.evidence.strip()
-            if finding.severity.upper() != "MUST" or not evidence:
+            if not evidence:
+                if finding.status.lower() == "open":
+                    raise WorkflowError(
+                        f"{role} 的开放 MUST 缺少原文引文，结果无效。"
+                    )
                 continue
             matched, detail = _quote_matches(evidence, prose)
             if not matched:
@@ -4854,6 +5054,13 @@ class NativeWorkflowRelay:
         if not isinstance(prepared, dict):
             raise WorkflowError("局部 Patch 缺少 Writer Capsule 绑定。")
         surface_findings = self._capsule_surface_findings(prepared)
+        if not surface_findings:
+            # Both patch paths must re-run the full-chapter hard gates
+            # after revision (AGENTS §5): a local replacement can delete
+            # enough prose to drop below the formal CJK minimum, and that
+            # must surface here as a fixable finding instead of later as
+            # an unfixable hard_gate_failed decision.
+            surface_findings = self._staged_hard_gate_findings(state)
         if surface_findings:
             request = self._request_from_state(state)
             result = self.orchestrator._decision_result(
@@ -5906,19 +6113,24 @@ class NativeWorkflowRelay:
                 decision_reference=human_decision_reference,
             )
             authorization_id = authorization["authorization_id"]
-        prepared = prepare_writer_capsule(
-            self.root,
-            slug,
-            sequence_id,
-            session.session_id,
-            capsule_dir,
-            _chapter_target_path(chapter),
-            regeneration_authorization_id=authorization_id,
-            patch_directive="\n".join(
-                f"- {item}" for item in must_findings
+        try:
+            prepared = prepare_writer_capsule(
+                self.root,
+                slug,
+                sequence_id,
+                session.session_id,
+                capsule_dir,
+                _chapter_target_path(chapter),
+                regeneration_authorization_id=authorization_id,
+                patch_directive="\n".join(
+                    f"- {item}" for item in must_findings
+                )
+                or None,
             )
-            or None,
-        )
+        except WriterPromptError as exc:
+            # Route through the standard technical-failure recovery: the
+            # lean re-sign path turns this into an author decision card.
+            raise WorkflowError(str(exc)) from exc
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": f"native-action-{uuid.uuid4().hex[:16]}",

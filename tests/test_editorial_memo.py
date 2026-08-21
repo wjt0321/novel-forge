@@ -233,7 +233,7 @@ def test_adapter_submit_editorial_memo_requires_confirm_and_validates(
             str(memo_path),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = json.loads(capsys.readouterr().out.strip())
     assert data["ok"] is False
     assert data["error"]["code"] == "confirmation_required"
@@ -254,7 +254,7 @@ def test_adapter_submit_editorial_memo_requires_confirm_and_validates(
             str(bad_path),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = json.loads(capsys.readouterr().out.strip())
     assert data["ok"] is False
     assert "UTF-8" in data["error"]["message"]
@@ -289,7 +289,7 @@ def test_adapter_submit_editorial_memo_requires_confirm_and_validates(
             str(bad_role_path),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = json.loads(capsys.readouterr().out.strip())
     assert data["ok"] is False
     assert "independent_reader_editor" in data["error"]["message"]
@@ -344,7 +344,7 @@ def test_adapter_submit_editorial_memo_requires_confirm_and_validates(
             str(lib_path),
         ]
     )
-    assert code == 0
+    assert code == 1
     data = json.loads(capsys.readouterr().out.strip())
     assert data["ok"] is False
     assert "library" in data["error"]["message"]
@@ -412,7 +412,7 @@ def test_adapter_review_includes_memo_status(tmp_path: Path, capsys):
     _setup_approvable_chapter(svc, tmp_path)
     ready_memo(svc, "test", 1)
 
-    code = main(["--root", str(tmp_path), "review", "test", "1"])
+    code = main(["--root", str(tmp_path), "--confirm", "review", "review", "test", "1"])
     assert code == 0
     data = json.loads(capsys.readouterr().out.strip())
     assert data["ok"] is True
