@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from . import book_arcs
 from . import book_project
 from .artifact_integrity import (
     _WORKFLOW_AUTHORITY_REGISTRY,
@@ -45,6 +46,7 @@ from .guardian import (
 )
 from .models import NovelForgeError
 from .planning_spec import (
+    CANON_DIGEST_MAX_CHARS,
     PLANNING_STORY_ENGINE_SECTIONS,
     PLANNING_VOICE_BIBLE_SECTIONS,
     REVIEW_ANALYSIS_FIELDS,
@@ -1258,13 +1260,14 @@ class NovelWorkflowOrchestrator:
             context["voice_bible_path"] = (
                 voice_path.relative_to(book_dir).as_posix()
             )
+        context["arcs"] = book_arcs.arc_digest(book_dir, max_chars=1_200)
         canon_dir = book_dir / "memory/canon"
         if canon_dir.is_dir():
             canon = "\n\n".join(
                 path.read_text(encoding="utf-8-sig")
                 for path in sorted(canon_dir.rglob("*.md"))
             )
-            context["canon"] = canon[:12000]
+            context["canon"] = canon[:CANON_DIGEST_MAX_CHARS]
         if chapter > 1:
             previous = book_project.find_chapter_file(book_dir, chapter - 1)
             previous_text = previous.read_text(encoding="utf-8-sig")

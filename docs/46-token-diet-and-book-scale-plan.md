@@ -134,6 +134,14 @@ A1 交接包预算收紧 ──► A2 规划卡去内嵌 ──► B1 跨章重�
 - [x] A3 语料两节常驻成本优化（推荐拆 style-reference.md）
 - [x] B1 跨章重复检测（book_repeat.py + 门禁接入 + 白名单）
 - [x] B3 声音锚定策略（anchor 标记 + voice-seed 冷启动）
-- [ ] B2 人物弧线账本（arcs/*.md + scene package 字段 + promotion）
-- [ ] A4 canon 摘要 12k→6k 试验
-- [ ] A5 规则文本去重审计
+- [x] B2 人物弧线账本（arcs/*.md + scene package 字段 + promotion）
+- [x] A4 canon 摘要 12k→6k 试验
+- [x] A5 规则文本去重审计
+
+---
+
+## 收尾记录（2026-08-21）
+
+Checklist 全部完成。A5 审计结论：规则文本已单源化（跨源 ≥12 字短语重复仅
+2 处无害边界样板），无需合并重构。A4 以 6000 固化；如后续实书审稿质量
+退化，只需调回 planning_spec.CANON_DIGEST_MAX_CHARS 一处。

@@ -541,6 +541,22 @@ def _derive_project_root(chapter_path: Path) -> Path:
     return resolved.parents[3]
 
 
+ARC_POSITION_FIELD = "弧线位置"
+
+
+def check_arc_position(package_text: str, chapter_number: int) -> list[str]:
+    """Advisory: ch02+ scene packages should state each key character's arc
+    position (docs/46 B2). Never blocks; ch01 is exempt (起点 by definition)."""
+    if chapter_number < 2:
+        return []
+    if ARC_POSITION_FIELD in package_text:
+        return []
+    return [
+        "scene-package 未标注「弧线位置」；第 2 章起建议注明关键人物"
+        "当前处于 planning/arcs/ 账本的哪一格。"
+    ]
+
+
 def narrative_report(
     chapter_path: Path, package_path: Path, mode: str = "formal"
 ) -> dict[str, Any]:
@@ -582,6 +598,7 @@ def narrative_report(
         )
         blocking.extend(mat_blocking)
         advisory.extend(mat_advisory)
+        advisory.extend(check_arc_position(package, chapter_number))
     elif mode == "degraded_exploration":
         advisory.append(
             "降级运行：工具或沙箱能力受限；本稿仅作探索样本，"

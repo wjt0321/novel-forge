@@ -4299,7 +4299,7 @@ def test_lean_editor_canon_uses_compressed_memory_view(tmp_path: Path):
     assert "戏楼暗门只能从内侧打开" in canon
     assert "schema_version" not in canon
     assert "supersedes" not in canon
-    assert len(canon) <= 12000
+    assert len(canon) <= 6000
 
 
 def test_lean_editor_scene_package_drops_audit_sections_and_duplicate_contract(

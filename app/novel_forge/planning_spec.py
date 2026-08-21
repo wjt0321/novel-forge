@@ -107,6 +107,10 @@ MAX_REQUESTS_PER_CHAPTER = 30
 MAX_DRAFT_MUTATIONS_PER_CHAPTER = 3
 MAX_REVIEW_CALLS_PER_CHAPTER = 3
 MAX_REQUEST_CONTEXT_TOKENS = 120_000
+# docs/46 A4: bounded canon digest shared by review capsules and planning
+# context. Reduced from 12_000 after the handoff diet; revisit only with a
+# real-book quality comparison.
+CANON_DIGEST_MAX_CHARS = 6_000
 
 # v4.0 chapter-session orchestration. A sequence is an orchestration convenience,
 # never a shared writer context: every chapter still receives a fresh native

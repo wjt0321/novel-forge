@@ -338,3 +338,21 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
    memory/voice-seed.md（作者手写 ≥50 汉字）在 ch01 handoff 中替代范文位。
 
 回归：全量 817 passed。B2 弧线账本与 A4/A5 仍按 docs/46 待办。
+
+## 2026-08-21（五）：docs/46 第二批——弧线账本 B2 + canon 降额 A4 + 规则文本审计 A5
+
+1. B2 人物弧线账本：新模块 book_arcs.py。账本是作者直维护的 Markdown 单源
+   （planning/arcs/<角色>.md，init 提供 _template.md）；Python 只读——解析
+   「当前位置」与「弧线刻度」表，输出有界摘要（≤1200 字符）进 Writer handoff
+   与 strict 规划上下文。场景包模板第 6 节新增「弧线位置」行；
+   book_gates.check_arc_position 对 ch02+ 缺失场景给 advisory（不 blocking）。
+   设计取舍：planning/ 本就是作者所有单源，故不引入 candidate/promotion
+   二段式；Writer 永远只读不写弧线文件。
+2. A4 canon 摘要降额：新增 planning_spec.CANON_DIGEST_MAX_CHARS=6000 单源，
+   审稿 capsule（native_relay）与规划上下文（workflow._planning_context）
+   两处从 12000 统一降为该常量。若实书试运行发现审稿质量退化，回调此一处即可。
+3. A5 规则文本去重审计：以 ≥12 字连续 CJK 短语为粒度对 micro_rules /
+   human_policies / mechanism / writer_prompt / 双审提示词 / voice-bible
+   做交叉比对，仅发现 2 处边界样板短语重叠（「以当前人物会注意的事物组织现场」、
+   「通过宿主正式结果通道返回结构化判断」）。判定：规则文本已经单源化，
+   无需合并重构；两处重叠属无害边界文案，保留。

@@ -504,6 +504,28 @@ ________________
 """
 
 
+def _planning_arc_template_md() -> str:
+    return """# 人物弧线 — <角色名>
+
+> 跨章变化账本（docs/46 B2）：记录该人物被经历改变的过程。
+> 每个主要角色复制本文件为 `planning/arcs/<角色名>.md`；作者直接维护，
+> Writer 经 handoff 只读摘要，不参与撰写。只记变化，不写人物小传。
+
+## 信念起点
+- 他/她一开始坚信什么：__________
+- 这个信念从哪来：__________
+
+## 弧线刻度
+| # | 章 | 事件 | 信念变化 | 付出的代价 |
+|---|---|---|---|---|
+| 1 |  |  |  |  |
+
+## 当前位置
+- 截至最新晋升章节，他/她处在哪一格：
+- 下一次动摇的候选触发（不承诺章节）：
+"""
+
+
 def _memory_voice_seed_md() -> str:
     return """# Voice Seed — 作者手写声音种子
 
@@ -1132,6 +1154,7 @@ def _planning_scene_package_template_md() -> str:
 - 私人欲望（任务之外仍想保住什么）：
 - 关系摩擦（对方不会配合什么）：
 - 感知偏差（视角人物先注意什么、容易漏掉什么）：
+- 弧线位置（第 2 章起必填：关键人物本章开始时处于 planning/arcs/ 账本的哪一格；首章写 起点）：
 
 ## 7. 场景余波
 - 身体 / 物件 / 关系 / 认知误信 / 未偿承诺：
@@ -1268,6 +1291,7 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
         (),
     ),
     "planning/scene-package-template.md": (_planning_scene_package_template_md, ()),
+    "planning/arcs/_template.md": (_planning_arc_template_md, ()),
     "planning/action-draft-template.md": (_planning_action_draft_template_md, ()),
     "planning/dialogue-ledger-template.md": (_planning_dialogue_ledger_template_md, ()),
     "planning/chapter-state-template.md": (_planning_chapter_state_template_md, ()),

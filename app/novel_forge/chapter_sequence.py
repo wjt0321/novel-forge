@@ -36,6 +36,7 @@ from .planning_spec import (
     count_cjk_chars,
     render_literary_micro_rules,
 )
+from . import book_arcs
 
 
 CHAPTER_SEQUENCE_SCHEMA = "novel-forge-chapter-sequence/v1"
@@ -392,6 +393,8 @@ def build_chapter_handoff(
         "## Canon 与活跃承诺",
         "",
         memory_text,
+        "",
+        book_arcs.arc_digest(book_dir) or "- 尚无人物弧线账本（planning/arcs/）。",
         "",
         "## 当前章 Writer Story Brief",
         "",

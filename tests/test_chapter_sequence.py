@@ -520,3 +520,27 @@ def test_init_creates_voice_seed_and_style_reference(tmp_path: Path):
     book_dir = tmp_path / "books" / "demo"
     assert (book_dir / "memory/voice-seed.md").is_file()
     assert (book_dir / "memory/style-reference.md").is_file()
+
+
+def test_handoff_includes_arc_digest_when_ledger_exists(tmp_path: Path):
+    book_dir = _sequence_book(tmp_path)
+    (book_dir / "planning/arcs/林晚.md").write_text(
+        "# 人物弧线 — 林晚\n\n## 信念起点\n- 她一开始坚信什么：规矩能保命\n\n"
+        "## 弧线刻度\n| # | 章 | 事件 | 信念变化 | 付出的代价 |\n"
+        "|---|---|---|---|---|\n| 1 | ch03 | 目击同事被牺牲 | 开始怀疑规矩 | 失去搭档 |\n\n"
+        "## 当前位置\n- 截至最新晋升章节，他/她处在哪一格：\n  怀疑规矩但尚未公开反抗\n",
+        encoding="utf-8",
+    )
+    result = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=1,
+        sequence_id="seq-arcs",
+        orchestrator_run_id="orch-arcs",
+    )
+    handoff = (book_dir / result["launch"]["handoff_path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "人物弧线" in handoff
+    assert "怀疑规矩但尚未公开反抗" in handoff

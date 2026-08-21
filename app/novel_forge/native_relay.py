@@ -67,7 +67,11 @@ from .workflow_observability import (
     record_call_observation,
     sanitize_call_telemetry,
 )
-from .planning_spec import EDITOR_SCENE_SECTIONS, count_cjk_chars
+from .planning_spec import (
+    CANON_DIGEST_MAX_CHARS,
+    EDITOR_SCENE_SECTIONS,
+    count_cjk_chars,
+)
 from .workflow_iteration import (
     apply_local_replacements,
     evaluate_budget_breaker,
@@ -3265,7 +3269,7 @@ class NativeWorkflowRelay:
                 self.root,
                 slug,
                 chapter,
-                max_chars=12000,
+                max_chars=CANON_DIGEST_MAX_CHARS,
             )
         blind_path = book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
         blind_outcome = state.get("blind_outcome")
