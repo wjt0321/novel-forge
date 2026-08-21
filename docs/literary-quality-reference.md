@@ -128,6 +128,25 @@ A deterministic literary-texture hint may point to repeated openings, reaction f
 
 Only open MUST findings trigger literary revision. MAY findings remain advisory. Local Patch is allowed only for uniquely locatable paragraph-scale defects; otherwise one concentrated whole-chapter Patch is used. Every revised body is read in full by both review roles. A second reviewed body with MUST stops for the author.
 
+## Book-scale quality features（作者使用说明）
+
+以下特性自动运行，作者只需在三个位置做轻量维护；全部为 advisory / 只读机制，
+永不 blocking，不构成质量认证。
+
+- **声音锚定**：在 voice-bible 的 exemplar_notes 写一行 `anchor: ch03,ch07`，
+  声音漂移对比目标即改为锚定章集合（当前章句长均值偏离锚定均值 [0.7x,1.4x]
+  区间时报 anchor-drift）。未标注时维持默认行为。动笔前把手写 300–500 字样本
+  放进 `memory/voice-seed.md`（create-only），ch01 handoff 会用它作声音锚。
+- **人物弧线账本**：为每个主要角色复制 `planning/arcs/_template.md` 为
+  `planning/arcs/<角色名>.md`，维护「弧线刻度」表与「当前位置」。摘要自动进入
+  Writer handoff 与规划上下文（只读）；场景包第 6 节自 ch02 起填「弧线位置」，
+  缺失时审稿给 advisory。
+- **跨章重复检测**：全自动。比喻句复用、8 字措辞回声、章末收束雷同会以 advisory
+  进编辑诊断并注明最早出现章节；同一片段出现在 ≥2 个更早章节视为合法母题豁免。
+- **风格参照系**：全量正例基因与 AI 味反例在 `memory/style-reference.md`
+  （create-only，按需查阅，不随章节上下文流转）；voice-bible 只保留
+  「本书采纳的风格基因」勾选表，勾选后写进对应小节成为声音宪法的一部分。
+
 ## Evidence examples
 
 Read these as bounded evidence, not style templates:

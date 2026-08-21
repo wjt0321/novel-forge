@@ -9,8 +9,12 @@ S-Black Novel Forge documentation is intentionally split into a small current se
 | Run the current `books/` workflow | `43-fiction-first-lean-native-workflow.md` |
 | Understand current states, retries, recovery, and truth boundaries | `44-current-workflow-logic-audit.md` |
 | Understand the P0/P1/P2, local Patch, capability, risk, and budget iteration | `45-workflow-iteration-proposal.md` |
-| Read the production-blocker review and the next iteration proposal | `46-workflow-iteration-blockers-liangu.md`、`47-workflow-iteration-proposal.md` |
+| Use the book-scale quality features (voice anchor, arc ledger, cross-chapter repetition) | `literary-quality-reference.md` → "Book-scale quality features" |
 | Future-direction note: AI cosplay interactive narrative | `48-cosplay-narrative-future.md` |
+
+Completed one-time proposals and retrospectives (46 blockers, 47 iteration,
+49 code review, token-diet plan) are archived in `archive/history.md`; their
+originals remain in Git history.
 
 Daily chapter work should normally stop after these documents. Do not read historical milestones before executing `next-action`.
 
@@ -57,3 +61,5 @@ Detailed superseded prose remains available through Git history. The archive is 
 ## Consolidation record
 
 On 2026-07-31 the documentation tree was reduced from 115 files / 10,184 non-empty lines to 15 files / 1,553 non-empty lines (87.0% fewer files and 84.8% fewer lines). Most of the former sprawl came from 42 sequential milestone documents, 18 completed design/implementation plans, and paired Markdown/JSON experiment reports. They were consolidated because the repository already identifies 43/44/45 as the current truth and Git preserves exact historical versions.
+
+On 2026-08-21 four completed one-time documents (`46-workflow-iteration-blockers-liangu.md`, `47-workflow-iteration-proposal.md`, `49-workflow-code-review-proposal.md`, `46-token-diet-and-book-scale-plan.md`) were archived into `archive/history.md` and removed; `44-current-workflow-logic-audit.md` compressed its dated changelog sections to durable conclusions only. Author-facing usage for the book-scale quality features moved to `literary-quality-reference.md`.

@@ -218,3 +218,27 @@
 ### 交叉引用
 
 缺陷 2 与本档案现有 v43、v47、v50、v53 绕过类同根；缺陷 1 的恢复路径与 v48（恢复不能抹掉合规正文）、v49（官方终态前文件出现不是完成）相邻。本档案可复用结论 4（"强 Lead 推理不能替代程序强制的角色隔离"）与结论 5（"弱 Lead 行为必须无法自写/自审出 ready"）直接适用。
+## 2026-08-21 文档收敛：一次性提案/复盘归档
+
+以下四个已完成文档删除（耐久结论如下，原文见 Git 历史）：
+
+1. **46-workflow-iteration-blockers-liangu.md**（《敛骨人》卡点复盘）：核心教训
+   是 decision_required 曾无"修复后晋升"可行路径（lean 无 receipt 导致
+   regeneration 门槛永不可满足）。修复 = authorize-revision 语义 + lean 下
+   author 决策经 require_body_history=False 授权第三版。后续所有决策类故障
+   均路由为可授权 decision。
+2. **47-workflow-iteration-proposal.md**：46 复盘与首轮代码审查的全部意见已于
+   2026-08-02 实施完毕；第二轮审查修复亦完成。实施明细在当日 docs/44 小节与 Git 历史。
+3. **49-workflow-code-review-proposal.md**（2026-08-07 代码审查）：§2 字段单源/
+   zip 三节点、P1 会话契约、§3 token 压缩、§4 修辞 advisory 与 uncertain 契约
+   全部落地，记录在 docs/44 的 2026-08-07 各小节。代码注释中残留的 "docs/49 §N"
+   引用指本文档（Git 历史可查）。
+4. **46-token-diet-and-book-scale-plan.md**：Checklist 八项全部完成——A1 交接包
+   15,200、A2 规划卡有界摘录、A3 style-reference.md 拆分、B1 book_repeat.py、
+   B2 book_arcs.py、B3 anchor+voice-seed、A4 canon 6000、A5 审计=已单源化。
+   行为变更记录于 docs/44 的 2026-08-21（四）（五）小节；作者用法收进
+   literary-quality-reference「Book-scale quality features」。代码注释中的
+   "docs/46 B1/B2/B3/A1-A5" 编号即该计划条目。
+
+保留的现行文档：43（流程规则）、44（逻辑审计+变更日志）、45（迭代实施记录）、
+48（未来方向笔记）、三份聚焦 reference、README、本 archive。
