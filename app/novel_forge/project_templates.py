@@ -388,8 +388,6 @@ _VOICE_PALETTES: dict[str, str] = {
 def _memory_voice_bible_md(title: str, genre: str) -> str:
     preset = genre_preset(genre)
     palette = _VOICE_PALETTES[preset]
-    positive_genes = render_positive_genes_brief()
-    ai_tells = render_ai_tells_brief()
     return f"""# Voice Bible — 《{title}》
 
 > 本书的声音宪法。硬禁令只保留机器可检测的少数几条；其余全部是正面引导：
@@ -481,18 +479,19 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 ## 写前仪式：角色独白
 动笔前以主角第一人称写 300-500 字独白（不进入正文，不留档）。问自己：此刻他/她最不想想的是什么？让他/她去想到那个。
 
-## 风格基因库（正例参照）
-> 取自对知名作品的公开技法分析，只学叙事功能、不抄任何措辞。与本书声音冲突的
-> 基因直接忽略；采纳的基因写进上方对应小节，而不是每次写作时重读全表。
+## 本书采纳的风格基因
+> 全量正例基因与 AI 味反例见 `memory/style-reference.md`（按需查阅，不随章流转）。
+> 作者从这里勾选本书真正采纳的少数几条；勾选后写进上方对应小节，成为声音宪法的一部分。
+> 与本书声音冲突的基因直接忽略。
 
-{positive_genes}
-
-## AI 味对照清单（反例禁则）
-> 密度才是破绽：单次出现不算罪，同类模式反复出现才构成机器味。审稿 advisory
-> 会抽样提示其中可机检的条目（emotion-label / connective-tic 等），其余靠
-> 起草与复审时人工对照。
-
-{ai_tells}
+- [ ] 冰山省略：删掉一切可有可无的解释，情绪凝结在动作与物件里
+- [ ] 电报节奏：形容词审计、长短句交错
+- [ ] 贴着人物写：叙述语言随视角人物换挡
+- [ ] 对白朴素律：对白只做当件事，不带哲理腔
+- [ ] 短句切开：关键节拍用超短句收束
+- [ ] 闲笔：允许不推进剧情的描写让世界活着
+- [ ] 白描忌成语：用本场景的具体物，不用现成四字套语
+- [ ] 对白三式：文白/雅俗/急缓按人物身份分流
 
 ## exemplar_notes
 > 第 2 章起必填（narrative_gate 会检查本节）：从本书已写章节中选一个短段，
@@ -502,6 +501,29 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 > 更不得把诊断值交给 Writer 当作生成目标。
 
 ________________
+"""
+
+
+def _memory_style_reference_md() -> str:
+    positive_genes = render_positive_genes_brief()
+    ai_tells = render_ai_tells_brief()
+    return f"""# Style Reference — 正例基因与 AI 味反例
+
+> 本文件由项目初始化生成一次（style-corpus/v1），属于 create-only 资产：
+> sync 永不覆盖。按需查阅，不随章节上下文流转。
+> 只学叙事功能、不抄任何措辞；与本书声音冲突的条目直接忽略。
+> 采纳的基因请勾选进 `memory/voice-bible.md` 的「本书采纳的风格基因」。
+
+## 风格基因库（正例参照）
+
+{positive_genes}
+
+## AI 味对照清单（反例禁则）
+> 密度才是破绽：单次出现不算罪，同类模式反复出现才构成机器味。审稿 advisory
+> 会抽样提示其中可机检的条目（emotion-label / connective-tic 等），其余靠
+> 起草与复审时人工对照。
+
+{ai_tells}
 """
 
 
@@ -1196,6 +1218,7 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "memory/past.md": (_memory_past_md, ()),
     "memory/worldbuilding.md": (_memory_worldbuilding_md, ()),
     "memory/voice-bible.md": (_memory_voice_bible_md, ("title", "genre")),
+    "memory/style-reference.md": (_memory_style_reference_md, ()),
     "memory/future/00-index.md": (_memory_future_index_md, ()),
     "memory/MEMORY.md": (_memory_guide_md, ()),
     "memory/memory-record-template.md": (_memory_record_template_md, ()),
@@ -1298,6 +1321,7 @@ SYNCABLE_FILES: tuple[str, ...] = (
 CREATE_ONLY_FILES: tuple[str, ...] = (
     "evaluation/constitution.md",
     "evaluation/rule-registry.md",
+    "memory/style-reference.md",
 )
 
 

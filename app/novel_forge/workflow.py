@@ -44,7 +44,12 @@ from .guardian import (
     reject_writer_capsule,
 )
 from .models import NovelForgeError
-from .planning_spec import REVIEW_ANALYSIS_FIELDS
+from .planning_spec import (
+    PLANNING_STORY_ENGINE_SECTIONS,
+    PLANNING_VOICE_BIBLE_SECTIONS,
+    REVIEW_ANALYSIS_FIELDS,
+)
+from .workflow_iteration import extract_markdown_sections
 from .project_templates import init_book_project
 from .review_prompt import (
     render_planning_instructions,
@@ -1229,15 +1234,30 @@ class NovelWorkflowOrchestrator:
 
     @staticmethod
     def _planning_context(book_dir: Path, chapter: int) -> dict[str, str]:
-        """Build bounded context for the Writer's planning phase."""
+        """Build bounded context for the Writer's planning phase.
+
+        docs/46 A2: embed section excerpts instead of whole control-plane
+        files; keep source paths so hosts can grant targeted reads.
+        """
         context: dict[str, str] = {}
-        for name, relative in (
-            ("story_engine", "planning/story-engine.md"),
-            ("voice_bible", "memory/voice-bible.md"),
-        ):
-            path = book_dir / relative
-            if path.is_file():
-                context[name] = path.read_text(encoding="utf-8-sig")
+        story_path = book_dir / "planning/story-engine.md"
+        if story_path.is_file():
+            story_text = story_path.read_text(encoding="utf-8-sig")
+            context["story_engine"] = extract_markdown_sections(
+                story_text, PLANNING_STORY_ENGINE_SECTIONS
+            )
+            context["story_engine_path"] = (
+                story_path.relative_to(book_dir).as_posix()
+            )
+        voice_path = book_dir / "memory/voice-bible.md"
+        if voice_path.is_file():
+            voice_text = voice_path.read_text(encoding="utf-8-sig")
+            context["voice_bible"] = extract_markdown_sections(
+                voice_text, PLANNING_VOICE_BIBLE_SECTIONS
+            )
+            context["voice_bible_path"] = (
+                voice_path.relative_to(book_dir).as_posix()
+            )
         canon_dir = book_dir / "memory/canon"
         if canon_dir.is_dir():
             canon = "\n\n".join(

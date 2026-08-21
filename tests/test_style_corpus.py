@@ -99,9 +99,20 @@ def test_clean_prose_does_not_trigger_new_rules():
 
 
 def test_voice_bible_template_embeds_both_corpus_sections():
+    """docs/46 A3: full corpus lives in style-reference.md; bible keeps a
+    compact adoption checklist pointing at it."""
+    from app.novel_forge.project_templates import _memory_style_reference_md
+
     bible = _memory_voice_bible_md("测试书", "都市")
-    assert "## 风格基因库（正例参照）" in bible
-    assert "## AI 味对照清单（反例禁则）" in bible
-    assert "海明威 · 冰山省略" in bible
-    assert "只学叙事功能、不抄任何措辞" in bible
-    assert "密度才是破绽" in bible
+    assert "## 本书采纳的风格基因" in bible
+    assert "memory/style-reference.md" in bible
+    assert "风格基因库（正例参照）" not in bible
+    assert "AI 味对照清单" not in bible
+    assert len(bible) < 3_600
+
+    reference = _memory_style_reference_md()
+    assert "## 风格基因库（正例参照）" in reference
+    assert "## AI 味对照清单（反例禁则）" in reference
+    assert "海明威 · 冰山省略" in reference
+    assert "只学叙事功能、不抄任何措辞" in reference
+    assert "密度才是破绽" in reference

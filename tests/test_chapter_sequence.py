@@ -93,6 +93,24 @@ def test_begin_sequence_issues_one_chapter_launch_and_persists_state(
     assert len(handoff) < 30_000
 
 
+def test_handoff_budgets_stay_tight_and_self_consistent():
+    """docs/46 A1: budgets live only in planning_spec and must not re-inflate."""
+    from app.novel_forge import planning_spec as ps
+
+    assert ps.MAX_HANDOFF_MEMORY_CHARS <= 6_000
+    assert ps.MAX_HANDOFF_SCENE_PACKAGE_CHARS <= 5_000
+    parts = (
+        ps.MAX_HANDOFF_MEMORY_CHARS
+        + ps.MAX_HANDOFF_SCENE_PACKAGE_CHARS
+        + ps.MAX_HANDOFF_PREVIOUS_TAIL_CHARS
+        + ps.MAX_HANDOFF_VOICE_EXEMPLAR_CHARS
+    )
+    # Worst-case packet must fit: parts + scaffolding margin <= total.
+    assert ps.MAX_HANDOFF_TOTAL_CHARS >= parts + ps.HANDOFF_SCAFFOLD_MARGIN_CHARS
+    # Guard against silent re-inflation of the per-chapter token diet.
+    assert ps.MAX_HANDOFF_TOTAL_CHARS <= 16_000
+
+
 def test_handoff_hides_numeric_style_targets_and_warns_against_copying(
     tmp_path: Path,
 ):

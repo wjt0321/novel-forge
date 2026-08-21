@@ -1837,6 +1837,29 @@ def test_command_harness_control_plane_mutation_is_blocked(
         backend.create_session("writer")
 
 
+def test_planning_context_embeds_bounded_excerpts_not_whole_files(
+    tmp_path: Path,
+):
+    """docs/46 A2: planning cards carry section excerpts plus source paths."""
+    from app.novel_forge.project_templates import init_book_project
+
+    init_book_project(tmp_path, "demo", "边界书", "都市")
+    book_dir = tmp_path / "books" / "demo"
+    context = (
+        workflow_module.NovelWorkflowOrchestrator._planning_context(
+            book_dir, 1
+        )
+    )
+    assert "核心秘密" in context["story_engine"]
+    assert "五层责任" not in context["story_engine"]
+    assert "盲评问题" not in context["story_engine"]
+    assert context["story_engine_path"] == "planning/story-engine.md"
+    assert "## narrative_distance" in context["voice_bible"]
+    assert "风格基因库" not in context["voice_bible"]
+    assert "AI 味对照清单" not in context["voice_bible"]
+    assert context["voice_bible_path"] == "memory/voice-bible.md"
+
+
 def test_native_planning_role_cannot_create_project_artifacts(
     tmp_path: Path,
 ):

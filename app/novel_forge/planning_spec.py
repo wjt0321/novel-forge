@@ -113,11 +113,53 @@ MAX_REQUEST_CONTEXT_TOKENS = 120_000
 # session and a bounded handoff packet.
 DEFAULT_CHAPTERS_PER_SEQUENCE = 1
 MAX_CHAPTERS_PER_SEQUENCE = 4
-MAX_HANDOFF_MEMORY_CHARS = 12_000
-MAX_HANDOFF_SCENE_PACKAGE_CHARS = 8_000
+MAX_HANDOFF_MEMORY_CHARS = 6_000
+MAX_HANDOFF_SCENE_PACKAGE_CHARS = 5_000
 MAX_HANDOFF_PREVIOUS_TAIL_CHARS = 1_600
 MAX_HANDOFF_VOICE_EXEMPLAR_CHARS = 1_200
-MAX_HANDOFF_TOTAL_CHARS = 28_000
+# Worst-case handoff = sum of part caps + fixed scaffolding (session boundary,
+# voice-anchor rules, literary micro rules, stop rules ~1.1k chars). The total
+# cap must stay above that sum or full packets would fail spuriously.
+HANDOFF_SCAFFOLD_MARGIN_CHARS = 1_400
+MAX_HANDOFF_TOTAL_CHARS = (
+    MAX_HANDOFF_MEMORY_CHARS
+    + MAX_HANDOFF_SCENE_PACKAGE_CHARS
+    + MAX_HANDOFF_PREVIOUS_TAIL_CHARS
+    + MAX_HANDOFF_VOICE_EXEMPLAR_CHARS
+    + HANDOFF_SCAFFOLD_MARGIN_CHARS
+)
+
+# docs/46 A2: writer-planning action cards embed bounded excerpts, never whole
+# control-plane files. Story-obligation sections only; editor-facing sections
+# (五层责任/证据边界/反例边界/盲评问题/可观察证据) stay out of writer context.
+PLANNING_STORY_ENGINE_SECTIONS: tuple[str, ...] = (
+    "核心秘密",
+    "欲望",
+    "对抗中的独立意志",
+    "主角的错误模式",
+    "替代行动与不兼容欲望",
+    "不可逆选择",
+    "即时代价",
+    "未解承诺",
+    "主题压力",
+)
+# Voice-bible sections relevant before drafting; corpus reference sections
+# (风格基因库/AI 味对照清单) live in memory/style-reference.md instead.
+PLANNING_VOICE_BIBLE_SECTIONS: tuple[str, ...] = (
+    "narrative_distance",
+    "focalization",
+    "节奏蓝图",
+    "语域地图",
+    "sentence_rhythm",
+    "角色语言指纹",
+    "sensory_palette",
+    "术语纪律",
+    "emotional_restraint",
+    "硬禁令",
+    "正面引导",
+    "写前仪式",
+    "exemplar_notes",
+)
 
 # The full scene package is an editor-facing control plane. Writer capsules
 # receive only story obligations; falsification, cognition alternatives,
