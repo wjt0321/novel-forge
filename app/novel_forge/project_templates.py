@@ -33,6 +33,7 @@ from .planning_spec import (
     genre_preset,
     render_literary_micro_rules,
 )
+from .style_corpus import render_ai_tells_brief, render_positive_genes_brief
 from .session_audit import harness_contract
 from .writer_prompt import (
     FORMAL_WRITER_PROMPT_ID,
@@ -387,6 +388,8 @@ _VOICE_PALETTES: dict[str, str] = {
 def _memory_voice_bible_md(title: str, genre: str) -> str:
     preset = genre_preset(genre)
     palette = _VOICE_PALETTES[preset]
+    positive_genes = render_positive_genes_brief()
+    ai_tells = render_ai_tells_brief()
     return f"""# Voice Bible — 《{title}》
 
 > 本书的声音宪法。硬禁令只保留机器可检测的少数几条；其余全部是正面引导：
@@ -477,6 +480,19 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 
 ## 写前仪式：角色独白
 动笔前以主角第一人称写 300-500 字独白（不进入正文，不留档）。问自己：此刻他/她最不想想的是什么？让他/她去想到那个。
+
+## 风格基因库（正例参照）
+> 取自对知名作品的公开技法分析，只学叙事功能、不抄任何措辞。与本书声音冲突的
+> 基因直接忽略；采纳的基因写进上方对应小节，而不是每次写作时重读全表。
+
+{positive_genes}
+
+## AI 味对照清单（反例禁则）
+> 密度才是破绽：单次出现不算罪，同类模式反复出现才构成机器味。审稿 advisory
+> 会抽样提示其中可机检的条目（emotion-label / connective-tic 等），其余靠
+> 起草与复审时人工对照。
+
+{ai_tells}
 
 ## exemplar_notes
 > 第 2 章起必填（narrative_gate 会检查本节）：从本书已写章节中选一个短段，

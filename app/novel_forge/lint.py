@@ -97,6 +97,18 @@ _RULES = {
         "advisory",
         "比喻密度偏高，建议删去弱比喻、改找准确的词",
     ),
+    "emotion-label": (
+        "advisory",
+        "情绪直接贴标签（涌上心头/攫住了他），建议改为身体变化+决定+行动延迟",
+    ),
+    "connective-tic": (
+        "advisory",
+        "叙事行书面连接词（此外/与此同时/不仅如此等）密度偏高，句子逻辑应靠上下文暗示",
+    ),
+    "role-playing-tic": (
+        "advisory",
+        "系动词回避（充当着/扮演着……的角色），建议换回简单的是/有/在",
+    ),
 }
 
 # Combined regex for all explanation-tic patterns — single pass instead of
@@ -121,6 +133,25 @@ _NOT_ONLY_FLIP_RE = re.compile(
     r"不(?:仅(?:仅|只是)?|只是)[^，。；！？\n]{1,25}"
     r"(?:，(?:而是|更是|更|反而|而(?!且))|而是|更是)[^，。；！？\n]{1,25}"
 )
+
+# Emotion labeling: a named feeling arriving as an event (涌上心头/攫住/袭来)
+# or announced through 感到/觉得 + a stock emotion noun. Advisory: single
+# occurrences are legitimate; the tell is chapter-wide density.
+_EMOTION_LABEL_RE = re.compile(
+    r"(?:一阵[^。！？\n]{0,8})?(?:悲伤|愤怒|恐惧|喜悦|欣慰|委屈|绝望|羞愧|酸楚|快意)"
+    r"[^。！？\n]{0,6}(?:涌上|袭来|攫住|淹没|吞没|油然而生)"
+    r"|(?:感到|觉得)[^。！？\n]{0,6}(?:深深的)?(?:悲伤|愤怒|恐惧|喜悦|欣慰|委屈|绝望|羞愧|酸楚)"
+)
+
+# Bookish connectives that mark narrated prose written like an essay. Counted
+# across the whole chapter: one occurrence is normal prose, density is the tell.
+_CONNECTIVE_TIC_RE = re.compile(
+    r"此外|与此同时|不仅如此|值得注意的是|总的来说|综上所述|不可否认"
+)
+_CONNECTIVE_TIC_THRESHOLD = 3
+
+# Copula avoidance: 充当着/扮演着……的角色 instead of 是.
+_ROLE_PLAYING_RE = re.compile(r"(?:充当|扮演)着?[^。！？\n]{0,10}的角色")
 
 _WORKFLOW_META_RE = re.compile(
     r"(?ix)"
@@ -741,6 +772,7 @@ def lint_text(text: str) -> list[LintFinding]:
     findings: list[LintFinding] = []
     lines = text.split("\n")
     total_colons = 0
+    connective_hits: list[tuple[int, int, int]] = []
 
     for idx, line in enumerate(lines, start=1):
         # Count colons (Chinese and ASCII)
@@ -908,6 +940,39 @@ def lint_text(text: str) -> list[LintFinding]:
                     )
                 )
 
+        # Emotion labeling (style-corpus tell): named feeling arriving as
+        # an event instead of body + decision + delayed action.
+        el_severity, el_message = _RULES["emotion-label"]
+        for m in _EMOTION_LABEL_RE.finditer(line):
+            findings.append(
+                LintFinding(
+                    rule_code="emotion-label",
+                    severity=el_severity,
+                    line_number=idx,
+                    message=el_message,
+                    evidence=_truncate(line, m.start(), m.end()),
+                )
+            )
+
+        # Copula avoidance (style-corpus tell).
+        rp_severity, rp_message = _RULES["role-playing-tic"]
+        for m in _ROLE_PLAYING_RE.finditer(line):
+            findings.append(
+                LintFinding(
+                    rule_code="role-playing-tic",
+                    severity=rp_severity,
+                    line_number=idx,
+                    message=rp_message,
+                    evidence=_truncate(line, m.start(), m.end()),
+                )
+            )
+
+        # Bookish connectives are counted chapter-wide below; collect hits.
+        connective_hits.extend(
+            (idx, m.start(), m.end())
+            for m in _CONNECTIVE_TIC_RE.finditer(line)
+        )
+
     char_count = _count_cjk_chars(text)
     paragraphs = _paragraphs_with_lines(text)
     findings.extend(_detect_rhythm_monotony(paragraphs))
@@ -916,6 +981,23 @@ def lint_text(text: str) -> list[LintFinding]:
     findings.extend(_detect_sentence_rhythm(paragraphs))
     findings.extend(_detect_term_density(text, char_count))
     findings.extend(_detect_simile_density(text, char_count))
+
+    # Connective tic is a density tell: only report once when the chapter
+    # exceeds the threshold, anchored at the first hit.
+    if len(connective_hits) >= _CONNECTIVE_TIC_THRESHOLD:
+        ct_severity, ct_message = _RULES["connective-tic"]
+        first_idx, first_start, first_end = connective_hits[0]
+        findings.append(
+            LintFinding(
+                rule_code="connective-tic",
+                severity=ct_severity,
+                line_number=first_idx,
+                message=ct_message,
+                evidence=_truncate(
+                    lines[first_idx - 1], first_start, first_end
+                ),
+            )
+        )
 
     findings.extend(_detect_quote_duplication(text))
 
@@ -980,6 +1062,8 @@ EDITOR_ADVISORY_RULES: tuple[str, ...] = (
     "rhythm-monotony",
     "mechanical-triplet",
     "simile-density",
+    "emotion-label",
+    "connective-tic",
 )
 
 

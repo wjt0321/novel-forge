@@ -303,3 +303,13 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 2. strict_audit 下 .git 元数据纳入快照：snapshot_workspace 新增 git_meta 参数，覆盖 HEAD/ORIG_HEAD/config/index/packed-refs 与 refs/** 的 sha 标记（不含对象库，成本有界）。.git 变更只检出并路由作者决定，不做自动删除或恢复（避免程序化改 .git）；字节备份 zip 仍排除 .git。
 3. 双审观测按角色归属：_write_action 为 blind-reader / chapter-editor 各存独立观测上下文（state.role_call_observations），complete-role 按 completion 角色取对应上下文；并行双审下先完成者的遥测不再记到后签发卡片名下，也不再因 write-once 冲突被丢弃。
 4. legacy 链 N+1 查询收敛：list_books 用单条 GROUP BY 取每书章节数与 approved 数；list_chapters 以三条批量聚合替代每章三次查询；API get_chapter 改用单连接的 chapter_detail（原先一次请求开约六个连接）。响应形状不变。
+
+## 2026-08-21（三）：风格语料库导入（正例基因 + AI 味反例）
+
+新增 app/novel_forge/style_corpus.py（style-corpus/v1），作为两套风格参照系的单源：
+
+1. 正例基因库 POSITIVE_STYLE_GENES：从知名作品的公开技法分析中提炼 8 条可操作的叙事功能基因——海明威冰山省略与电报节奏、沈从文贴人物写与对白朴素律、汪曾祺短句切开/闲笔/白描忌成语、金庸对白三式。每条含原则、做法与可度量信号；只描述技法，不含任何受版权保护的原文。
+2. AI 味反例目录 AI_TELL_PATTERNS：14 条机器味模式（句长均匀、连接词 tic、情绪标签直贴、三段式排比、播音腔对白、总分总段落、同义词轮换、虚假范围、通用升华收尾、隐喻堆叠、过度限定、系动词回避、零闲笔余波、机械动作拍），每条附改写方向。
+3. 接入点：voice-bible 模板新增「风格基因库」与「AI 味对照清单」两节（渲染各有字符上限）；语料节位于 exemplar_notes 之前，不破坏 ch02 范文自动回填的下划线锚契约。Writer 提示词预算不变，不注入语料。
+4. lint 新增三条 advisory 规则并纳入 Chapter Editor 诊断抽样：emotion-label（情绪标签直贴）、connective-tic（书面连接词按全章密度计数，阈值 3）、role-playing-tic（系动词回避）。全部为 advisory，不构成独立判罪。
+5. 回归测试 tests/test_style_corpus.py（9 例）：语料结构不变量、无长段原文摘录、渲染器有界、新规则触发与干净文本不误报、模板嵌入检查。
