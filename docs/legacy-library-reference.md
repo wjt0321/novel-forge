@@ -104,7 +104,10 @@ An export manifest records inputs and hashes; it is stronger evidence than an un
 ## Adapter and API boundaries
 
 - Adapter `--root` must be absolute.
-- Mutating adapter operations require `--confirm`.
+- Mutating adapter operations require `--confirm`. `lint` and `review` count
+  as mutating: they advance chapter state.
+- Adapter failures exit with code 1; the JSON envelope on stdout remains the
+  structured contract for hosts that parse it.
 - API and adapter do not return full prose bodies.
 - Path traversal and cross-book access are rejected.
 - Legacy operations cannot mutate `books/` state or per-book local Git.

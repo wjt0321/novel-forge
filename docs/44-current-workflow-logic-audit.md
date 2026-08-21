@@ -278,3 +278,21 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 2. 暂存正文 mtime 早于本次 Writer 动作签发时间、且摘要与派发前快照一致时，判为非本次 Writer 会话产出。
 
 两类都按技术运输失败走有界重试并重开 Writer；恢复路径是以 `output:false` 重新派发 Writer 由其重写正文，Lead 不得亲手写 `draft/正文.md`。内容相对派发前快照已变化但 mtime 异常时放行，避免误伤原地重写的合规正文。
+
+
+## 2026-08-21：全仓代码审查修复（终态守卫、审稿 TOCTOU、并发锁与规则单源收敛）
+
+本轮为全仓代码审查后的集中修复，全部为既有承诺的强制化，不改变日常一章的角色顺序。回归测试集中在 tests/test_review_fixes.py。
+
+1. 终态守卫：complete-role / complete_minimal / _recover_technical_failure 对 stopped、complete、decision_required 三种终态直接返回当前 status 结果，不再把迟到的宿主回传路由进恢复分支重签 Writer；作者决定卡不会因迟到回传而不可达。
+2. 审稿落盘 TOCTOU：record_review 改为把已校验文本原子写入 canonical（等价内容则跳过重写，避免作废已登记的会话凭证），不再从磁盘重读源文件后封印；读取时统一 CRLF 归一化，修复 history 文件被写成 CR-CR-LN 的既有缺陷。
+3. Patch 指令预算单源：writer_prompt 的指令上限由总预算推导（patch_directive_budget），超限报错给出实际上限；lean 路径超限时路由作者 decision 卡而非裸异常。
+4. 异常分类学：completion 的 role_result 非 dict、evidence_quote 为空列表不再抛 AttributeError/IndexError；ChapterSequenceError 与 ArtifactIntegrityError 纳入 complete-role 技术失败恢复路由。
+5. slug 校验单源：models.SLUG_RE（ASCII 字母数字连字符下划线）接入 book_project/book_evidence/book_memory/native_relay/service/skill_adapter/autonomous/project_templates 全部路径派生点，路径穿越面收口。
+6. 并发：complete_role 与 complete_minimal 以跨进程状态锁串行（O_EXCL 锁文件位于系统临时目录，带陈旧锁破坏）；并行双审下先完成者保留共享快照与字节基线，由最后完成者消费，兄弟角色不再被误判技术失败而重签。
+7. 局部 Patch 完成后补跑全章硬检（_staged_hard_gate_findings），删文导致 CJK 不足在局部修订环内暴露为 local_patch_hard_gate_failed 决策，而不是推迟到晋升段。
+8. 开放 MUST 缺原文引文判结果无效走 repair（与编造引文同路径）；已关闭 MUST 不受影响。
+9. adapter 契约收紧：lint 与 review 属于变更操作，需要 --confirm；所有失败路径退出码改为 1（stdout JSON 信封不变）。
+10. 规则单源收敛：CJK 计数统一到 planning_spec.count_cjk_chars（含 U+3007/Ext-A/兼容区），门禁、lint 计数、密度分母、状态展示共用；CLAUDE.md 模板的 5000 CJK 与场景包 0b 标题改由 planning_spec 常量注入；删除 project_templates 中 399 行无引用的 agent 定义死代码。
+11. legacy 链修复：export_book 的 pandoc 子进程移出数据库事务（转换失败不再出现磁盘有产物而 exports 表无痕）；init_db 错误路径关闭连接并备份前 WAL checkpoint；CLI 捕获 schema 版本与 sqlite 错误；audit limit 下界校验。
+12. 低危批次：证据层容忍单条损坏记录并在 evidence-status 输出 invalid_records；memory fact.valid_from/promise.planted_chapter 拒绝 null；review capsule 路径拒绝反斜杠并校验 resolve 包含关系；book_git 用 shutil.which 解析 git 绝对路径；book_project 状态写入原子化；capsule 重置不跟随符号链接；深夜 N 点时间排序回绕；序列完成判定要求非空 run_id。
