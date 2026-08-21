@@ -326,6 +326,35 @@ def _voice_anchor_surface_copy(
     }
 
 
+_VOICE_ANCHOR_LINE_RE = re.compile(
+    r"(?m)^\s*(?:[-*]\s*)?anchor\s*[:：]\s*([0-9,\s，、ch]+)$"
+)
+
+# docs/46 B3: anchor drift band. The current chapter's sentence-length mean
+# must stay inside [0.7x, 1.4x] of the anchor chapters' mean.
+_ANCHOR_DRIFT_LOW_RATIO = 0.7
+_ANCHOR_DRIFT_HIGH_RATIO = 1.4
+
+
+def parse_voice_anchors(voice_anchor_text: str | None) -> tuple[int, ...]:
+    """Parse ``anchor: ch03,ch07`` markers from the voice bible.
+
+    Authors mark chapters whose voice they consider the book's reference.
+    Without a marker the serial analysis keeps its default behaviour.
+    """
+    if not voice_anchor_text:
+        return ()
+    numbers: list[int] = []
+    for match in _VOICE_ANCHOR_LINE_RE.finditer(voice_anchor_text):
+        for token in re.split(r"[,\s，、]+", match.group(1)):
+            token = token.strip().lower()
+            if token.startswith("ch"):
+                token = token[2:]
+            if token.isdigit() and int(token) > 0:
+                numbers.append(int(token))
+    return tuple(sorted(set(numbers)))
+
+
 def analyze_serial_style(
     chapters: list[tuple[str, str]],
     *,
@@ -382,6 +411,38 @@ def analyze_serial_style(
                     ),
                 }
             )
+
+    # docs/46 B3: anchor-based drift. Compare the current chapter against the
+    # author-marked anchor chapters instead of only the first-chapter baseline,
+    # so whole-book slow drift becomes visible.
+    anchors = parse_voice_anchors(voice_anchor_text)
+    if anchors and comparable:
+        anchor_names = {f"ch{value:02d}" for value in anchors}
+        anchor_means = [
+            float(profile["sentence_len_mean"])
+            for profile in comparable
+            if profile["chapter"] in anchor_names
+        ]
+        current = comparable[-1]
+        if anchor_means and current["chapter"] not in anchor_names:
+            anchor_mean = statistics.fmean(anchor_means)
+            current_mean = float(current["sentence_len_mean"])
+            if (
+                current_mean < anchor_mean * _ANCHOR_DRIFT_LOW_RATIO
+                or current_mean > anchor_mean * _ANCHOR_DRIFT_HIGH_RATIO
+            ):
+                findings.append(
+                    {
+                        "code": "anchor-drift",
+                        "severity": "advisory",
+                        "detail": (
+                            f"当前章（{current['chapter']}）句长均值 "
+                            f"{current_mean:.1f} 偏离锚定章 "
+                            f"{sorted(anchor_names)} 均值 {anchor_mean:.1f}；"
+                            "请对照 voice-bible 锚定章复核叙事距离与节奏。"
+                        ),
+                    }
+                )
 
     sentence_chapters: dict[str, set[str]] = {}
     sentence_counts: Counter[str] = Counter()

@@ -470,3 +470,53 @@ def test_complete_sequence_uses_successful_session_after_invalidation(
     assert status["invalidated_session_count"] == 1
     assert status["effective_status"] == "complete"
     assert status["integrity"] == {"status": "clean", "findings": []}
+
+
+def test_ch01_handoff_uses_author_voice_seed(tmp_path: Path):
+    book_dir = _sequence_book(tmp_path)
+    seed_body = (
+        "雨停之后，巷子里的青石板一块一块亮起来，像有人慢慢擦过一遍。"
+        "他数着自己的脚步声，从街口走到那扇绿漆铁门前，一共四十七步。"
+        "门里的收音机在播一段旧戏，唱腔被电流撕出细小的毛边。"
+        "他没有立刻敲门，先把伞上的水在台阶上抖干净，才抬手。"
+        "硬币在他指尖转了半圈，又被他按回掌心。"
+    ) * 2
+    (book_dir / "memory/voice-seed.md").write_text(
+        "# Voice Seed\n\n> 说明行\n________________\n\n" + seed_body + "\n",
+        encoding="utf-8",
+    )
+    result = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=1,
+        sequence_id="seq-seed",
+        orchestrator_run_id="orch-001",
+    )
+    handoff = (book_dir / result["launch"]["handoff_path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "硬币在他指尖转了半圈" in handoff
+
+
+def test_voice_seed_scaffold_only_is_ignored(tmp_path: Path):
+    book_dir = _sequence_book(tmp_path)
+    result = begin_chapter_sequence(
+        tmp_path,
+        "demo",
+        start_chapter=1,
+        chapter_count=1,
+        sequence_id="seq-scaffold",
+        orchestrator_run_id="orch-002",
+    )
+    handoff = (book_dir / result["launch"]["handoff_path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "TODO" not in handoff
+
+
+def test_init_creates_voice_seed_and_style_reference(tmp_path: Path):
+    init_book_project(tmp_path, "demo", "演示书", "现实悬疑")
+    book_dir = tmp_path / "books" / "demo"
+    assert (book_dir / "memory/voice-seed.md").is_file()
+    assert (book_dir / "memory/style-reference.md").is_file()

@@ -504,6 +504,19 @@ ________________
 """
 
 
+def _memory_voice_seed_md() -> str:
+    return """# Voice Seed — 作者手写声音种子
+
+> 可选资产：第一章动笔前，由作者手写 300-500 字本书期望的声音样本。
+> 只写节奏、距离与语感，不携带情节；ch01 的 Writer Handoff 会引用本文件作为声音锚。
+> 直接写在分隔线之后；下面的说明行不影响使用，但样本正文不得少于 50 个汉字。
+
+________________
+
+TODO: 在这里写你的 300-500 字声音样本
+"""
+
+
 def _memory_style_reference_md() -> str:
     positive_genes = render_positive_genes_brief()
     ai_tells = render_ai_tells_brief()
@@ -1218,6 +1231,7 @@ TEMPLATE_FILES: dict[str, tuple[Any, tuple[str, ...]]] = {
     "memory/past.md": (_memory_past_md, ()),
     "memory/worldbuilding.md": (_memory_worldbuilding_md, ()),
     "memory/voice-bible.md": (_memory_voice_bible_md, ("title", "genre")),
+    "memory/voice-seed.md": (_memory_voice_seed_md, ()),
     "memory/style-reference.md": (_memory_style_reference_md, ()),
     "memory/future/00-index.md": (_memory_future_index_md, ()),
     "memory/MEMORY.md": (_memory_guide_md, ()),
@@ -1322,6 +1336,7 @@ CREATE_ONLY_FILES: tuple[str, ...] = (
     "evaluation/constitution.md",
     "evaluation/rule-registry.md",
     "memory/style-reference.md",
+    "memory/voice-seed.md",
 )
 
 

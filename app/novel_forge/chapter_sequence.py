@@ -33,6 +33,7 @@ from .planning_spec import (
     MAX_HANDOFF_TOTAL_CHARS,
     MAX_HANDOFF_VOICE_EXEMPLAR_CHARS,
     WRITER_VISIBLE_SCENE_SECTIONS,
+    count_cjk_chars,
     render_literary_micro_rules,
 )
 
@@ -129,7 +130,35 @@ def _section(text: str, heading: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _voice_seed_excerpt(book_dir: Path) -> str:
+    """docs/46 B3: author-written cold-start seed used as the ch01 anchor."""
+    path = book_dir / "memory/voice-seed.md"
+    if not path.is_file():
+        return ""
+    lines: list[str] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or stripped.startswith(("#", ">", "_"))
+            or "TODO" in stripped
+            or stripped.startswith("（")
+        ):
+            continue
+        if _WRITER_HIDDEN_STYLE_METRIC_RE.search(stripped):
+            continue
+        lines.append(stripped)
+    usable = "\n".join(lines).strip()
+    if count_cjk_chars(usable) < 50:
+        return ""
+    return _bounded(usable, MAX_HANDOFF_VOICE_EXEMPLAR_CHARS)
+
+
 def _voice_excerpt(book_dir: Path, chapter: int) -> str:
+    if chapter == 1:
+        seed = _voice_seed_excerpt(book_dir)
+        if seed:
+            return seed
     path = book_dir / "memory/voice-bible.md"
     if not path.is_file():
         raise ChapterSequenceError("缺少 memory/voice-bible.md。")

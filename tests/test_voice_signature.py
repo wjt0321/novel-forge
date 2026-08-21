@@ -251,3 +251,42 @@ def test_voice_surface_copy_ignores_voice_bible_sections_outside_exemplar():
         item["code"] != "voice-anchor-surface-copy"
         for item in report["findings"]
     )
+
+
+def test_parse_voice_anchors_handles_marker_variants():
+    from app.novel_forge.voice_signature import parse_voice_anchors
+
+    assert parse_voice_anchors("## exemplar_notes\nanchor: ch03,ch07\n") == (3, 7)
+    assert parse_voice_anchors("anchor\uff1a3\u30017\n") == (3, 7)
+    assert parse_voice_anchors("- anchor: ch12") == (12,)
+    assert parse_voice_anchors("no marker here") == ()
+    assert parse_voice_anchors(None) == ()
+
+
+def test_anchor_drift_fires_against_marked_anchor_chapters():
+    short = ("她起身。她开门。她没有说话。客厅里很安静。") * 30
+    long = (
+        "他在暮色里沿着河岸走了很久，想起很多年前同样漫长的黄昏和同样沉默的河水，"
+        "路灯一盏一盏亮起来又落在他身后。"
+    ) * 12
+    chapters = [("ch01", short), ("ch03", short), ("ch04", long)]
+    marked = analyze_serial_style(
+        chapters,
+        voice_anchor_text="## exemplar_notes\nanchor: ch01,ch03\n",
+    )
+    assert any(f["code"] == "anchor-drift" for f in marked["findings"])
+    unmarked = analyze_serial_style(chapters, voice_anchor_text=None)
+    assert not any(f["code"] == "anchor-drift" for f in unmarked["findings"])
+
+
+def test_anchor_chapter_itself_never_reports_drift():
+    short = ("她起身。她开门。她没有说话。客厅里很安静。") * 30
+    long = (
+        "他在暮色里沿着河岸走了很久，想起很多年前同样漫长的黄昏和同样沉默的河水，"
+        "路灯一盏一盏亮起来又落在他身后。"
+    ) * 12
+    report = analyze_serial_style(
+        [("ch01", short), ("ch04", long)],
+        voice_anchor_text="anchor: ch04\n",
+    )
+    assert not any(f["code"] == "anchor-drift" for f in report["findings"])

@@ -129,11 +129,11 @@ A1 交接包预算收紧 ──► A2 规划卡去内嵌 ──► B1 跨章重�
 
 ### Checklist
 
-- [ ] A1 交接包预算收紧（+风险分档可选）
-- [ ] A2 strict 规划卡去内嵌全文
-- [ ] A3 语料两节常驻成本优化（推荐拆 style-reference.md）
-- [ ] B1 跨章重复检测（book_repeat.py + 门禁接入 + 白名单）
-- [ ] B3 声音锚定策略（anchor 标记 + voice-seed 冷启动）
+- [x] A1 交接包预算收紧（+风险分档可选）
+- [x] A2 strict 规划卡去内嵌全文
+- [x] A3 语料两节常驻成本优化（推荐拆 style-reference.md）
+- [x] B1 跨章重复检测（book_repeat.py + 门禁接入 + 白名单）
+- [x] B3 声音锚定策略（anchor 标记 + voice-seed 冷启动）
 - [ ] B2 人物弧线账本（arcs/*.md + scene package 字段 + promotion）
 - [ ] A4 canon 摘要 12k→6k 试验
 - [ ] A5 规则文本去重审计

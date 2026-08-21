@@ -313,3 +313,28 @@ V2 实测表明，双审卡死的主要风险不是正文或文学判断，而�
 3. 接入点：voice-bible 模板新增「风格基因库」与「AI 味对照清单」两节（渲染各有字符上限）；语料节位于 exemplar_notes 之前，不破坏 ch02 范文自动回填的下划线锚契约。Writer 提示词预算不变，不注入语料。
 4. lint 新增三条 advisory 规则并纳入 Chapter Editor 诊断抽样：emotion-label（情绪标签直贴）、connective-tic（书面连接词按全章密度计数，阈值 3）、role-playing-tic（系动词回避）。全部为 advisory，不构成独立判罪。
 5. 回归测试 tests/test_style_corpus.py（9 例）：语料结构不变量、无长段原文摘录、渲染器有界、新规则触发与干净文本不误报、模板嵌入检查。
+
+## 2026-08-21（四）：docs/46 第一批——token 精简 A1-A3 + 跨章重复检测 B1 + 声音锚定 B3
+
+按 docs/46 Checklist 完成 5 项（commit 见 git log）：
+
+1. A1 交接包预算收紧：memory 12k→6k、scene 8k→5k，总上限改为「各部分之和 +
+   HANDOFF_SCAFFOLD_MARGIN_CHARS(1400)」自动推导 =15,200（原 28,000，−46%）。
+   预算常量仅存于 planning_spec；回归测试锁定数值防止回弹。
+2. A2 规划卡去内嵌全文：writer-planning 动作卡改嵌 PLANNING_STORY_ENGINE_SECTIONS
+   （9 个故事义务节）与 PLANNING_VOICE_BIBLE_SECTIONS（13 个起草相关节）的摘录，
+   不再整文件嵌入；同时附来源路径。编辑控制面章节（五层责任/证据边界/盲评问题等）
+   从此不进规划角色上下文。strict 与 lean 两路径同时受益。
+3. A3 语料拆分：全量正例基因/AI 味反例移入 create-only 的 memory/style-reference.md；
+   voice-bible 改为「本书采纳的风格基因」勾选表（5,138→3,138 字符，−39%）
+4. B1 跨章重复检测：新模块 book_repeat.py。对暂存章 vs 已晋升章节做三类 advisory
+   检测——比喻句复用（归一化句核）、8 字 shingle 措辞回声（仅当恰好一个更早章节
+   含该片段；≥2 章视为合法母题）、章末收束雷同。每检测器限 3 条、总计限 8 条，
+   结果并入 run_gates literary findings/advisory（自动进入 Chapter Editor
+   machine_diagnostics），另报 cross_repetition_count。永不 blocking。
+5. B3 声音锚定：voice-bible exemplar_notes 支持 anchor: chNN,chNN 标记；
+   voice_signature.parse_voice_anchors 解析后，当前章句长均值偏离锚定章均值
+   [0.7x,1.4x] 区间时报 anchor-drift（advisory）。冷启动：create-only 的
+   memory/voice-seed.md（作者手写 ≥50 汉字）在 ch01 handoff 中替代范文位。
+
+回归：全量 817 passed。B2 弧线账本与 A4/A5 仍按 docs/46 待办。

@@ -35,6 +35,7 @@ from .book_git import (
     initialize_book_git,
 )
 from .lint import lint_file
+from .book_repeat import analyze_cross_chapter_repetition
 from .models import NovelForgeError, validate_book_slug
 from .planning_spec import (
     BLIND_RECONSTRUCTION_FIELDS,
@@ -2149,6 +2150,16 @@ def run_gates(
         serial_inputs,
         voice_anchor_text=voice_anchor_text,
     )
+    repeat = analyze_cross_chapter_repetition(serial_inputs)
+    if repeat["findings"]:
+        literary = result["literary"]
+        literary["findings"] = list(literary.get("findings", [])) + repeat[
+            "findings"
+        ]
+        literary["advisory"] = list(literary.get("advisory", [])) + repeat[
+            "advisory"
+        ]
+    result["cross_repetition_count"] = len(repeat["findings"])
     result["ready_eligible"] = (
         mode == "formal"
         and quality["blocking"] == 0
