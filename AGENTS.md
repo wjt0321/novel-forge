@@ -9,6 +9,7 @@
 - 不实现真实 LLM 或联网抓取；外部角色只能通过工作流提交正文/审稿结论。
 - 默认产品是 books/ 的 `lean_native` 流程；legacy `library/` 仅兼容维护，二者不得混用。
 - 日常创作的完整规则见 `docs/43-fiction-first-lean-native-workflow.md`、`docs/44-current-workflow-logic-audit.md`；不要为理解日常一章而先读取历史里程碑文档。
+- **进行中的工作计划**：`docs/46-token-diet-and-book-scale-plan.md`（token 精简 + 跨章重复检测/弧线账本/声音锚定）。继续该工作时先读它，按其 Checklist 顺序执行。
 
 ## 运行与测试
 
