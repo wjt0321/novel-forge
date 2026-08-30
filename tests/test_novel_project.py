@@ -534,7 +534,8 @@ def test_skill_documents_v54_fiction_first_native_workflow():
     assert "Writer 已产生合规正文" in text
     assert "不重写正文" in text
     assert "未知遥测保持 null" in text
-    assert "第二版仍有 MUST" in text
+    assert "MAX_AUTO_LITERARY_REVISION_ROUNDS" in text
+    assert "预算内不打断作者" in text
     assert "Generation 和两份 Review" in text
     assert "不配置 remote" in text
     assert "human_likeness" in text
@@ -542,6 +543,10 @@ def test_skill_documents_v54_fiction_first_native_workflow():
     assert "idle、available" in text
     assert "literary-micro-rules/v5" in text
     assert "用户硬锚" in text
+    # Dispatch discipline added after the 2026-08-30 chapter run.
+    assert "Lead 不做文学导演" in text
+    assert "以它为唯一来源" in text
+    assert "真实会话 ID" in text
     assert len(text) < 9000
 
 

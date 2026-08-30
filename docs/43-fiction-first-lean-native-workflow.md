@@ -244,7 +244,7 @@ promotion, author approval, or `publication_eligibility=False`.
 
 ## 2026-07-31 iteration 45 routing
 
-Lean Writer capsules contain a protected `writer-context.md`. Minimal mode compiles P0/P1/P2 at 1500/850/450 CJK, with a total ceiling of 2800 CJK; full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
+Lean Writer capsules contain a protected `writer-context.md`. Minimal mode compiles P0/P1/P2 at 1500/850/700 CJK, with a total ceiling of 3050 CJK; P2 carries the style-corpus reference set (adopted genes first, core subset otherwise); full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
 
 Review MUST findings affect routing only when every open finding is marked `local` and maps to one unique paragraph. The Writer then returns replacement fragments only; Python performs exact replacement, runs whole-body hard checks, and restarts the complete Blind Reader and Chapter Editor pair. All other findings retain the single chapter-level Patch path.
 

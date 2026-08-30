@@ -210,7 +210,7 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 - 钩子、场景主冲突或章节结构失效；
 - 多个局部问题共同指向同一叙事结构缺陷。
 
-第二版仍有 MUST 时继续停在作者决定处。此规则不放松。
+普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 3 轮），预算内不打断作者；耗尽后停在作者决定处。上限本身不放松。
 
 ## 提案 D：双审从“重复审读”升级为“互补审读”
 
@@ -389,7 +389,7 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 
 ### 阶段 2：最小 Writer 包与声音资产
 
-- Guardian 在 Lean Writer capsule 中生成受保护的 `writer-context.md`。默认 `minimal` 模式由 Python 编译 P0/P1/P2：上限分别为 1500/850/450 CJK，总预算不超过 2800 CJK；`full` 保留旧 handoff 作为对照开关。
+- Guardian 在 Lean Writer capsule 中生成受保护的 `writer-context.md`。默认 `minimal` 模式由 Python 编译 P0/P1/P2：上限分别为 1500/850/700 CJK，总预算不超过 3050 CJK；P2 携带 style-corpus 正反例；`full` 保留旧 handoff 作为对照开关。
 - P0 优先当前场景压力、人物选择与私人代价、硬锚点、章末目标和上一章结尾；P1 带直接人物/Canon、最多两个承诺，以及原 Scene Package 中的私人欲望、关系摩擦和感知偏差；P2 只带书级声音基础和卷级覆盖。编辑专用替代解释不进入 Writer 核心。
 - 当前卷按需创建 `memory/voice-bible-vNN.md`，记录叙事距离、信息释放、对白/沉默、选择与私人代价、认可范例及 Writer 模型切换。模型基线存于本地控制面；不同模型未经 `approve-writer-model` 校准不能无声进入该卷。
 
@@ -397,7 +397,7 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 
 - 审稿 MUST 的 `scope=local|structural|blocking` 已进入真实路由。只有全部开放 MUST 都是 `local`，引句可在唯一连续段落中精确定位时，才签发 `local-patch`。
 - 局部 Writer 只收到目标段、小范围前后文、修订意图和不可变锚点，只返回 `target/replacement`；Python 校验正文 SHA、目标集合和唯一匹配后执行精确替换。
-- 替换后对完整暂存正文重新运行硬检查并重新签发完整 Blind Reader + Chapter Editor 双审。结构性、阻断性、未分类或不可唯一定位的问题仍走原章节级集中 Patch；第二版仍有 MUST 仍进入作者决定。
+- 替换后对完整暂存正文重新运行硬检查并重新签发完整 Blind Reader + Chapter Editor 双审。结构性、阻断性、未分类或不可唯一定位的问题仍走原章节级集中 Patch；集中修订在自动预算内由 Python 连续签发，预算耗尽才进入作者决定。
 
 ### 阶段 4：能力档与薄控制面
 

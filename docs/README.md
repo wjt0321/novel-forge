@@ -10,6 +10,7 @@ S-Black Novel Forge documentation is intentionally split into a small current se
 | Understand current states, retries, recovery, and truth boundaries | `44-current-workflow-logic-audit.md` |
 | Understand the P0/P1/P2, local Patch, capability, risk, and budget iteration | `45-workflow-iteration-proposal.md` |
 | Use the book-scale quality features (voice anchor, arc ledger, cross-chapter repetition) | `literary-quality-reference.md` → "Book-scale quality features" |
+| Cut chapter-production overhead: measured cost, root causes, and the iteration backlog | `50-lean-iteration-plan.md` |
 | Future-direction note: AI cosplay interactive narrative | `48-cosplay-narrative-future.md` |
 
 Completed one-time proposals and retrospectives (46 blockers, 47 iteration,

@@ -6,6 +6,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -13,7 +14,7 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from . import book_memory
 from . import book_project
@@ -73,6 +74,7 @@ from .planning_spec import (
     count_cjk_chars,
 )
 from .workflow_iteration import (
+    MAX_AUTO_LITERARY_REVISION_ROUNDS,
     apply_local_replacements,
     evaluate_budget_breaker,
     evaluate_writer_model,
@@ -2522,6 +2524,7 @@ class NativeWorkflowRelay:
                 "授权续修将再跑一轮 Writer 与完整双审，"
                 "不会自动继续。"
             )
+            message += NativeWorkflowRelay._recurrence_hint(state)
         return message
 
     def status(self, slug: str) -> WorkflowResult:
@@ -5155,6 +5158,47 @@ class NativeWorkflowRelay:
         self._remember_session(state, session, role="writer", status="completed")
         return self._start_double_review(slug, state)
 
+    @staticmethod
+    def _stored_open_findings(
+        value: Any,
+    ) -> tuple[ReviewFinding, ...]:
+        """Rebuild persisted open MUST findings; tolerate absent keys."""
+        if not isinstance(value, list):
+            return ()
+        findings: list[ReviewFinding] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            try:
+                findings.append(ReviewFinding(**item))
+            except Exception:
+                continue
+        return tuple(findings)
+
+    def _request_next_revision(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        open_must: Sequence[ReviewFinding],
+        must: tuple[str, ...],
+    ) -> WorkflowResult:
+        """Take the cheapest safe revision path.
+
+        All-local, uniquely located findings go through Python's exact
+        replacements; anything else rewrites the staged chapter. A full
+        rewrite costs several times a local patch, so every continuation
+        route must come through here.
+        """
+        local_plan = plan_local_patch(
+            self._staged_body_path(state).read_text(encoding="utf-8-sig"),
+            tuple(open_must),
+        )
+        if local_plan is not None:
+            return self._request_local_patch(
+                slug, state, tuple(open_must), local_plan
+            )
+        return self._request_staged_literary_patch(slug, state, must)
+
     def _request_staged_literary_patch(
         self,
         slug: str,
@@ -5487,6 +5531,9 @@ class NativeWorkflowRelay:
         )
         _atomic_json(self._state_path(slug), state)
         self._record_author_revision(state, reference, decision_kind, must)
+        findings = self._stored_open_findings(state.get("pending_open_must"))
+        if findings:
+            return self._request_next_revision(slug, state, findings, must)
         return self._request_staged_literary_patch(slug, state, must)
 
     def _retry_finish_after_checkpoint_failure(
@@ -5704,6 +5751,61 @@ class NativeWorkflowRelay:
         _atomic_json(self._state_path(slug), merged)
         return merged
 
+    @staticmethod
+    def _must_anchor(finding: ReviewFinding) -> str:
+        """Normalised identity of one finding: prose first, location second."""
+        for value in (
+            finding.evidence,
+            finding.location,
+            finding.revision_intent,
+        ):
+            text = re.sub(r"\s+", "", str(value or ""))
+            if text:
+                return text[:18]
+        return ""
+
+    def _record_must_recurrence(
+        self,
+        state: dict[str, Any],
+        open_must: Sequence[ReviewFinding],
+    ) -> None:
+        """Count how many rounds the same open finding has come back."""
+        previous = state.get("must_recurrence")
+        previous = previous if isinstance(previous, dict) else {}
+        seen: set[str] = set()
+        counters: dict[str, int] = {}
+        for finding in open_must:
+            anchor = self._must_anchor(finding)
+            if not anchor or anchor in seen:
+                continue
+            seen.add(anchor)
+            counters[anchor] = int(previous.get(anchor) or 0) + 1
+        state["must_recurrence"] = counters
+
+    @staticmethod
+    def _recurrence_hint(state: dict[str, Any]) -> str:
+        recurrence = state.get("must_recurrence")
+        if not isinstance(recurrence, dict):
+            return ""
+        repeated = sorted(
+            (
+                (str(anchor), int(count))
+                for anchor, count in recurrence.items()
+                if int(count) >= 2
+            ),
+            key=lambda item: -item[1],
+        )
+        if not repeated:
+            return ""
+        listed = "；".join(
+            f"「{anchor}」第 {count} 次" for anchor, count in repeated[:2]
+        )
+        return (
+            f"\n同一处问题已反复出现 {len(repeated)} 项（{listed}）。"
+            "反复修同一处通常说明改法本身在制造新矛盾：优先删掉该处正在承担的"
+            "表述，或接受当前稿，不要再换一种说法重缝一次。"
+        )
+
     def _finalize_double_review(
         self,
         slug: str,
@@ -5733,18 +5835,30 @@ class NativeWorkflowRelay:
         )
         open_must = self._combined_open_must_findings(blind, outcome)
         must = self._combined_must_findings(blind, outcome)
+        self._record_must_recurrence(state, open_must)
         if must:
-            if int(state.get("patch_round") or 0) >= 1:
-                patch_round = int(state.get("patch_round") or 0)
+            patch_round = int(state.get("patch_round") or 0)
+            if 1 <= patch_round < MAX_AUTO_LITERARY_REVISION_ROUNDS:
+                # The flow owns its own bounded revision budget: an ordinary
+                # literary MUST re-issues the revision instead of interrupting
+                # the author. The cap keeps this finite.
+                state["workflow_revision_reference"] = (
+                    f"workflow-revision:ch{chapter:02d}:r{patch_round + 1}"
+                )
+                _atomic_json(self._state_path(slug), state)
+                return self._request_next_revision(
+                    slug, state, open_must, must
+                )
+            if patch_round >= 1:
                 result = self.orchestrator._decision_result(
                     slug,
                     request,
                     chapter,
                     sequence_id,
                     message=(
+                        f"自动修订预算（{MAX_AUTO_LITERARY_REVISION_ROUNDS} 轮）已用尽，"
                         f"第 {patch_round} 轮集中修订后仍有 MUST；"
-                        "authorize-revision 将再跑一轮 Writer 与完整双审，"
-                        "已进入作者决定，不会自动继续。"
+                        "authorize-revision 将再跑一轮 Writer 与完整双审。"
                     ),
                     retries=int(state.get("technical_retry_count") or 0),
                     decision_kind="literary_revision_required",
@@ -5754,6 +5868,11 @@ class NativeWorkflowRelay:
                 state["phase"] = "decision_required"
                 state["decision_kind"] = "literary_revision_required"
                 state["must_findings"] = list(must)
+                # Keep the structured findings so an author-authorized round
+                # can still take the cheap local-patch route.
+                state["pending_open_must"] = [
+                    asdict(item) for item in open_must
+                ]
                 state["decision_message"] = "自动修订后仍有问题，请选择下一步。"
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
@@ -5790,15 +5909,9 @@ class NativeWorkflowRelay:
                     must_findings=must,
                     parent_generation_id=None,
                 )
-            local_plan = plan_local_patch(
-                self._staged_body_path(state).read_text(encoding="utf-8-sig"),
-                open_must,
+            return self._request_next_revision(
+                slug, state, open_must, must
             )
-            if local_plan is not None:
-                return self._request_local_patch(
-                    slug, state, open_must, local_plan
-                )
-            return self._request_staged_literary_patch(slug, state, must)
 
         if state.get("formal_ready_allowed") is False:
             state.update(

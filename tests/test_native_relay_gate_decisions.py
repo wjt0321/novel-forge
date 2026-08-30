@@ -312,3 +312,85 @@ def test_normalized_only_evidence_quote_blocks_promotion(tmp_path: Path):
     assert any("evidence_quote" in item for item in state["must_findings"])
     assert not _formal_chapter(root).exists()
     assert not list((root / "books/demo/evidence").glob("generations/*.md"))
+
+
+def _finding(
+    evidence: str, location: str = "章末", scope: str = "structural"
+):
+    from app.novel_forge.workflow import ReviewFinding
+
+    return ReviewFinding(
+        severity="MUST",
+        location=location,
+        evidence=evidence,
+        reader_effect="读者无法判断",
+        revision_intent="理顺顺序",
+        status="open",
+        scope=scope,
+    )
+
+
+def test_recurring_must_anchor_is_counted_and_surfaced():
+    """The same open finding across rounds must be visible to the author.
+
+    Observed failure mode: five authorised revision rounds all repaired the
+    same paragraph, while the decision card only said "第 N 轮".
+    """
+    relay = NativeWorkflowRelay.__new__(NativeWorkflowRelay)
+    findings = (_finding("布告栏挂在她标的北墙上"),)
+
+    state: dict = {}
+    relay._record_must_recurrence(state, findings)
+    assert relay._recurrence_hint(state) == ""
+
+    relay._record_must_recurrence(state, findings)
+    hint = relay._recurrence_hint(state)
+    assert "第 2 次" in hint and "布告栏" in hint
+
+    # A repaired finding must not keep inflating its counter next round.
+    relay._record_must_recurrence(state, (_finding("另一处矛盾原文"),))
+    assert list(state["must_recurrence"]) == ["另一处矛盾原文"]
+    assert relay._recurrence_hint(state) == ""
+
+
+def test_anchor_prefers_prose_over_location():
+    relay = NativeWorkflowRelay.__new__(NativeWorkflowRelay)
+    first = _finding("同一句原文引证", location="第 303 行")
+    second = _finding("同一句原文引证", location="结尾另处")
+    assert relay._must_anchor(first) == relay._must_anchor(second)
+    assert relay._must_anchor(
+        _finding("", location="只有位置可用")
+    ) == "只有位置可用"
+
+
+def test_next_revision_prefers_local_patch_for_all_local_findings(tmp_path):
+    """Every continuation route must take the cheap path when it can.
+
+    A full consolidated rewrite costs several times a local replacement, so
+    the automatic round and the author-authorized round may not skip it.
+    """
+    body = "# 第一章\n\n林舟握住门把。他说：“三次就够了。”\n"
+    draft = tmp_path / "正文.md"
+    draft.write_text(body, encoding="utf-8")
+
+    relay = NativeWorkflowRelay.__new__(NativeWorkflowRelay)
+    calls: list[str] = []
+    relay._staged_body_path = lambda state: draft  # type: ignore[assignment]
+    relay._request_local_patch = lambda *args: calls.append("local")  # type: ignore[assignment]
+    relay._request_staged_literary_patch = (  # type: ignore[assignment]
+        lambda *args: calls.append("full")
+    )
+
+    local_only = (
+        _finding("林舟握住门把", scope="local"),
+        _finding("三次就够了", scope="local"),
+    )
+    relay._request_next_revision("demo", {}, local_only, ("a", "b"))
+    assert calls == ["local"]
+
+    calls.clear()
+    relay._request_next_revision(
+        "demo", {}, (*local_only, _finding("不存在于正文的原文", scope="structural")),
+        ("a", "b", "c"),
+    )
+    assert calls == ["full"]

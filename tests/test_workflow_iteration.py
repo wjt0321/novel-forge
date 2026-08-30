@@ -72,15 +72,50 @@ def test_minimal_writer_package_is_tiered_bounded_and_uses_previous_ending(
 
     text = package["text"]
     assert package["mode"] == "minimal"
-    assert WRITER_CONTEXT_BUDGETS == {"P0": 1500, "P1": 850, "P2": 450}
+    assert WRITER_CONTEXT_BUDGETS == {"P0": 1500, "P1": 850, "P2": 700}
     assert package["tiers"]["P0"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P0"]
     assert package["tiers"]["P1"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P1"]
     assert package["tiers"]["P2"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P2"]
-    assert sum(tier["cjk"] for tier in package["tiers"].values()) <= 2800
+    assert sum(tier["cjk"] for tier in package["tiers"].values()) <= 3050
     assert "结尾的铜铃响了三次" in text
     assert "开头不应进入最小包" not in text
     assert "完整旧包" not in text
     assert (book / "memory/voice-bible-v01.md").is_file()
+
+
+def test_minimal_package_injects_style_reference_when_target_is_empty(
+    tmp_path: Path,
+):
+    """An unadopted voice bible no longer leaves the writer without a target."""
+    book = _book(tmp_path)
+    handoff = book / "planning/chapter-sequences/handoff.md"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    handoff.write_text("占位", encoding="utf-8")
+
+    plain = compile_writer_package(
+        tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
+    )
+    assert "style-corpus 默认参照" in plain["text"]
+    assert "- 学 " in plain["text"] and "- 避 " in plain["text"]
+    assert plain["tiers"]["P2"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P2"]
+    # The unchecked adoption checklist is author-facing; it must not ride into
+    # the capsule, and injected scaffolding stays free of banned marks.
+    assert "- [ ]" not in plain["text"]
+    assert "——" not in plain["text"] and "……" not in plain["text"]
+
+    bible = book / "memory" / "voice-bible.md"
+    bible.write_text(
+        "# Voice Bible\n\n"
+        "## 本书采纳的风格基因\n"
+        "- [x] 贴着人物写：叙述语言随视角人物换挡\n"
+        "- [ ] 冰山省略：写八分之一\n",
+        encoding="utf-8",
+    )
+    adopted = compile_writer_package(
+        tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
+    )
+    assert "贴着人物写" in adopted["text"]
+    assert "style-corpus 默认参照" not in adopted["text"]
 
 
 

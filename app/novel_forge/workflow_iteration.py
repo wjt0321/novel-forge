@@ -12,9 +12,17 @@ from typing import Any, Iterable
 from . import book_project
 from .book_memory import canon_context_digest
 from .planning_spec import CJK_CHAR_RE
+from .style_corpus import render_writer_style_brief
 
 WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
-WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 450}
+# Bounded self-service revision budget for ordinary literary MUSTs: Python
+# re-issues the consolidated revision this many times before it interrupts the
+# author. Gate and high-risk failures never take this path. Single tunable for
+# the "no interruption" guarantee; raise it only together with a budget breaker.
+MAX_AUTO_LITERARY_REVISION_ROUNDS = 3
+# P2 carries voice fingerprints plus the style reference set; it was 450 while
+# the positive-target slot was an empty placeholder.
+WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 700}
 HOST_CAPABILITY_TIERS = frozenset(
     {"native-isolated", "managed-relay", "exploration"}
 )
@@ -83,7 +91,7 @@ def ensure_volume_voice_bible(
             "## 信息释放顺序\n- 先动作与可见后果，后解释；本卷覆盖：无。\n\n"
             "## 对白与沉默\n- 沉默必须改变权力、关系或下一步行动；本卷覆盖：无。\n\n"
             "## 场景选择与私人代价\n- 每个关键场景让人物作出选择并承担即时私人代价。\n\n"
-            "## 作者认可范例\n- 尚未登记；最多保留 1--2 条摘要及其叙事功能，不复制句法骨架。\n\n"
+            "## 作者认可范例\n- 尚未登记；最多保留 1 至 2 条摘要及其叙事功能，不复制句法骨架。\n\n"
             "## Writer 模型基线与切换记录\n- 基线：未登记。\n",
             encoding="utf-8",
         )
@@ -136,6 +144,50 @@ def _strip_previous_chapter_ledger(text: str) -> str:
         for line in text.splitlines()
         if not line.strip().startswith(_PREVIOUS_CHAPTER_LEDGER_PREFIXES)
     )
+
+
+_ADOPTED_GENE_HEADING = "## 本书采纳的风格基因"
+_EXEMPLAR_HEADING = "## 作者认可范例"
+_EXEMPLAR_PLACEHOLDER_TOKENS = ("尚未登记", "TODO", "__________")
+
+
+def _section_body(source: str, heading: str) -> str:
+    """Return one level-2 markdown section body without its heading."""
+    lines = str(source or "").splitlines()
+    collected: list[str] = []
+    inside = False
+    for line in lines:
+        if line.strip().startswith(heading):
+            inside = True
+            continue
+        if inside and line.startswith("## "):
+            break
+        if inside:
+            collected.append(line)
+    return "\n".join(collected)
+
+
+def _adopted_style_genes(voice_source: str) -> list[str]:
+    """Technique labels the author checked in the voice bible."""
+    body = _section_body(voice_source, _ADOPTED_GENE_HEADING)
+    adopted: list[str] = []
+    for line in body.splitlines():
+        match = re.match(r"^\s*-\s*\[[xX]\]\s*([^：:]+)", line)
+        if match:
+            adopted.append(match.group(1).strip())
+    return adopted
+
+
+def _has_registered_exemplar(voice_source: str) -> bool:
+    body = _section_body(voice_source, _EXEMPLAR_HEADING)
+    content = " ".join(
+        line.strip()
+        for line in body.splitlines()
+        if line.strip() and not line.strip().startswith(">")
+    )
+    if len(content) < 12:
+        return False
+    return not any(token in content for token in _EXEMPLAR_PLACEHOLDER_TOKENS)
 
 
 def compile_writer_package(
@@ -257,9 +309,24 @@ def compile_writer_package(
             "作者认可范例",
         ),
     )
+    adopted_genes = _adopted_style_genes(voice_source)
+    fingerprint = voice_fingerprint or "- 贴近当前视角；让动作先于解释。"
+    style_block = ""
+    if adopted_genes:
+        style_block = (
+            "\n\n## 本书采纳手法与反面清单（style-corpus）\n"
+            + render_writer_style_brief(adopted_genes, max_chars=200)
+        )
+    elif not _has_registered_exemplar(voice_source):
+        # Nothing adopted and no registered exemplar: the positive-target slot
+        # would be an empty placeholder, so fill it from the single source.
+        style_block = (
+            "\n\n## 风格正反例（style-corpus 默认参照）\n"
+            + render_writer_style_brief()
+        )
+    p2_room = WRITER_CONTEXT_BUDGETS["P2"] - _count_cjk(style_block)
     p2 = _bounded(
-        "## 声音指纹\n"
-        + (voice_fingerprint or "- 贴近当前视角；让动作先于解释。"),
+        "## 声音指纹\n" + _bounded(fingerprint, p2_room) + style_block,
         WRITER_CONTEXT_BUDGETS["P2"],
     )
 

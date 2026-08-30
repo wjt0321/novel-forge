@@ -52,7 +52,7 @@ Planning is not proof that prose achieved the event. Reviewers reconstruct the c
 
 ## Writer input
 
-The default Writer capsule exposes only `writer-context.md`: P0/P1/P2 are capped at 1500/850/450 CJK, with a total ceiling of 2800 CJK. P0 prioritizes immediate pressure, choice, private cost, hard anchors, the chapter-end target, and the previous ending. P1 carries directly relevant character/Canon facts, at most two promises, private desire, relationship friction, and perceptual bias. P2 carries compact voice functions. Editor-only alternative explanations stay out of the Writer core.
+The default Writer capsule exposes only `writer-context.md`: P0/P1/P2 are capped at 1500/850/700 CJK, with a total ceiling of 3050 CJK. P0 prioritizes immediate pressure, choice, private cost, hard anchors, the chapter-end target, and the previous ending. P1 carries directly relevant character/Canon facts, at most two promises, private desire, relationship friction, and perceptual bias. P2 carries compact voice functions plus the style-corpus reference set: the genes adopted in `memory/voice-bible.md`, or the core subset when nothing is adopted yet. Editor-only alternative explanations stay out of the Writer core.
 
 ## Writer rules
 

@@ -9,7 +9,8 @@
 - 不实现真实 LLM 或联网抓取；外部角色只能通过工作流提交正文/审稿结论。
 - 默认产品是 books/ 的 `lean_native` 流程；legacy `library/` 仅兼容维护，二者不得混用。
 - 日常创作的完整规则见 `docs/43-fiction-first-lean-native-workflow.md`、`docs/44-current-workflow-logic-audit.md`；不要为理解日常一章而先读取历史里程碑文档。
-- 全书尺度质量特性（声音锚定 anchor / voice-seed 冷启动 / 弧线账本 planning/arcs/ / 跨章重复检测）的作者用法见 `docs/literary-quality-reference.md` 的 "Book-scale quality features" 一节；token 预算单源在 `app/novel_forge/planning_spec.py`。
+- 想降低一章的生产开销（成本实测、循环根因、待办排期）见 `docs/50-lean-iteration-plan.md`。
+- 全书尺度质量特性（声音锚定 anchor / voice-seed 冷启动 / 弧线账本 planning/arcs/ / 跨章重复检测）的作者用法见 `docs/literary-quality-reference.md` 的 "Book-scale quality features" 一节；Writer P0/P1/P2 预算单源在 `workflow_iteration.WRITER_CONTEXT_BUDGETS`，handoff 与场景包各项上限在 `planning_spec.py`，正反例词库单源在 `style_corpus.py`。
 
 ## 运行与测试
 
@@ -24,7 +25,7 @@ $env:PYTHONPATH='app'; python -m novel_forge.cli init-novel-project my-novel --t
 python tools/novel-workflow.py --root D:/s-black-novel start <slug> --title ... --genre ... --protagonist ... --world ... --conflict ... --hook ...
 python tools/novel-workflow.py --root D:/s-black-novel next-action <slug>
 python tools/novel-workflow.py --root D:/s-black-novel complete-role <slug> --session-id <宿主真实会话 ID>
-# 第二版仍有 MUST、停在作者决定时（替代越权修改状态）
+# 自动修订预算耗尽、停在作者决定时（替代越权修改状态）
 python tools/novel-workflow.py --root D:/s-black-novel authorize-revision <slug> --reference <作者决定依据>
 ```
 
@@ -47,13 +48,13 @@ python tools/novel-workflow.py --root D:/s-black-novel authorize-revision <slug>
 
 ## 日常 Lean 工作流（唯一默认路径）
 
-`Lead 分发 -> Writer 暂存正文 -> Blind Reader -> Chapter Editor -> 至多一次集中 Patch -> 双审 -> Python 晋升 -> ready`
+`Lead 分发 -> Writer 暂存正文 -> Blind Reader -> Chapter Editor -> 有界自动集中修订 -> 双审 -> Python 晋升 -> ready`
 
-1. `start` 初始化项目并由 Python/宿主适配器签发当前唯一角色动作；Lead 只发起任务、展示薄状态和转交作者决定，不读取或解释状态机。
-2. 初稿/结构修订 Writer 只写 `books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`；局部 Patch Writer 只写动作指定的 `local-patch/replacements.json`，Python 做精确替换。Writer 默认只读 capsule 的 `writer-context.md` P0/P1/P2 包（1500/850/450 CJK，总计不超过 2800）；Scene Package 在原文件内给私人欲望、关系摩擦和感知偏差，不新增规划阶段。正式章节至少 **5000 个 CJK**。正文禁止提示词、工作流标记、控制面语言、破折号、省略号与否定翻转机械句；提交前在同一次调用内静默删掉重复解释和最机械的重复反应，只输出正文。
+1. `start` 初始化项目并由 Python/宿主适配器签发当前唯一角色动作；Lead 只发起任务、展示薄状态和转交作者决定，不读取或解释状态机。Lead **不做文学导演**：派发给角色的简报只允许含动作卡路径、作品任务和审稿 MUST 的原文转交，禁止新增或改写文学判准、禁止替审稿人指定改法；风格判准只来自 capsule 与 `style_corpus.py` 单源，Lead 给的具体改法越多，后续轮次越是在修自己造出来的东西。
+2. 初稿/结构修订 Writer 只写 `books/<slug>/.novel-forge/diff/chNN/writer/draft/正文.md`；局部 Patch Writer 只写动作指定的 `local-patch/replacements.json`，Python 做精确替换。Writer 默认只读 capsule 的 `writer-context.md` P0/P1/P2 包（1500/850/700 CJK，总计不超过 3050；P2 携带 style-corpus 正反例默认参照）；Scene Package 在原文件内给私人欲望、关系摩擦和感知偏差，不新增规划阶段。正式章节至少 **5000 个 CJK**。正文禁止提示词、工作流标记、控制面语言、破折号、省略号与否定翻转机械句；提交前在同一次调用内静默删掉重复解释和最机械的重复反应，只输出正文。
 3. Blind Reader 只读当前暂存正文，写紧凑结论；必须给 `human_likeness`、`reader_desire`、余味、追读钩子和原文引句。`uncertain` 不视为通过：pass 必须 `convincing`+`continue`，给 `uncertain` 必须附一句具体 `uncertain_note`（哪段像通用/工整/解释充分），说明为空则结果无效；`synthetic` 必须有原文证据且恰好一条 `structural` MUST。Chapter Editor 只写 `pass|needs_revision`、完整 MUST、摘要和引句，并独立确认该问题是否分布广、值得唯一一次修订。纯 Python 文学纹理只作 advisory，不认证 AI 来源或文学价值；lint advisory（分句级排比/回环、`not-only-flip`、视角泄漏类 `explanation-tic`、`simile-density` 等，全部 advisory）按规则聚合为 ≤400 字抽样注入 Chapter Editor 的 `machine_diagnostics`，Blind Reader 保持 prose-only。双审每条开放 MUST 的原文 evidence 也逐字校验，编造引文判无效走 repair。
 4. 审稿角色只能写动作给定的 `result_file`；Lead 等待宿主官方 completed/failed/timed_out，再执行 `complete-role`。创建、accepted、progress、idle、available 或文件出现都不等于完成。`complete-role` 必须用 `--session-id` 报告角色实际使用的宿主会话（不接受合成 control id）；并行双审下多个未完成角色时用 `--role blind-reader|chapter-editor` 指明完成对象，证据链（Generation run_id、session-completions、Guardian 回执）只携带真实会话。所有角色（Writer/Blind Reader/Chapter Editor/Patch）一律经 Agent 子代理等独立会话执行；Lead 不得亲自写任何角色文件，包括 `draft/正文.md`、`local-patch/replacements.json` 和各 `result_file`。Lead 直接写出角色结果的章节按 `exploration` 处理，永远不能 formal ready。
-5. 全部开放 MUST 都是 `local` 且可唯一定位时，优先局部 replacement；否则回到同一暂存正文集中修订。两条 Patch 路径的指令都禁止新增解释性段落（新增因果必须落进动作/停顿/物件后果）。两条路径都在修订后重跑全章硬检与双审；第二版仍有 MUST 时进入用户决定，禁止无限循环。作者续修必须走官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策并恢复一次集中修订 + 完整双审），禁止 python -c 调内部函数或豁免状态文件。门禁类失败同样路由为可授权 decision：正文硬门（如 5000 CJK）在 Writer 完成时先对暂存正文预检并走有界表面修订轮，耗尽后是 `surface_revision_required`；晋升/收尾阶段的 `BookProjectError` 是 `hard_gate_failed`；章节 checkpoint 失败是 `git_checkpoint_failed`，此时 authorize-revision 只重试 ready/checkpoint 尾段并保留已晋升草稿。技术运输失败只重开当前角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
+5. 全部开放 MUST 都是 `local` 且可唯一定位时，优先局部 replacement；否则回到同一暂存正文集中修订。两条 Patch 路径的指令都禁止新增解释性段落（新增因果必须落进动作/停顿/物件后果）。两条路径都在修订后重跑全章硬检与双审；普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 3 轮），预算内不打断作者；耗尽后才进入作者决定，决定卡同时显示同一锚点的复发次数。门禁类与高风险决策不受此预算影响。作者手工续修仍走官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策并恢复一次集中修订 + 完整双审），禁止 python -c 调内部函数或豁免状态文件。门禁类失败同样路由为可授权 decision：正文硬门（如 5000 CJK）在 Writer 完成时先对暂存正文预检并走有界表面修订轮，耗尽后是 `surface_revision_required`；晋升/收尾阶段的 `BookProjectError` 是 `hard_gate_failed`；章节 checkpoint 失败是 `git_checkpoint_failed`，此时 authorize-revision 只重试 ready/checkpoint 尾段并保留已晋升草稿。技术运输失败只重开当前角色，Writer 已产生的合规正文不得因元数据或遥测缺失而重写。
 6. 双审通过前不得创建正式章节、Generation、Guardian Receipt、Review History 或 draft Git checkpoint。晋升前 Python 先按 record_review 同源规则校验双审结论（`review_outcome_preflight_errors`），校验失败不产生任何正式副作用。Python 才能 CAS 晋升、记录证据、推进 `ready`、创建本地 Git checkpoint。
 7. `ready` 不等于作者批准。第 N 章完成后，`next-action` 会明确交接到第 N+1 章；不得把“没有角色动作”解释成自行改 state 或补造证据。
 

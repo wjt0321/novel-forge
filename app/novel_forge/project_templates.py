@@ -33,7 +33,12 @@ from .planning_spec import (
     genre_preset,
     render_literary_micro_rules,
 )
-from .style_corpus import render_ai_tells_brief, render_positive_genes_brief
+from .style_corpus import (
+    STYLE_CORPUS_VERSION,
+    gene_checklist_lines,
+    render_ai_tells_brief,
+    render_positive_genes_brief,
+)
 from .session_audit import harness_contract
 from .writer_prompt import (
     FORMAL_WRITER_PROMPT_ID,
@@ -388,6 +393,7 @@ _VOICE_PALETTES: dict[str, str] = {
 def _memory_voice_bible_md(title: str, genre: str) -> str:
     preset = genre_preset(genre)
     palette = _VOICE_PALETTES[preset]
+    gene_checklist = "\n".join(gene_checklist_lines())
     return f"""# Voice Bible — 《{title}》
 
 > 本书的声音宪法。硬禁令只保留机器可检测的少数几条；其余全部是正面引导：
@@ -480,18 +486,9 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
 动笔前以主角第一人称写 300-500 字独白（不进入正文，不留档）。问自己：此刻他/她最不想想的是什么？让他/她去想到那个。
 
 ## 本书采纳的风格基因
-> 全量正例基因与 AI 味反例见 `memory/style-reference.md`（按需查阅，不随章流转）。
-> 作者从这里勾选本书真正采纳的少数几条；勾选后写进上方对应小节，成为声音宪法的一部分。
-> 与本书声音冲突的基因直接忽略。
+> 全库见 `memory/style-reference.md`。勾选本书真正采纳的少数几条，与本书声音冲突的直接忽略。
 
-- [ ] 冰山省略：删掉一切可有可无的解释，情绪凝结在动作与物件里
-- [ ] 电报节奏：形容词审计、长短句交错
-- [ ] 贴着人物写：叙述语言随视角人物换挡
-- [ ] 对白朴素律：对白只做当件事，不带哲理腔
-- [ ] 短句切开：关键节拍用超短句收束
-- [ ] 闲笔：允许不推进剧情的描写让世界活着
-- [ ] 白描忌成语：用本场景的具体物，不用现成四字套语
-- [ ] 对白三式：文白/雅俗/急缓按人物身份分流
+{gene_checklist}
 
 ## exemplar_notes
 > 第 2 章起必填（narrative_gate 会检查本节）：从本书已写章节中选一个短段，
@@ -544,8 +541,8 @@ def _memory_style_reference_md() -> str:
     ai_tells = render_ai_tells_brief()
     return f"""# Style Reference — 正例基因与 AI 味反例
 
-> 本文件由项目初始化生成一次（style-corpus/v1），属于 create-only 资产：
-> sync 永不覆盖。按需查阅，不随章节上下文流转。
+> 本文件由项目初始化生成一次（{STYLE_CORPUS_VERSION}），属于 create-only 资产：
+> sync 永不覆盖。它是作者对照库；Writer capsule 只取其中的默认参照子集。
 > 只学叙事功能、不抄任何措辞；与本书声音冲突的条目直接忽略。
 > 采纳的基因请勾选进 `memory/voice-bible.md` 的「本书采纳的风格基因」。
 

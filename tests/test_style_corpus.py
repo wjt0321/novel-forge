@@ -8,17 +8,21 @@ from app.novel_forge.lint import lint_text
 from app.novel_forge.project_templates import _memory_voice_bible_md
 from app.novel_forge.style_corpus import (
     AI_TELL_PATTERNS,
+    CORE_AI_TELL_IDS,
+    CORE_POSITIVE_GENE_IDS,
     POSITIVE_STYLE_GENES,
     STYLE_CORPUS_VERSION,
+    gene_checklist_lines,
     render_ai_tells_brief,
     render_positive_genes_brief,
+    render_writer_style_brief,
 )
 
 
 def test_corpus_version_and_structure():
-    assert STYLE_CORPUS_VERSION == "style-corpus/v1"
-    assert len(POSITIVE_STYLE_GENES) >= 6
-    assert len(AI_TELL_PATTERNS) >= 10
+    assert STYLE_CORPUS_VERSION == "style-corpus/v2"
+    assert len(POSITIVE_STYLE_GENES) >= 18
+    assert len(AI_TELL_PATTERNS) >= 24
     for gene in POSITIVE_STYLE_GENES:
         assert {"id", "source", "principle", "practice", "signal"} <= set(gene)
         assert isinstance(gene["practice"], tuple) and gene["practice"]
@@ -28,6 +32,16 @@ def test_corpus_version_and_structure():
     assert len(tell_ids) == len(set(tell_ids))
     for tell in AI_TELL_PATTERNS:
         assert {"id", "category", "pattern", "fix"} <= set(tell)
+
+
+def test_core_reference_subsets_exist():
+    """Capsule injection picks by id, so the core ids must resolve."""
+    gene_ids = {gene["id"] for gene in POSITIVE_STYLE_GENES}
+    tell_ids = {tell["id"] for tell in AI_TELL_PATTERNS}
+    assert CORE_POSITIVE_GENE_IDS and set(CORE_POSITIVE_GENE_IDS) <= gene_ids
+    assert CORE_AI_TELL_IDS and set(CORE_AI_TELL_IDS) <= tell_ids
+    assert len(CORE_POSITIVE_GENE_IDS) <= 5
+    assert len(CORE_AI_TELL_IDS) <= 6
 
 
 def test_corpus_carries_no_long_verbatim_excerpts():
@@ -47,14 +61,45 @@ def test_corpus_carries_no_long_verbatim_excerpts():
 def test_renderers_are_bounded_and_deduplicated():
     genes = render_positive_genes_brief()
     tells = render_ai_tells_brief()
-    assert 0 < len(genes) <= 1500
-    assert 0 < len(tells) <= 1200
-    # Tight budgets still return a non-empty prefix, never raise.
-    assert render_positive_genes_brief(max_chars=200)
-    assert render_ai_tells_brief(max_chars=200)
-    # Every positive gene id appears in its brief.
+    # Author-facing reference keeps the full library, unbounded by default.
     for gene in POSITIVE_STYLE_GENES:
         assert gene["source"] in genes
+    for tell in AI_TELL_PATTERNS:
+        assert tell["pattern"] in tells
+    # An explicit budget keeps the longest whole-line prefix, never raises.
+    assert render_positive_genes_brief(max_chars=200)
+    assert render_ai_tells_brief(max_chars=200)
+
+
+def test_writer_style_brief_is_bounded_and_clause_clean():
+    brief = render_writer_style_brief()
+    assert 0 < len(brief) <= 300
+    assert "- 学 " in brief and "- 避 " in brief
+    # A gist is cut at a clause boundary, never mid-word.
+    for line in brief.splitlines():
+        gist = line.split("：", 1)[1] if "：" in line else ""
+        assert not gist.endswith(("的", "是", "和", "、", "，"))
+    # Adopted labels narrow the positive side to what the author checked.
+    adopted = render_writer_style_brief(["贴着人物写"])
+    assert "贴着人物写" in adopted and "冰山省略" not in adopted
+    # An unresolvable label falls back to the core set; never drops the
+    # positive side entirely.
+    fallback = render_writer_style_brief(["不存在的基因"])
+    assert "- 学 " in fallback and "- 避 " in fallback
+
+
+def test_voice_bible_checklist_derives_from_corpus():
+    """The adoption checklist must not drift from the single-source library."""
+    checklist = "\n".join(gene_checklist_lines())
+    for gene in POSITIVE_STYLE_GENES:
+        assert _gene_label_for_test(gene) in checklist
+    bible = _memory_voice_bible_md("测试书", "都市")
+    assert "规则怪谈" in bible or "看客留白" in bible
+    assert len(gene_checklist_lines()) == len(POSITIVE_STYLE_GENES)
+
+
+def _gene_label_for_test(gene: dict) -> str:
+    return str(gene["source"]).split(" · ")[-1]
 
 
 @pytest.mark.parametrize(

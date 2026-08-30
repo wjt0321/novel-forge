@@ -21,8 +21,8 @@
     ]
   },
   "summary": {
-    "control": 4,
-    "failure": 4,
+    "failure": 6,
+    "control": 7,
     "success": 4
   },
   "samples": [
@@ -299,6 +299,131 @@
         "guardian_file_count": 3
       },
       "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded."
+    },
+    {
+      "sample_id": "lean-2026-08-30-yeba-01",
+      "category": "failure",
+      "label_basis": "observed during a live Lean Native run / inventory at cleanup time",
+      "workflow_interpretation": "agent-observed 2026-08-30: one Lean chapter reached ready only after 6 consolidated revision rounds and 8 double-review rounds; rounds 3-7 all attacked the same paragraph-level continuity anchor. Looping, not prose quality.",
+      "aggregate_snapshot": {
+        "book_file_count": 73,
+        "book_byte_count": 419770,
+        "formal_chapter_count": 1,
+        "formal_chapter_cjk": 8797,
+        "chapter_state_count": 1,
+        "evidence_file_count": 3,
+        "staging_file_count": 19,
+        "guardian_file_count": 1,
+        "local_git_present": true,
+        "external_guardian_present": true
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded.",
+      "workflow_snapshot": {
+        "role_invocations": 26,
+        "wall_clock_seconds": 8128,
+        "writer_draft_seconds": 351,
+        "first_double_review_seconds": 367,
+        "revision_seconds": 4073,
+        "re_review_invocations": 16,
+        "re_review_seconds": 3338,
+        "editor_must_per_round": [
+          4,
+          5,
+          2,
+          3,
+          1,
+          2,
+          1,
+          0
+        ],
+        "blind_must_per_round": [
+          0,
+          2,
+          0,
+          3,
+          1,
+          1,
+          0,
+          0
+        ],
+        "chapter_cjk_trajectory": [
+          5895,
+          7483,
+          8513,
+          9123,
+          8848,
+          8897,
+          8797
+        ],
+        "authorised_revision_rounds": 5,
+        "invalid_review_results_from_lead_brief": 2,
+        "same_anchor_repeated_rounds": 5,
+        "converged_only_after_subtractive_revision": true,
+        "writer_context_positive_slot_empty_at_start": true,
+        "budget_breaker_effective": false,
+        "budget_breaker_reason": "host reported no tokens; known_total_tokens stayed absent",
+        "double_review_rounds": 8,
+        "consolidated_revision_invocations": 7,
+        "rejected_writer_completion_transport": 1,
+        "rejected_reason": "writer subagent hit host turn limit; staged prose preserved"
+      }
+    },
+    {
+      "sample_id": "lean-2026-08-30-jian-01",
+      "category": "control",
+      "label_basis": "observed during a live Lean Native run / inventory at cleanup time",
+      "workflow_interpretation": "Pre-existing 2026-08 test book cleaned up for a fresh post-iteration environment; not a positive or negative benchmark.",
+      "aggregate_snapshot": {
+        "book_file_count": 74,
+        "book_byte_count": 323284,
+        "formal_chapter_count": 1,
+        "formal_chapter_cjk": 5320,
+        "chapter_state_count": 1,
+        "evidence_file_count": 3,
+        "staging_file_count": 20,
+        "guardian_file_count": 1,
+        "local_git_present": true,
+        "external_guardian_present": true
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "lean-2026-08-30-mian-01",
+      "category": "control",
+      "label_basis": "observed during a live Lean Native run / inventory at cleanup time",
+      "workflow_interpretation": "Pre-existing 2026-08 test book cleaned up for a fresh post-iteration environment; not a positive or negative benchmark.",
+      "aggregate_snapshot": {
+        "book_file_count": 73,
+        "book_byte_count": 317214,
+        "formal_chapter_count": 1,
+        "formal_chapter_cjk": 5264,
+        "chapter_state_count": 1,
+        "evidence_file_count": 3,
+        "staging_file_count": 19,
+        "guardian_file_count": 1,
+        "local_git_present": true,
+        "external_guardian_present": true
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "lean-2026-08-30-ziye-01",
+      "category": "control",
+      "label_basis": "observed during a live Lean Native run / inventory at cleanup time",
+      "workflow_interpretation": "Pre-existing 2026-08 test book cleaned up for a fresh post-iteration environment; not a positive or negative benchmark.",
+      "aggregate_snapshot": {
+        "book_file_count": 50,
+        "book_byte_count": 189797,
+        "formal_chapter_count": 0,
+        "formal_chapter_cjk": null,
+        "chapter_state_count": 1,
+        "evidence_file_count": 0,
+        "staging_file_count": 4,
+        "guardian_file_count": 1,
+        "local_git_present": true,
+        "external_guardian_present": true
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
     }
   ],
   "capture_history": [
@@ -322,6 +447,13 @@
       "external_local_git_directories": 1,
       "external_guardian_directories": 1,
       "note": "Single-book cleanup after a Lean Native workflow test run; the Writer subagent produced compliant prose in its sandbox but the host subagent output mechanism overwrote the canonical draft path with completion JSON, forcing Lead-level recovery that by project rule disqualifies formal_ready."
+    },
+    {
+      "captured_on": "2026-08-30",
+      "book_projects": 4,
+      "external_local_git_directories": 4,
+      "external_guardian_directories": 4,
+      "note": "Four-book cleanup after a full Lean chapter run. The run reached ready in 8848 CJK but cost 26 role invocations / 8128s, 91% of it in revision and re-review; rounds 3-7 repaired the same anchor. Diagnosis and iteration plan recorded in docs/50-lean-iteration-plan.md."
     }
   ]
 }

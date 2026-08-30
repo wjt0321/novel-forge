@@ -14,6 +14,7 @@ from pathlib import Path
 from app.novel_forge import book_project
 from app.novel_forge.book_git import book_git_status
 from app.novel_forge.native_relay import NativeWorkflowRelay
+from app.novel_forge.workflow_iteration import MAX_AUTO_LITERARY_REVISION_ROUNDS
 from app.novel_forge.workflow import (
     NovelWorkflowOrchestrator,
     ReviewFinding,
@@ -1633,7 +1634,13 @@ def test_lean_writer_capsule_contains_minimal_p0_p1_p2_package(tmp_path: Path):
     assert {
         name: tier["budget_cjk"]
         for name, tier in manifest["writer_context_tiers"].items()
-    } == {"P0": 1500, "P1": 850, "P2": 450}
+    } == {"P0": 1500, "P1": 850, "P2": 700}
+    # A fresh book has no adopted genes and no registered exemplar, so the
+    # positive-target slot must be filled from the single-source corpus.
+    body = context.read_text(encoding="utf-8")
+    assert "style-corpus 默认参照" in body
+    assert "- 学 " in body and "- 避 " in body
+
 
 def test_lean_writer_completion_needs_only_the_existing_prose(
     tmp_path: Path,
@@ -3699,7 +3706,16 @@ def _drive_lean_reviews_to_must(
 def _reach_literary_revision_decision(
     relay: NativeWorkflowRelay,
 ) -> WorkflowResult:
-    """Drive a lean chapter into decision_required(literary_revision_required)."""
+    """Drive a lean chapter into decision_required(literary_revision_required).
+
+    Ordinary literary MUSTs no longer interrupt the author: Python keeps
+    re-issuing the consolidated revision until its own budget runs out, so
+    this helper feeds that loop until the flow actually stops.
+    """
+    from app.novel_forge.workflow_iteration import (
+        MAX_AUTO_LITERARY_REVISION_ROUNDS,
+    )
+
     relay.start("demo", _request(), chapter=1)
     action = relay.next_action("demo")
     (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
@@ -3707,19 +3723,49 @@ def _reach_literary_revision_decision(
         encoding="utf-8",
     )
     _complete_minimal(relay, "demo")
-    _drive_lean_reviews_to_must(relay, "demo")
-    patch = relay.next_action("demo")
-    (Path(patch["capsule"]["path"]) / "draft/正文.md").write_text(
-        _prose("修订稿"),
-        encoding="utf-8",
-    )
-    _complete_minimal(relay, "demo")
     result = _drive_lean_reviews_to_must(relay, "demo")
-    assert result.user_state == "decision_required"
+
+    automatic_revisions = 0
+    while result.user_state != "decision_required":
+        assert result.user_state == "running", result.user_state
+        assert automatic_revisions < MAX_AUTO_LITERARY_REVISION_ROUNDS + 2
+        patch = relay.next_action("demo")
+        assert patch["role"] == "writer"
+        assert patch["stage"] == "patch"
+        (Path(patch["capsule"]["path"]) / "draft/正文.md").write_text(
+            _prose(f"修订稿{automatic_revisions + 1}"),
+            encoding="utf-8",
+        )
+        _complete_minimal(relay, "demo")
+        result = _drive_lean_reviews_to_must(relay, "demo")
+        automatic_revisions += 1
+
+    assert automatic_revisions == MAX_AUTO_LITERARY_REVISION_ROUNDS
     assert relay._load_state("demo")["decision_kind"] == (
         "literary_revision_required"
     )
     return result
+
+
+def test_literary_must_revises_without_interrupting_the_author(
+    tmp_path: Path,
+):
+    """The author must not be asked while the automatic budget remains."""
+    relay = NativeWorkflowRelay(tmp_path / "repo", strict_audit=False)
+    relay.start("demo", _request(), chapter=1)
+    action = relay.next_action("demo")
+    (Path(action["capsule"]["path"]) / "draft/正文.md").write_text(
+        _prose("初稿"),
+        encoding="utf-8",
+    )
+    _complete_minimal(relay, "demo")
+
+    result = _drive_lean_reviews_to_must(relay, "demo")
+    assert result.user_state == "running"
+    assert relay._load_state("demo")["phase"] != "decision_required"
+    follow_up = relay.next_action("demo")
+    assert follow_up["role"] == "writer"
+    assert follow_up["stage"] == "patch"
 
 
 def test_authorize_revision_resumes_staged_literary_patch(tmp_path: Path):
@@ -3800,7 +3846,10 @@ def test_decision_required_options_and_message_reflect_revision_round(
     status = relay.status("demo")
 
     assert status.user_state == "decision_required"
-    assert "第 1 轮集中修订后仍有 MUST" in status.message
+    assert (
+        f"第 {MAX_AUTO_LITERARY_REVISION_ROUNDS} 轮集中修订后仍有 MUST"
+        in status.message
+    )
     assert any(
         option.startswith("D. 授权一次集中修订后重新双审")
         for option in status.options
@@ -3958,39 +4007,9 @@ def test_retry_regeneration_clears_stale_must_findings(tmp_path: Path):
 def test_decision_options_reflect_each_decision_kind(tmp_path: Path):
     root = tmp_path / "repo"
     relay = NativeWorkflowRelay(root, strict_audit=False)
-    relay.start("demo", _request(), chapter=1)
-    writer_action = relay.next_action("demo")
-    (Path(writer_action["capsule"]["path"]) / "draft/正文.md").write_text(
-        _prose("选项章"), encoding="utf-8"
-    )
-    _complete_minimal(relay, "demo")
-    _drive_lean_reviews_to_must(relay, "demo")
-    patch = relay.next_action("demo")
-    (Path(patch["capsule"]["path"]) / "draft/正文.md").write_text(
-        _prose("修订稿"), encoding="utf-8"
-    )
-    _complete_minimal(relay, "demo")
-    backend = ScriptedBackend([], [_must_reviews()])
-    result = None
-    for role in ("blind-reader", "chapter-editor"):
-        action = relay.next_action("demo")
-        outcome = backend.run_review(
-            SessionIdentity(
-                session_id=f"{role}-opt",
-                session_instance_id=f"{role}-opt",
-                provider="unknown", model="unknown",
-                agent_harness="native-host", role=role,
-            ),
-            role=role,
-            context=_review_capsule_context(action),
-            instructions=_review_capsule_instructions(action),
-            reasoning_effort="medium",
-        )
-        Path(action["result_file"]).write_text(
-            json.dumps(asdict(outcome), ensure_ascii=False), encoding="utf-8"
-        )
-        result = _complete_minimal(relay, "demo")
-    assert result.user_state == "decision_required"
+    # The option table under test is reached through whatever the revision
+    # budget does, so drive it with the shared helper instead of a copy.
+    _reach_literary_revision_decision(relay)
     state = relay._load_state("demo")
     state["decision_kind"] = "hard_budget_reached"
     _atomic_write_json(relay._state_path("demo"), state)
@@ -4024,7 +4043,10 @@ def test_user_decision_card_message_matches_status(tmp_path: Path):
     status = relay.status("demo")
 
     assert card["message"] == status.message
-    assert "第 1 轮集中修订后仍有 MUST" in card["message"]
+    assert (
+        f"第 {MAX_AUTO_LITERARY_REVISION_ROUNDS} 轮集中修订后仍有 MUST"
+        in card["message"]
+    )
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
