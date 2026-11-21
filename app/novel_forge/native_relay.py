@@ -69,8 +69,7 @@ from .workflow_observability import (
     sanitize_call_telemetry,
 )
 from .planning_spec import (
-    CANON_DIGEST_MAX_CHARS,
-    EDITOR_SCENE_SECTIONS,
+    PROSE_MODEL_SECTIONS,
     count_cjk_chars,
 )
 from .workflow_iteration import (
@@ -82,6 +81,8 @@ from .workflow_iteration import (
     plan_local_patch,
     require_high_risk_confirmation,
     display_workflow_state,
+    _strip_previous_chapter_ledger,
+    _without_markdown_tables,
 )
 from .workflow import (
     NovelWorkflowOrchestrator,
@@ -3264,15 +3265,19 @@ class NativeWorkflowRelay:
             # contract is injected once via the dedicated input below, and
             # canon arrives as the compressed memory digest instead of raw
             # record files.
-            scene = (
-                extract_markdown_sections(scene_text, EDITOR_SCENE_SECTIONS)
-                or scene_text
+            scene = _without_markdown_tables(
+                _strip_previous_chapter_ledger(
+                    extract_markdown_sections(
+                        scene_text, PROSE_MODEL_SECTIONS
+                    )
+                    or scene_text
+                )
             )
             canon = book_memory.canon_context_digest(
                 self.root,
                 slug,
                 chapter,
-                max_chars=CANON_DIGEST_MAX_CHARS,
+                max_chars=1_500,
             )
         blind_path = book_dir / f"reviews/ch{chapter:02d}-blind-reader.md"
         blind_outcome = state.get("blind_outcome")

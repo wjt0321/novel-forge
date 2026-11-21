@@ -96,7 +96,8 @@ def test_minimal_package_injects_style_reference_when_target_is_empty(
         tmp_path, "demo", chapter=2, volume=1, handoff_path=handoff
     )
     assert "style-corpus 默认参照" in plain["text"]
-    assert "- 学 " in plain["text"] and "- 避 " in plain["text"]
+    assert "只取 1 或 2 种" in plain["text"]
+    assert "- 避 " in plain["text"]
     assert plain["tiers"]["P2"]["cjk"] <= WRITER_CONTEXT_BUDGETS["P2"]
     # The unchecked adoption checklist is author-facing; it must not ride into
     # the capsule, and injected scaffolding stays free of banned marks.
@@ -137,6 +138,10 @@ def test_minimal_writer_package_prioritizes_story_and_human_pressure_sections(
         "- 角色拒绝承认什么：他更怕同伴真的记得自己。\n"
         "- 角色误读了谁或什么：把老许的回避当成遗忘。\n"
         "- 哪句话不能说出口：那天是我报的信。\n"
+        "## 3. Beat 因果链\n"
+        "| 1 | 节拍表不该进写作包 |\n"
+        "## 4. 信息账本\n"
+        "- 本章唯一新信息：信息账本不该进写作包。\n"
         "## 2. 在场者状态\n"
         "| 人物 | 此刻目标 | 隐瞒/未知 | 本场变化 |\n"
         "|---|---|---|---|\n"
@@ -162,7 +167,12 @@ def test_minimal_writer_package_prioritizes_story_and_human_pressure_sections(
     assert "周既先记物件位置" in text
     assert "失去向老许求证过去的机会" in text
     assert "编辑专用替代解释" not in text
+    assert "节拍表不该进写作包" not in text
+    assert "信息账本不该进写作包" not in text
+    assert "他更怕同伴真的记得自己" not in text
     assert "完整旧包" not in text
+    assert "| 周既 |" not in text
+    assert "不要打开、补写或修改任何表" in text
 
 def test_full_writer_package_keeps_legacy_handoff_as_comparison_mode(tmp_path: Path):
     book = _book(tmp_path)

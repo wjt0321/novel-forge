@@ -103,7 +103,9 @@ automatically because they may contain user edits.
 
 The daily production loop is deliberately small:
 
-`Lead dispatches Writer -> Writer stages draft -> Blind Reader + Chapter Editor review -> MUST returns to the same staged body -> both reviewers re-review -> Python promotes -> ready`
+`Lead dispatches Writer -> Writer stages draft -> Blind Reader + Chapter Editor review -> at most one revision of the same staged body -> Python promotes -> ready`
+
+Python writes the scene package at `start`. Creative roles do not open or edit planning tables. The writer package strips Markdown tables and carries four architecture moves taken from StoryScope-style findings (theme left unstated, one causal break, emotion not only as sensation, ending that is not growth-plus-acceptance). Review may raise at most one architecture MUST. Ordinary literary revision runs once (`MAX_AUTO_LITERARY_REVISION_ROUNDS = 1`), then stops for the author.
 
 Em dashes, ellipses, and the `not X but Y` construction remain blocking because
 high-frequency model output can saturate a chapter with them. The Writer prompt
@@ -244,7 +246,7 @@ promotion, author approval, or `publication_eligibility=False`.
 
 ## 2026-07-31 iteration 45 routing
 
-Lean Writer capsules contain a protected `writer-context.md`. Minimal mode compiles P0/P1/P2 at 1500/850/700 CJK, with a total ceiling of 3050 CJK; P2 carries the style-corpus reference set (adopted genes first, core subset otherwise); full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
+Lean Writer capsules contain a protected `writer-context.md`. Minimal mode compiles P0/P1/P2 at 1500/850/700 CJK, with a total ceiling of 3050 CJK. P2 carries a style-name menu or at most two adopted techniques, plus two concrete avoid-pairs; the full library stays in `memory/style-reference.md`. Full mode remains an explicit comparison switch. Volume voice overrides live in `memory/voice-bible-vNN.md`, while Writer model continuity and author-approved switch references are enforced by Python rather than chosen by the role.
 
 Review MUST findings affect routing only when every open finding is marked `local` and maps to one unique paragraph. The Writer then returns replacement fragments only; Python performs exact replacement, runs whole-body hard checks, and restarts the complete Blind Reader and Chapter Editor pair. All other findings retain the single chapter-level Patch path.
 
