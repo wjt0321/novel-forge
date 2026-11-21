@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-STYLE_CORPUS_VERSION = "style-corpus/v2"
+STYLE_CORPUS_VERSION = "style-corpus/v3"
 
 # --- Default reference subsets ------------------------------------------------
 # The full library lives in the author-facing ``memory/style-reference.md``.
@@ -286,6 +286,182 @@ POSITIVE_STYLE_GENES: tuple[dict[str, str | tuple[str, ...]], ...] = (
         ),
         "signal": "重复程序可核对；增益有代价",
     },
+    {
+        "id": "life-goes-on",
+        "source": "契诃夫 · 生活还在继续",
+        "principle": "故事在事情没说完时停下，后文是吃饭、赶路、别人的闲事，不给教训。",
+        "practice": (
+            "删掉结尾的明白了",
+            "最后一段写一件与主题无关的日常",
+            "人物可以没想通",
+        ),
+        "signal": "收束无总结句；末段是日常动作",
+    },
+    {
+        "id": "pain-is-local",
+        "source": "莫言 · 疼在具体处",
+        "principle": "强烈感受只落在一处身体或一种味道上，不把五感排成清单，也不升到民族或命运。",
+        "practice": (
+            "一场只留一种主导感觉",
+            "用那一处的具体名词，不用惨烈之类的评语",
+            "旁人继续做自己的事",
+        ),
+        "signal": "单场景主导感官不超过一种；无命运判词",
+    },
+    {
+        "id": "marvel-as-fact",
+        "source": "马尔克斯 · 奇事当事实",
+        "principle": "异常的事用报账的语气说完，不解释原理，也不提醒读者这很神奇。",
+        "practice": (
+            "奇事与买菜用同一种句子",
+            "不写众人震惊",
+            "来历只给一句，随即去做下一件小事",
+        ),
+        "signal": "异常事件无解说；语气与日常相同",
+    },
+    {
+        "id": "one-line-one-act",
+        "source": "古龙 · 一句一事",
+        "principle": "一句只做一件事。对白本身就是动作，不加情绪标签，段与段之间留空白。",
+        "practice": (
+            "长句拆开，直到一句里只剩一个动作或一句说",
+            "删掉他说道之后的神态说明",
+            "用空行代替过渡",
+        ),
+        "signal": "单句信息点少；对白后少有神态从句",
+    },
+    {
+        "id": "banquet-shows-person",
+        "source": "曹雪芹 · 席面上见人",
+        "principle": "人的地位、亲疏和心计从座次、称呼、谁先动筷和一句闲话里显出来，不开人物介绍。",
+        "practice": (
+            "用称呼的变化代替关系说明",
+            "让配角忙自己的事，顺便露出主角",
+            "礼仪出错比心理描写更有用",
+        ),
+        "signal": "无人物小传；关系来自称谓与次序",
+    },
+    {
+        "id": "manners-are-power",
+        "source": "奥斯汀 · 礼节即权力",
+        "principle": "权力发生在该说不该说、谁先停顿、谁把话接过去。叙述可以轻，刀在对白里。",
+        "practice": (
+            "冲突写成一句不合时宜的话",
+            "用旁人的反应显示这句话的分量",
+            "不写她感到被冒犯了",
+        ),
+        "signal": "冲突落在说辞与停顿；少心理命名",
+    },
+    {
+        "id": "stop-at-instant",
+        "source": "川端康成 · 停在一瞬",
+        "principle": "情绪停在一个看见的瞬间，不解释这个瞬间意味着什么，也不把景物写成心情的比喻。",
+        "practice": (
+            "收在一个物件或一个动作上",
+            "景物就是景物",
+            "删掉由此他想到",
+        ),
+        "signal": "收束是具体瞬间；无由此想到",
+    },
+    {
+        "id": "idea-becomes-cost",
+        "source": "刘慈欣 · 概念变成后果",
+        "principle": "大概念只通过一个可核对的后果存在：谁付出什么、哪一项数字改变了决定。不讲课。",
+        "practice": (
+            "设定改写成一次操作的结果",
+            "数字只在有人用它做选择时出现",
+            "删掉原理回顾段",
+        ),
+        "signal": "无讲解段；概念带有可见代价",
+    },
+    {
+        "id": "absurd-argument",
+        "source": "王小波 · 用荒唐事讲理",
+        "principle": "道理不正面宣布，放进一件具体的荒唐事或一句反话里，说完就去做别的。",
+        "practice": (
+            "把议论改成一件做错的小事",
+            "反话只说一句",
+            "不要在段末翻译这句反话",
+        ),
+        "signal": "无段末释义；道理依附于事件",
+    },
+    {
+        "id": "scene-beside-person",
+        "source": "萧红 · 景物与人事并置",
+        "principle": "景色和人事放在相邻的句子里，不写因为风景所以心情。关系让读者自己接。",
+        "practice": (
+            "一段里让一件家务和一件心事隔句出现",
+            "不使用因此、于是来焊接它们",
+            "结束在还没做完的家务上",
+        ),
+        "signal": "景物与人事并列；少因果焊接词",
+    },
+    {
+        "id": "violence-unadorned",
+        "source": "麦卡锡 · 连动不渲染",
+        "principle": "一连串动作用平直的句子接上，不渲染血腥，也不停下来评价谁是对的。",
+        "practice": (
+            "动词连着动词，中间不插感想",
+            "伤只写它妨碍了下一个动作",
+            "不给凶手或受害者加道德判词",
+        ),
+        "signal": "动作链中无评价词；伤害服务于下一步",
+    },
+    {
+        "id": "later-look-back",
+        "source": "门罗 · 事后才回头",
+        "principle": "先写后来的一个普通场面，再漏出以前的一件事。不按时间表讲完，也不宣布现在她懂了。",
+        "practice": (
+            "开场放在事件之后",
+            "旧事只给改变了现在这一动作的那一截",
+            "禁止终于明白",
+        ),
+        "signal": "时间不是一条直线；无顿悟句",
+    },
+    {
+        "id": "thought-in-progress",
+        "source": "托尔斯泰 · 念头正在发生",
+        "principle": "写人物这一分钟实际在想的下一句，包含自相矛盾。不写他是一个什么样的人。",
+        "practice": (
+            "念头跟着眼前的刺激改道",
+            "允许想了两句就去做一件小事",
+            "删掉性格总结",
+        ),
+        "signal": "心理是进行中的句子；无性格说明书",
+    },
+    {
+        "id": "two-accounts",
+        "source": "芥川龙之介 · 两说并存",
+        "principle": "同一件事留下两种说法，叙述者不裁判哪一种是真的。",
+        "practice": (
+            "让两个当事人的说法在事实细节上对不上",
+            "不写真相其实是",
+            "读者要的那一处就让它空着",
+        ),
+        "signal": "关键事实有两个版本；无裁判句",
+    },
+    {
+        "id": "repeat-without-gloss",
+        "source": "杜拉斯 · 重复而不解释",
+        "principle": "同一句或同一个物件隔一段再出现，不解释为什么要重复。重复本身就是压力。",
+        "practice": (
+            "选一句短话复现两次",
+            "第二次不要加他终于懂得",
+            "重复之间做别的事",
+        ),
+        "signal": "有意复现且无释义",
+    },
+    {
+        "id": "labor-and-ledger",
+        "source": "路遥 · 劳动与账",
+        "principle": "人的处境通过干活、工分、路和一顿饭的花费立住。不喊志向，不替人物做总结发言。",
+        "practice": (
+            "写清楚这一天的活计和开销",
+            "决心放进下一步要干的活里",
+            "删掉旁白的赞美",
+        ),
+        "signal": "有可核对的劳动与花费；无颂词",
+    },
 )
 
 # --- AI-tell anti-patterns ----------------------------------------------------
@@ -462,6 +638,70 @@ AI_TELL_PATTERNS: tuple[dict[str, str], ...] = (
         "pattern": "打磨过的粗糙：蓝领或底层角色满口谚语、句句有节奏感，像演员演工人。",
         "fix": "让这类角色废话多、说半截、词不达意，删掉所有漂亮的粗话。",
     },
+    {
+        "id": "glint-in-the-eye",
+        "category": "情绪",
+        "pattern": "眼中闪过一丝复杂、狠厉或温柔，用眼睛代替人物刚刚做的决定。",
+        "fix": "写他盯住的那件东西，或他改口的那半句。",
+        "bad": "他眼中闪过一丝复杂。",
+        "good": "他把找零推回去，又抽回一张。",
+    },
+    {
+        "id": "ritual-breath",
+        "category": "情绪",
+        "pattern": "每到情绪节点就深吸一口气、握紧拳头、喉结滚动，成套的身体仪式。",
+        "fix": "写他手上没做完的那件事。",
+        "bad": "他深吸一口气，握紧了拳头。",
+        "good": "水开了，他没去关火。",
+    },
+    {
+        "id": "frozen-air",
+        "category": "描写",
+        "pattern": "空气仿佛凝固、时间仿佛静止、气氛降到冰点，用空间代替现场里的人。",
+        "fix": "写屋里谁先出了声，或谁先把东西放下。",
+        "bad": "空气仿佛凝固了。",
+        "good": "没人夹菜。母亲先把筷子放下。",
+    },
+    {
+        "id": "mixed-flavors",
+        "category": "情绪",
+        "pattern": "心中五味杂陈、心湖掀起波澜、一股暖流涌上，情绪被写成风景。",
+        "fix": "直接说他怕或他恼，或者写他去做的一件小事。",
+        "bad": "他心中五味杂陈。",
+        "good": "他怕。他把剩下的半碗面吃完了。",
+    },
+    {
+        "id": "body-only-emotion",
+        "category": "情绪",
+        "pattern": "同一段里胸口发紧、指尖冰凉、后背渗汗连用，情绪只剩身体感觉。",
+        "fix": "身体感觉只留一处，其余改成他做了什么。",
+        "bad": "胸口发紧，指尖冰凉，后背渗汗。",
+        "good": "他怕，还是把合同签了。",
+    },
+    {
+        "id": "tidy-cause-chain",
+        "category": "结构",
+        "pattern": "于是、因此、接着连成一条，每件事都由上一件事推出，没有旁人和意外。",
+        "fix": "留一件不是主角推动的事，写完就继续。",
+        "bad": "因此他决定留下，于是一切都改变了。",
+        "good": "他想走。房东先把电闸拉了。",
+    },
+    {
+        "id": "growth-reconciliation",
+        "category": "收束",
+        "pattern": "结尾是想通、和解、自己把问题解决，三段一起出现。",
+        "fix": "停在没办完的后果上，不要写成成长完成。",
+        "bad": "他终于明白，也原谅了父亲，问题就此解决。",
+        "good": "父亲的钥匙还在他口袋里。门没锁。",
+    },
+    {
+        "id": "sense-inventory",
+        "category": "描写",
+        "pattern": "新场景按看见、听见、闻到各写一句，像在填五感表。",
+        "fix": "只留这个人此刻会注意的一种。",
+        "bad": "他看见灰，听见风，闻到锈。",
+        "good": "锁是锈的，钥匙拧了两次才动。",
+    },
 )
 
 
@@ -490,10 +730,14 @@ def render_positive_genes_brief(max_chars: int | None = None) -> str:
 
 def render_ai_tells_brief(max_chars: int | None = None) -> str:
     """Render the AI-tell catalog (full by default; bounded when injected)."""
-    lines = [
-        f"- [{tell['category']}] {tell['pattern']}→ {tell['fix']}"
-        for tell in AI_TELL_PATTERNS
-    ]
+    lines = []
+    for tell in AI_TELL_PATTERNS:
+        line = f"- [{tell['category']}] {tell['pattern']}→ {tell['fix']}"
+        bad = str(tell.get("bad") or "").strip()
+        good = str(tell.get("good") or "").strip()
+        if bad and good:
+            line += f" 反：{bad} 正：{good}"
+        lines.append(line)
     return _truncate_lines(lines, max_chars)
 
 
@@ -513,20 +757,38 @@ def _gene_gist(gene: dict[str, str | tuple[str, ...]]) -> str:
 def gene_checklist_lines() -> list[str]:
     """Unchecked adoption checklist for the voice bible, derived from the corpus."""
     return [
-        f"- [ ] {_gene_label(gene)}：{_gene_gist(gene)}"
+        f"- [ ] {_gene_label(gene)}"
         for gene in POSITIVE_STYLE_GENES
     ]
 
 
+def _rotated(items: Sequence[dict], chapter: int, count: int) -> list[dict]:
+    """Return ``count`` items, shifting with the chapter so capsules differ."""
+    if not items or count <= 0:
+        return []
+    start = (max(int(chapter), 1) - 1) % len(items)
+    return [items[(start + offset) % len(items)] for offset in range(count)]
+
+
+def _tell_line(tell: dict[str, str]) -> str:
+    bad = str(tell.get("bad") or "").strip()
+    good = str(tell.get("good") or "").strip()
+    if bad and good:
+        return f"- 避 {bad} → {good}"
+    return f"- 避 {tell['category']}·{_first_clause(tell['pattern'])}"
+
+
 def render_writer_style_brief(
     adopted: Sequence[str] = (),
-    max_chars: int = 260,
+    max_chars: int = 420,
+    *,
+    chapter: int = 0,
 ) -> str:
-    """Compact positive/negative reference for the writer capsule.
+    """Capsule style card: at most two techniques, plus two concrete avoids.
 
-    ``adopted`` carries the technique labels the author checked in the voice
-    bible. With nothing adopted, the core subset is used so a draft always has
-    a stated target instead of an empty placeholder.
+    The full library stays in ``memory/style-reference.md``. A chapter with no
+    author selection gets the name menu so the writer picks one or two; it does
+    not receive every principle. Author-checked labels are capped at two.
     """
     wanted = [str(item).strip() for item in adopted if str(item).strip()]
     genes = []
@@ -538,21 +800,34 @@ def render_writer_style_brief(
                 key in str(gene["source"]) or key == gene["id"]
                 for key in wanted
             )
-        ]
-    if not genes:
-        # Nothing adopted, or an adopted label no longer resolves after a
-        # corpus rename: never leave the writer without a positive target.
+        ][:2]
+    lines: list[str] = []
+    if genes:
+        lines.append("本章只用下面 1 到 2 种，不要再叠加。")
+        for gene in genes:
+            lines.append(f"- 学 {gene['source']}：{_gene_gist(gene)}")
+    elif chapter:
+        names = "、".join(_gene_label(gene) for gene in POSITIVE_STYLE_GENES)
+        lines.append(f"写法只取 1 或 2 种，不要叠加：{names}。")
+    else:
         genes = [
             gene
             for gene in POSITIVE_STYLE_GENES
             if gene["id"] in CORE_POSITIVE_GENE_IDS
+        ][:2]
+        for gene in genes:
+            lines.append(f"- 学 {gene['source']}：{_gene_gist(gene)}")
+    if chapter:
+        paired = [
+            tell
+            for tell in AI_TELL_PATTERNS
+            if str(tell.get("bad") or "").strip()
+            and str(tell.get("good") or "").strip()
         ]
-    tells = [
-        tell for tell in AI_TELL_PATTERNS if tell["id"] in CORE_AI_TELL_IDS
-    ]
-    lines: list[str] = []
-    for gene in genes:
-        lines.append(f"- 学 {gene['source']}：{_gene_gist(gene)}")
-    for tell in tells:
-        lines.append(f"- 避 {tell['category']}·{_first_clause(tell['pattern'])}")
+        tells = _rotated(paired or AI_TELL_PATTERNS, chapter, 2)
+    else:
+        tells = [
+            tell for tell in AI_TELL_PATTERNS if tell["id"] in CORE_AI_TELL_IDS
+        ][:2]
+    lines.extend(_tell_line(tell) for tell in tells)
     return _truncate_lines(lines, max_chars) or "- 未登记。"

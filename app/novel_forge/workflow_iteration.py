@@ -19,10 +19,20 @@ WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
 # re-issues the consolidated revision this many times before it interrupts the
 # author. Gate and high-risk failures never take this path. Single tunable for
 # the "no interruption" guarantee; raise it only together with a budget breaker.
-MAX_AUTO_LITERARY_REVISION_ROUNDS = 3
+MAX_AUTO_LITERARY_REVISION_ROUNDS = 1
 # P2 carries voice fingerprints plus the style reference set; it was 450 while
 # the positive-target slot was an empty placeholder.
 WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 700}
+# Writer-facing card. Tables stay in the control plane; this is the only
+# craft instruction the draft is allowed to see up front.
+_PROSE_CARD = (
+    "## 只写这一章\n"
+    "规划表已经由程序写好。不要打开、补写或修改任何表。"
+    "下面是本章要发生的事，不是要在正文里逐条证明的清单。\n"
+    "主题留在最后一个动作或物件上。留一件不是主角推出来的事。"
+    "情绪写他做了什么，或直接说出感受；身体感觉最多一处。"
+    "结尾停在没办完的后果上，不要写成想通了、和解了。\n"
+)
 HOST_CAPABILITY_TIERS = frozenset(
     {"native-isolated", "managed-relay", "exploration"}
 )
@@ -134,6 +144,17 @@ _PREVIOUS_CHAPTER_LEDGER_PREFIXES = (
     "- 上一章正文路径",
     "- 上一章正文 SHA-256",
     "- 上一章正文SHA-256",
+    "- 本章开头原文",
+    "- 上一章结束时间",
+    "- 本章开始时间",
+    "- 上一章结束地点",
+    "- 本章开始地点",
+    "- 上一章结束动作",
+    "- 本章开始动作",
+    "- 转场类型",
+    "- 上一章末明确决定",
+    "- 本章是否推翻",
+    "- 若推翻",
 )
 
 
@@ -190,6 +211,24 @@ def _has_registered_exemplar(voice_source: str) -> bool:
     return not any(token in content for token in _EXEMPLAR_PLACEHOLDER_TOKENS)
 
 
+def _without_markdown_tables(text: str) -> str:
+    """Drop Markdown tables so a writer never treats a ledger as an outline."""
+    kept: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            continue
+        if (
+            stripped
+            and set(stripped) <= set("-:| ")
+            and "-" in stripped
+            and "|" in stripped
+        ):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
 def compile_writer_package(
     root: Path,
     slug: str,
@@ -238,8 +277,6 @@ def compile_writer_package(
             "0a. 用户硬锚合同",
             "0b. 章际交接",
             "1. 场景压力",
-            "3. Beat 因果链",
-            "4. 信息账本",
             "场景契约",
             "硬锚点",
             "章末目标",
@@ -247,9 +284,12 @@ def compile_writer_package(
     )
     if not story_obligations:
         story_obligations = scene
-    story_obligations = _strip_previous_chapter_ledger(story_obligations)
+    story_obligations = _without_markdown_tables(
+        _strip_previous_chapter_ledger(story_obligations)
+    )
     p0 = _bounded(
-        "## 当前故事义务\n"
+        _PROSE_CARD
+        + "\n## 当前故事义务\n"
         + _bounded(story_obligations, 1000)
         + "\n\n## 上一章必要结尾\n"
         + (previous_ending or "不适用或尚无可靠上一章正文。"),
@@ -259,8 +299,6 @@ def compile_writer_package(
     human_pressure = extract_markdown_sections(
         scene,
         (
-            "1c. 决策问题",
-            "2. 在场者状态",
             "6. 人物性呼吸段",
             "7. 场景余波",
         ),
@@ -285,7 +323,10 @@ def compile_writer_package(
     ][:2]
     p1 = _bounded(
         "## 当前人物私欲、关系摩擦与感知偏差\n"
-        + (_bounded(human_pressure, 560) or "- 未登记，按现场行动保守推断。")
+        + (
+            _bounded(_without_markdown_tables(human_pressure), 560)
+            or "- 未登记，按现场行动保守推断。"
+        )
         + "\n\n## 直接 Canon\n"
         + (direct_memory or "- 未登记。")
         + "\n\n## 最多两个未解承诺\n"
@@ -315,14 +356,16 @@ def compile_writer_package(
     if adopted_genes:
         style_block = (
             "\n\n## 本书采纳手法与反面清单（style-corpus）\n"
-            + render_writer_style_brief(adopted_genes, max_chars=200)
+            + render_writer_style_brief(
+                adopted_genes, max_chars=240, chapter=chapter
+            )
         )
     elif not _has_registered_exemplar(voice_source):
-        # Nothing adopted and no registered exemplar: the positive-target slot
-        # would be an empty placeholder, so fill it from the single source.
+        # Nothing adopted and no registered exemplar: offer the name menu.
+        # The writer picks one or two. The full library stays on disk.
         style_block = (
             "\n\n## 风格正反例（style-corpus 默认参照）\n"
-            + render_writer_style_brief()
+            + render_writer_style_brief(chapter=chapter)
         )
     p2_room = WRITER_CONTEXT_BUDGETS["P2"] - _count_cjk(style_block)
     p2 = _bounded(

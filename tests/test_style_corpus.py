@@ -20,7 +20,7 @@ from app.novel_forge.style_corpus import (
 
 
 def test_corpus_version_and_structure():
-    assert STYLE_CORPUS_VERSION == "style-corpus/v2"
+    assert STYLE_CORPUS_VERSION == "style-corpus/v3"
     assert len(POSITIVE_STYLE_GENES) >= 18
     assert len(AI_TELL_PATTERNS) >= 24
     for gene in POSITIVE_STYLE_GENES:
@@ -73,8 +73,9 @@ def test_renderers_are_bounded_and_deduplicated():
 
 def test_writer_style_brief_is_bounded_and_clause_clean():
     brief = render_writer_style_brief()
-    assert 0 < len(brief) <= 300
+    assert 0 < len(brief) <= 420
     assert "- 学 " in brief and "- 避 " in brief
+    assert brief.count("- 学 ") <= 2
     # A gist is cut at a clause boundary, never mid-word.
     for line in brief.splitlines():
         gist = line.split("：", 1)[1] if "：" in line else ""
@@ -82,10 +83,26 @@ def test_writer_style_brief_is_bounded_and_clause_clean():
     # Adopted labels narrow the positive side to what the author checked.
     adopted = render_writer_style_brief(["贴着人物写"])
     assert "贴着人物写" in adopted and "冰山省略" not in adopted
+    assert adopted.count("- 学 ") == 1
     # An unresolvable label falls back to the core set; never drops the
     # positive side entirely.
     fallback = render_writer_style_brief(["不存在的基因"])
     assert "- 学 " in fallback and "- 避 " in fallback
+
+
+def test_chapter_menu_lets_the_writer_pick_one_or_two_styles():
+    menu = render_writer_style_brief(chapter=2)
+    assert "只取 1 或 2 种" in menu
+    assert "冰山省略" in menu and "席面上见人" in menu
+    assert "- 学 " not in menu
+    assert menu.count("- 避 ") == 2
+    assert "→" in menu
+    capped = render_writer_style_brief(
+        ["冰山省略", "贴着人物写", "闲笔", "零度叙述"],
+        chapter=4,
+    )
+    assert capped.count("- 学 ") == 2
+    assert "闲笔" not in capped and "零度叙述" not in capped
 
 
 def test_voice_bible_checklist_derives_from_corpus():
