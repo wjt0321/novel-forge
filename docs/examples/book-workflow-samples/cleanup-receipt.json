@@ -7,11 +7,11 @@
     "external_guardian_directories": 16
   },
   "latest_run": {
-    "completed_on": "2026-08-18",
+    "completed_on": "2026-11-21",
     "book_projects": 1,
     "external_local_git_directories": 1,
     "external_guardian_directories": 1,
-    "note": "Single Lean Native workflow test cleanup; subagent sandbox output did not propagate back, and Lead had to touch the canonical draft path during recovery."
+    "note": "Author-requested cleanup of the docs/51 measured run before a fresh rewrite; de-identified workflow sample lean-2026-11-21-01 retained in catalog.json."
   },
   "run_history": [
     {
@@ -32,6 +32,13 @@
       "external_local_git_directories": 1,
       "external_guardian_directories": 1,
       "note": "Single Lean Native workflow test cleanup; subagent sandbox output did not propagate back, and Lead had to touch the canonical draft path during recovery."
+    },
+    {
+      "completed_on": "2026-11-21",
+      "book_projects": 1,
+      "external_local_git_directories": 1,
+      "external_guardian_directories": 1,
+      "note": "Author-requested cleanup of the docs/51 measured run before a fresh rewrite; de-identified workflow sample lean-2026-11-21-01 retained in catalog.json."
     }
   ],
   "verified_remaining": {
@@ -41,7 +48,8 @@
   },
   "retained": [
     "books/README.md",
-    "docs/examples/book-workflow-samples/"
+    "docs/examples/book-workflow-samples/",
+    "books/_failed-backup/2026-08-16-evidence.md"
   ],
   "note": "Only de-identified aggregate samples were retained. Raw prose and project-local recovery material were removed. The legacy library workflow was intentionally left outside this books-workspace cleanup."
 }

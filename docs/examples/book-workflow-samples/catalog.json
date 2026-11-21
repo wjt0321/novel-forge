@@ -424,6 +424,58 @@
         "external_guardian_present": true
       },
       "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, and hashes are intentionally excluded."
+    },
+    {
+      "sample_id": "lean-2026-11-21-01",
+      "category": "failure",
+      "label_basis": "observed during a live Lean Native run / inventory at cleanup time; the author chose to rewrite the book from scratch after the review-loop pruning",
+      "workflow_interpretation": "agent-observed 2026-11-21: one Lean chapter reached ready only after 4 local-patch revision rounds and 4 double-review rounds; all 18 accepted MUSTs were local (0 structural/blocking), and manual dedup found only about 6 of 12 distinct issues were deterministic hard faults while the rest were wording/caliber preferences. 16 role invocations / 5430s for a net +240 CJK (+4.3%). One review result was invalidated by a wrong evidence field name, and the run needed one restart after start-parameter corruption. This run is the measured basis of docs/51 (review-loop pruning, implemented 2026-11-21). Labels the workflow cost loop, not the prose.",
+      "aggregate_snapshot": {
+        "book_file_count": 75,
+        "book_byte_count": 359554,
+        "formal_chapter_count": 1,
+        "formal_chapter_cjk": 5774,
+        "chapter_state_count": 1,
+        "chapter_states": {
+          "complete": 1
+        },
+        "evidence_file_count": 3,
+        "staging_file_count": 21,
+        "guardian_file_count": 1,
+        "local_git_present": true,
+        "local_git_commit_count": 2,
+        "external_guardian_present": true
+      },
+      "retention": "Aggregates only; raw prose, planning, evidence payloads, local Git objects, Guardian material, identifiers, hashes, and model/provider data are intentionally excluded.",
+      "workflow_snapshot": {
+        "role_invocations": 16,
+        "wall_clock_seconds": 5430,
+        "writer_draft_seconds": 495,
+        "first_double_review_seconds": 841,
+        "local_patch_writer_invocations": 4,
+        "local_patch_writer_seconds": 2429,
+        "re_review_invocations": 8,
+        "re_review_seconds": 1665,
+        "double_review_rounds": 4,
+        "automatic_revision_rounds": 1,
+        "authorised_revision_rounds": 3,
+        "invalid_review_results_from_field_name": 1,
+        "must_scope_counts": {
+          "local": 18,
+          "structural": 0,
+          "blocking": 0
+        },
+        "deduplicated_must_issues": 12,
+        "deterministic_hard_issues": 6,
+        "wording_caliber_issues": 6,
+        "chapter_cjk_trajectory": [
+          5534,
+          5774
+        ],
+        "net_cjk_gain": 240,
+        "start_parameter_corruption_restart": true,
+        "pruning_proposal": "docs/51 (implemented 2026-11-21; archived in docs/archive/history.md)"
+      }
     }
   ],
   "capture_history": [
@@ -454,6 +506,13 @@
       "external_local_git_directories": 4,
       "external_guardian_directories": 4,
       "note": "Four-book cleanup after a full Lean chapter run. The run reached ready in 8848 CJK but cost 26 role invocations / 8128s, 91% of it in revision and re-review; rounds 3-7 repaired the same anchor. Diagnosis and iteration plan recorded in docs/50-lean-iteration-plan.md."
+    },
+    {
+      "captured_on": "2026-11-21",
+      "book_projects": 1,
+      "external_local_git_directories": 1,
+      "external_guardian_directories": 1,
+      "note": "Single-book cleanup at the author's request before a fresh rewrite. The run is the measured basis of docs/51 review-loop pruning (implemented the same day): 16 invocations / 5430s, 4 revision rounds, net +240 CJK; only about 6 of 12 deduplicated MUSTs were deterministic hard faults."
     }
   ]
 }
