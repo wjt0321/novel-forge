@@ -189,27 +189,40 @@ EDITOR_SCENE_SECTIONS: tuple[str, ...] = tuple(
     if section != STORY_CONTRACT_SECTION
 )
 
+# What a writing or reviewing model may see. Ledgers, beat tables, and audit
+# sections stay on disk for the control plane and never enter a capsule.
+PROSE_MODEL_SECTIONS: tuple[str, ...] = (
+    "0. 边界",
+    CHAPTER_HANDOFF_SECTION,
+    "1. 场景压力",
+    "6. 人物性呼吸段",
+    "7. 场景余波",
+    "场景契约",
+    "硬锚点",
+    "章末目标",
+)
+
 # Short, role-specific literary rules distilled from deidentified production
 # samples. They are compiled into bounded prompts; examples and numeric style
 # targets stay out of model context.
-LITERARY_MICRO_RULES_VERSION = "literary-micro-rules/v5"
+LITERARY_MICRO_RULES_VERSION = "literary-micro-rules/v6"
 LITERARY_MICRO_RULES: dict[str, tuple[str, ...]] = {
     "writer": (
-        "可以写：以当前人物会注意的事物组织现场；让具体压力、主动选择、具体私人代价、身体、物件和位置持续推动关系与行动，不能用好奇和事后补救冒充主动选择。",
-        "慎写：精确数字、术语、比喻、母题和完美证据链；只有它们改变决定、限制、风险或后果时才保留。",
-        "允许：遗漏、误判、自欺、迟半拍、不对称对白和未解释余波；人物不必聪明、整齐或立即理解选择的意义。",
-        "绝对禁止：把规划、审稿、因果清单或主题翻译成说明段；动作已经表达的意义不得再由旁白重复解释，禁用机械三连、连续否定翻转、控制面语言和解释性修补。",
+        "可以写：以当前人物会注意的事物组织现场，让具体私人代价落在身体、物件和位置上。",
+        "只带走四条，不要再加规则，也不要改表：主题不由旁白说破；留一件不是主角推动的事；情绪写行为或直说，身体感觉只留一处；结尾不要想通、和解、自己把问题解决。",
+        "允许遗漏、误判和不对称对白。人物不必聪明，也不必立刻懂自己的选择。",
+        "绝对禁止：把规划、审稿或主题翻译成说明段；动作已经表达的意义不得再解释；禁用破折号、省略号、连续否定翻转、完美证据链和解释性修补。改稿优先删除。",
     ),
     "blind-reader": (
-        "可以认可：人物欲望是否进入动作、关系和代价，身体、物件和位置连续，读完想追问人物怎样承担后果。",
-        "慎判：专业、精确、强钩子、漂亮句子和完美证据链可能只是技术表演；警惕漂亮结论替代现场余波；核对人物去掉姓名职业后是否仍不可替换。",
-        "允许：克制、留白、误判、沉默、不对称对白和不整齐节奏；uncertain 默认不触发修订。",
-        "绝对不能 pass：主角无主动选择、物理状态矛盾、正文像规划答卷，或 synthetic 的重复反应、对白说明化、控制面语言和解释性修补遍布全文。",
+        "可以认可：人物欲望是否进入动作、关系和代价，身体、物件和位置连续。",
+        "synthetic 只指四类：旁白点题、因果链没有断口、情绪只剩身体感觉、结尾是成长并接受。最多一条 structural MUST，禁止要求改表。",
+        "慎判漂亮结论替代现场余波。允许克制和留白。uncertain 不触发修订。",
+        "绝对不能 pass：主角无主动选择，或正文像规划答卷。解释性修补不能当作成立。",
     ),
     "chapter-editor": (
-        "可以保留：偏离规划但增强人物、因果、关系或收束的现场发现；说明收益、代价与新增风险。",
-        "慎审：完美证据链、因果跳步、机械精确、连续同主语、不对称关系缺失、职业证明和过度修补；机器纹理提示不是文学结论。",
-        "允许：人物不知道、说错、犹豫、沉默和留白；Scene Package 只能发现缺失，不能证明正文已经交付。",
+        "可以保留：偏离规划但人物更具体的现场。不要为了让正文贴表而要求返工。",
+        "最多确认一条架构 MUST。禁止要求补场景包、账本或任何表。Scene Package 不能证明正文已经交付。",
+        "慎审完美证据链和不对称关系缺失。允许人物不知道、说错和沉默。机器纹理提示不是文学结论。",
         "绝对禁止通过：用户硬锚漂移，或时间方向、金额或数量、物件位置、人物知识来源及身体状态不一致；解释性修补不能代替因果。",
     ),
 }

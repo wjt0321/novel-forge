@@ -21,6 +21,8 @@ Writer 暂存正文
 
 不要先探索仓库、读旧会话、调表、计算哈希、补状态、改 capsule 或配置 Harness。Python 创建项目骨架、动作、证据、状态和本地恢复点；Lead 只分发、等待和调用命令。
 
+创作时禁止调表。`planning/`、`memory/`、`evaluation/` 里的表由 Python 在 `start` 时写好。Lead 和任何角色都不要打开它们来填空、补节、改账或对齐哈希。缺的情节写进正文。看见空表不是待办。
+
 ## 用户/Lead 的生产命令
 
 ```powershell
@@ -62,7 +64,7 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 只读取卡片给出的 capsule；只写 `draft/正文.md`（动作卡会列出只读文件，如 `控制面冻结稿.md`，禁止写入）。正式稿至少 5000 个 CJK 汉字。正文在晋升前永不被清除：技术重试、重新生成或审稿都不会删除已写的暂存正文。不得写脚本、规划表、状态、证据、审稿、runtime 或控制面；不得把提示词、技术表单、用户硬锚或审稿结论写进正文。
 
-只读 capsule 的 `writer-context.md`；默认 P0/P1/P2 上限为 1500/850/700 CJK（总计不超过 3050）。P2 在作者未勾选风格基因、也未登记认可范例时携带 `style-corpus` 默认正反例参照（少量正面手法 + 高发 AI 味禁则）；作者一旦勾选或登记，P2 改用本书自己的选择，不叠加默认值。按视角人物会注意什么来写，让私人欲望、关系摩擦和感知偏差进入动作。提交前全文检索并改掉破折号、省略号和“不是 X，而是 Y / 不是 X，是 Y”机械句，并在同一次调用内静默删去重复解释和最机械的一处重复反应。`literary-micro-rules/v5` 不要求数值风格目标或职业证明。
+只读 capsule 的 `writer-context.md`；默认 P0/P1/P2 上限为 1500/850/700 CJK（总计不超过 3050）。P2 在作者未勾选风格基因、也未登记认可范例时只给写法名单，模型本章只取 1 或 2 种；作者一旦勾选，P2 改用其中至多两种，不叠加名单。按视角人物会注意什么来写，让私人欲望、关系摩擦和感知偏差进入动作。场景包里的格子不是提纲，不要逐条写进正文。提交前全文检索并改掉破折号、省略号和“不是 X，而是 Y / 不是 X，是 Y”机械句，并在同一次调用内静默删去重复解释和最机械的一处重复反应。`literary-micro-rules/v6` 不要求数值风格目标或职业证明。
 
 ### Blind Reader
 
@@ -70,11 +72,11 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 ### Chapter Editor
 
-只读 capsule；只写 result_file。独立核对逻辑，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理与 lint 抽样提示只是核对线索，不是文学结论，不得据此单独判错。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句；每条开放 MUST 的原文 evidence 必须与正文逐字匹配。不要输出分析矩阵、hard-anchor 表或技术字段。
+只读 capsule 的正文、用户硬锚、上一章结尾和压缩 Canon；不读场景包里的表。只写 result_file。独立核对正文是否成立，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理与 lint 抽样提示只是核对线索，不是文学结论，不得据此单独判错。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句；每条开放 MUST 的原文 evidence 必须与正文逐字匹配。不要输出分析矩阵、hard-anchor 表或技术字段。
 
 ## 自动处理与停止点
 
-- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后回 Writer 集中修订；普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 3 轮），预算内不打断作者；耗尽后才进入作者决定，决定卡同时显示同一锚点的复发次数。门禁类与高风险决策不受此预算影响。预算耗尽后用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后再跑一次集中修订 + 双审），不是无限 retry。正文硬门失败、表面修订耗尽与 checkpoint 失败也会停在可授权 decision；checkpoint 失败时 authorize-revision 只重试 checkpoint 并保留已晋升草稿。
+- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后回 Writer 集中修订；普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 1 轮），预算内不打断作者；耗尽后才进入作者决定，决定卡同时显示同一锚点的复发次数。门禁类与高风险决策不受此预算影响。预算耗尽后用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后再跑一次集中修订 + 双审），不是无限 retry。正文硬门失败、表面修订耗尽与 checkpoint 失败也会停在可授权 decision；checkpoint 失败时 authorize-revision 只重试 checkpoint 并保留已晋升草稿。
 - Lean 双审并行：Writer 完成后一次签发 Blind Reader 与 Chapter Editor 两张卡（`next-action` 领取，可并行委派、完成顺序不限）；并行完成时用 `complete-role <slug> --role blind-reader|chapter-editor` 指明角色。Editor 无 Blind 结论时独立审稿。
 - 双审通过前，不能有正式章节、Generation 和两份 Review、Guardian Receipt 或 Git checkpoint；晋升前 Python 先按 record_review 同源规则校验双审结论，校验失败不产生任何正式副作用；Python 晋升后才创建它们。
 - `ready` 不等于作者批准，也不等于可以发布；不配置 remote。
@@ -84,12 +86,12 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 创作角色只允许写当前书的动作允许路径；不得创建、注册、修改或安装宿主专用 Agent 类型，不得写 `.claude/agents`、Harness、SessionBackend、`NOVEL_FORGE_HARNESS_COMMAND`、代码、测试、Skill、状态、证据或其他书。不要直接编辑 `.local-guardian`、SQLite、章节序列、Guardian session 或不可变 evidence。
 
-Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地恢复，禁止 remote/push。稳定叙事策略 ID：`no-deliberate-defects`、`single-winner-branch`、`model-score-not-approval`、`aesthetic-does-not-override-facts`、`exploration-not-ready`、`role-name-not-independence`、`world-not-protagonist-proof`、`expertise-must-be-executable`。需要细节时只打开当前书 capsule 和 `docs/43-fiction-first-lean-native-workflow.md` / `docs/44-current-workflow-logic-audit.md` 的相关段落。
+Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地恢复，禁止 remote/push。稳定叙事策略 ID：`no-deliberate-defects`、`single-winner-branch`、`model-score-not-approval`、`aesthetic-does-not-override-facts`、`exploration-not-ready`、`role-name-not-independence`、`world-not-protagonist-proof`、`expertise-must-be-executable`。写这一章时只打开当前书 capsule，不要去读编号文档。
 
 
 ## 45 号迭代默认规则
 
-- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/700 CJK，总计不超过 3050）；P2 携带 `style-corpus` 正反例（作者已勾选则用其选择，否则用 core 子集默认参照），`full` 只作对照。Scene Package 的私人欲望、关系摩擦和感知偏差仍在原文件，不新增步骤。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`；两条 Patch 路径都禁止新增解释性段落，新增因果必须落进动作/停顿/物件后果。
+- Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/700 CJK，总计不超过 3050）；包内不含表格。P2 只给写法名单或作者勾选的至多两种，全库留在 `memory/style-reference.md`。私人欲望、关系摩擦和感知偏差由程序写进原文件，不新增步骤，也不交给角色改表。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`；两条 Patch 路径都禁止新增解释性段落，新增因果必须落进动作/停顿/物件后果。
 - 仅当全部开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；Python 精确替换后必须重跑完整硬门和 Blind Reader + Chapter Editor。
 - 同卷固定主要 Writer 模型；切换先执行 `approve-writer-model` 记录作者小样校准。模型、Session、哈希与 runtime 仍不交给创作角色猜。
 - `native-isolated` 与 `managed-relay` 可正式生产；`exploration` 只能保留暂存稿/双审结果，永远不能 formal ready。

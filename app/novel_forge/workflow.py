@@ -3075,6 +3075,7 @@ def _print_next_action_card(action: dict[str, Any], slug: str) -> None:
     }
     label = labels.get(role, role)
     print(f"下一步：委派 {label}。")
+    print("不要填表、改表或补规划。这一步只完成卡片上的那一个文件。")
     print("由 Python/宿主适配器调度独立角色；Lead 不接触状态机细节。")
     capsule = action.get("capsule")
     review_capsule = action.get("review_capsule")

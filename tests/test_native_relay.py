@@ -1635,11 +1635,13 @@ def test_lean_writer_capsule_contains_minimal_p0_p1_p2_package(tmp_path: Path):
         name: tier["budget_cjk"]
         for name, tier in manifest["writer_context_tiers"].items()
     } == {"P0": 1500, "P1": 850, "P2": 700}
-    # A fresh book has no adopted genes and no registered exemplar, so the
-    # positive-target slot must be filled from the single-source corpus.
+    # A fresh book has no adopted genes. The capsule gets the name menu,
+    # not the whole library; the writer picks one or two styles.
     body = context.read_text(encoding="utf-8")
     assert "style-corpus 默认参照" in body
-    assert "- 学 " in body and "- 避 " in body
+    assert "只取 1 或 2 种" in body
+    assert "- 避 " in body
+    assert "- 学 " not in body
 
 
 def test_lean_writer_completion_needs_only_the_existing_prose(
@@ -4336,6 +4338,8 @@ def test_lean_editor_scene_package_drops_audit_sections_and_duplicate_contract(
 
     scene_input = context["scene_package"]
     assert "1. 场景压力" in scene_input
+    assert "Beat 因果链" not in scene_input
+    assert "信息账本" not in scene_input
     assert "认知与可证伪假设" not in scene_input
     assert "规划反证与常识检查" not in scene_input
     assert "因果归属账本" not in scene_input

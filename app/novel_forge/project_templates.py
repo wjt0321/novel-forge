@@ -168,7 +168,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   Lead 无需填写技术表单或拼装宿主 session ID。
 - 首个 Lean Writer 动作直接写 Capsule 内 `draft/正文.md`；Python 在后台准备最小
   规划材料。两个审稿角色只写动作的 `result_file`。
-- Blind Reader 只读当前正文；Chapter Editor 再读场景包、必要 Canon 和 Blind 结果。
+- Blind Reader 只读当前正文。Chapter Editor 读正文、用户硬锚、上一章结尾和压缩后的
+  Canon，不读场景包里的表。
 - Lead 不写正文、不审稿、不填 Runtime、Guardian、Generation、token、请求数或 Git。
 - 不得创建或注册宿主专用 Agent 类型，不得写项目或用户级 `.claude/agents`。
 - working/progress 时继续等待；创建成功、idle/available 或文件出现都不算完成。
@@ -178,8 +179,8 @@ def _claude_md(slug: str, title: str, genre: str, timestamp: str) -> str:
   `--strict-audit` 时才启用完整技术信封与全仓快照。
 
 ## 闭环
-1. Python 直接签发 Writer 的正文动作；Writer 可在写作过程中做必要规划或最多 5 次
-   题材、事实边界、重名检索，但不回传规划表。正式章至少 {MIN_FORMAL_CJK} CJK。
+1. Python 直接签发 Writer 的正文动作。Writer 只写正文，不检索、不填表、不回传规划。
+   正式章至少 {MIN_FORMAL_CJK} CJK。
 2. Python 跑表面门并冻结 `控制面冻结稿.md`；双审前正文仍留在 diff 区，不创建 Generation。
 3. 新 Blind Reader Session 只读暂存正文；通过后才创建新 Chapter Editor Session。
 4. 两审通过后 Python 晋升正文，再建立 Generation、Guardian、Review、状态和本地 Git。
@@ -241,9 +242,8 @@ books/{slug}/chapters/eXX/ch-XX/正文.md
 
 ## 默认工作流
 Writer 在 diff 区写正文 → 表面检查 → blind-reader → chapter-editor → 有 MUST 则
-Writer 修改同一暂存正文 → 全文双审 → Python 晋升并 ready。规划只在 Writer 写作
-过程中进行，不单独交付或卡住正文。哈希、状态、stale、Guardian、Runtime 和 Git
-由 Python 自动处理。
+Writer 修改同一暂存正文一次 → Python 晋升并 ready。规划由 Python 在 start 时写好，
+Writer 不改表。哈希、状态、stale、Guardian、Runtime 和 Git 由 Python 自动处理。
 
 单次序列默认 1 章，最多 4 章。即使用户要求连续写 4 章，正文也必须由 4 个互不
 复用的原生 writer session 顺序完成；上一章完整 `ready` 前不得启动下一章。
@@ -396,8 +396,8 @@ def _memory_voice_bible_md(title: str, genre: str) -> str:
     gene_checklist = "\n".join(gene_checklist_lines())
     return f"""# Voice Bible — 《{title}》
 
-> 本书的声音宪法。硬禁令只保留机器可检测的少数几条；其余全部是正面引导：
-> 给方向与示范，不给填空表。每章起草前必读；修改本文件属于书级决策，需记录原因。
+> 本书的声音备忘。创作时不要通读或填写本文件，Writer 只读 capsule 里已经摘好的几句。
+> 硬禁令只保留机器可检测的少数几条；其余是方向，不是填空表。
 > 本文件描述叙事功能，不提供可反复套用的名词、动作、章末物件或句法配方。
 
 ## narrative_distance
@@ -542,9 +542,9 @@ def _memory_style_reference_md() -> str:
     return f"""# Style Reference — 正例基因与 AI 味反例
 
 > 本文件由项目初始化生成一次（{STYLE_CORPUS_VERSION}），属于 create-only 资产：
-> sync 永不覆盖。它是作者对照库；Writer capsule 只取其中的默认参照子集。
+> sync 永不覆盖。全库只放在这里。写作胶囊每次只给写法名单，模型只取 1 或 2 种。
 > 只学叙事功能、不抄任何措辞；与本书声音冲突的条目直接忽略。
-> 采纳的基因请勾选进 `memory/voice-bible.md` 的「本书采纳的风格基因」。
+> 作者若已勾选，胶囊改为那 1 到 2 条，不再给名单。
 
 ## 风格基因库（正例参照）
 
@@ -1069,7 +1069,7 @@ def _reviews_review_template_md() -> str:
 def _planning_scene_package_template_md() -> str:
     return f"""# Scene Package — 第XX章「标题」
 
-> 一页式写作契约。只写会改变正文的内容，不写文学说明书。
+> 本文件由程序维护。创作时禁止填写或修改；缺的内容写进正文，不要补表。
 
 ## 0. 边界
 - 开始动作 / 停止动作：
