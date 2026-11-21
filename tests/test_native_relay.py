@@ -1798,7 +1798,7 @@ def test_lean_mechanical_language_forces_one_consolidated_surface_patch(
     assert staged.read_text(encoding="utf-8") == prose
 
 
-def test_lean_all_local_must_uses_fragment_replacement_then_full_rereview(
+def test_lean_all_local_must_in_hook_region_escalates_to_full_rereview(
     tmp_path: Path,
 ):
     root = tmp_path / "repo"
@@ -1860,8 +1860,12 @@ def test_lean_all_local_must_uses_fragment_replacement_then_full_rereview(
 
     completed = _complete_minimal(relay, "demo")
 
+    # docs/51 S3: the replaced paragraph is the chapter-end hook region,
+    # so the cheap targeted recheck escalates to a full double review.
     assert completed.message == "正在自动审稿。"
-    assert relay.next_action("demo")["role"] == "blind-reader"
+    blind_card = relay.next_action("demo")
+    assert blind_card["role"] == "blind-reader"
+    assert blind_card["review_mode"] == "admission"
     assert "铜扣塞回左侧口袋" in staged.read_text(encoding="utf-8")
     assert not (root / "books/demo/chapters/e01/ch-01/正文.md").exists()
 
@@ -3677,9 +3681,28 @@ def test_blind_uncertain_does_not_require_a_revision_finding():
 def _drive_lean_reviews_to_must(
     relay: NativeWorkflowRelay,
     slug: str,
+    evidence: str = "林舟握住门把",
 ) -> WorkflowResult:
-    """Run both reviewers with MUST findings and return the last result."""
-    backend = ScriptedBackend([], [_must_reviews()])
+    """Run both reviewers with MUST findings and return the last result.
+
+    ``evidence`` varies the finding anchor so a multi-round drive can stay
+    on the budget path instead of tripping the docs/51 recurrence breaker.
+    """
+    reviews = _must_reviews()
+    if evidence != "林舟握住门把":
+        reviews = tuple(
+            ReviewOutcome(
+                **{
+                    **asdict(outcome),
+                    "findings": tuple(
+                        replace(item, evidence=evidence)
+                        for item in outcome.findings
+                    ),
+                }
+            )
+            for outcome in reviews
+        )
+    backend = ScriptedBackend([], [reviews])
     result = None
     for role in ("blind-reader", "chapter-editor"):
         action = relay.next_action(slug)
@@ -3739,7 +3762,8 @@ def _reach_literary_revision_decision(
             encoding="utf-8",
         )
         _complete_minimal(relay, "demo")
-        result = _drive_lean_reviews_to_must(relay, "demo")
+        alternate = ("只是把掌心压得更紧", "他没有回头")[automatic_revisions % 2]
+        result = _drive_lean_reviews_to_must(relay, "demo", alternate)
         automatic_revisions += 1
 
     assert automatic_revisions == MAX_AUTO_LITERARY_REVISION_ROUNDS
@@ -3876,7 +3900,12 @@ def test_next_action_returns_user_decision_card_in_decision_phase(
 
     assert action["kind"] == "user_decision"
     assert action["decision_kind"] == "literary_revision_required"
-    assert action["options"][0].startswith("D. 授权一次集中修订后重新双审")
+    # docs/51 S6: accepting the current draft is the first option.
+    assert action["options"][0].startswith("A. 接受当前稿")
+    assert any(
+        option.startswith("D. 授权一次集中修订后重新双审")
+        for option in action["options"]
+    )
     assert action["must_findings"]
 
 

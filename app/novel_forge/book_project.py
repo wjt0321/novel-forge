@@ -1300,6 +1300,37 @@ def _writer_session_reuse_groups(
     ]
 
 
+def _author_draft_acceptance(
+    root: Path, slug: str, number: int, book_dir: Path
+) -> dict[str, Any] | None:
+    """docs/51 S5/S6: a recorded author acceptance of the current draft.
+
+    The acceptance waives only the passing-verdict requirement at ready;
+    staleness, validation, session isolation and every prose gate still
+    apply. It is bound to the exact accepted body sha256 so a later
+    rewrite cannot inherit it.
+    """
+    directory = (
+        root / ".local-guardian" / slug / "native-relay" / "author-revisions"
+    )
+    if not directory.is_dir():
+        return None
+    chapter_sha = _sha256_path(find_chapter_file(book_dir, number))
+    for path in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(record, dict)
+            and record.get("decision_action") == "accept_draft"
+            and int(record.get("chapter") or 0) == number
+            and record.get("body_sha256") == chapter_sha
+        ):
+            return record
+    return None
+
+
 def advance_state(
     root: Path,
     slug: str,
@@ -1388,10 +1419,22 @@ def advance_state(
                 + "。"
             )
         reviews = {r["role"]: r for r in list_reviews(book_dir, ch_id)}
+        # docs/51 S5/S6: an evidence-bound author acceptance waives only
+        # the passing-verdict requirement, never staleness or validity.
+        accepted = _author_draft_acceptance(root, slug, number, book_dir)
         missing = [
             f"{role} verdict={required_verdict}"
             for role, required_verdict in READY_REQUIRED_REVIEWS
-            if reviews.get(role, {}).get("verdict") != required_verdict
+            if (
+                reviews.get(role, {}).get("verdict") != required_verdict
+                and accepted is None
+                # docs/51 S1/S3: a needs_revision whose MUST rows are all
+                # closed (must_open=0) was resolved by the revision.
+                and not (
+                    reviews.get(role, {}).get("verdict") == "needs_revision"
+                    and int(reviews.get(role, {}).get("must_open") or 0) == 0
+                )
+            )
             or reviews.get(role, {}).get("stale", True)
             or not reviews.get(role, {}).get("validation_valid", False)
         ]

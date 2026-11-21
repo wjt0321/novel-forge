@@ -23,6 +23,9 @@ _FILE_NAMES = {
     "blind_review": "blind-review.md",
     "machine_diagnostics": "machine-diagnostics.md",
     "previous_chapter_ending": "previous-chapter-ending.md",
+    "regression_diff": "regression-diff.md",
+    "previous_review": "previous-review.md",
+    "paragraph_index": "paragraph-index.md",
 }
 
 
@@ -71,11 +74,16 @@ def prepare_review_capsule(
     capsule_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Seal the exact inputs one independent reviewer may read."""
+    # docs/51 S1: a regression capsule carries diff + previous conclusions
+    # + paragraph index instead of the full prose.
+    regression = "regression_diff" in inputs
+    regression_core = {"regression_diff", "previous_review", "paragraph_index"}
+    base = regression_core if regression else {"prose"}
     allowed = (
-        {"prose"}
+        base
         if role == "blind-reader"
-        else {
-            "prose",
+        else base
+        | {
             "scene_package",
             "story_contract",
             "canon",
@@ -86,8 +94,13 @@ def prepare_review_capsule(
     )
     if role not in {"blind-reader", "chapter-editor"}:
         raise ReviewCapsuleError(f"未知审稿角色：{role}")
-    if set(inputs) - allowed or "prose" not in inputs:
+    if set(inputs) - allowed:
         raise ReviewCapsuleError("review capsule 输入超出角色边界。")
+    if regression:
+        if not regression_core.issubset(inputs):
+            raise ReviewCapsuleError("回归审 capsule 缺少差异基线输入。")
+    elif "prose" not in inputs:
+        raise ReviewCapsuleError("review capsule 缺少正文输入。")
     capsule_id = f"review-{role}-{uuid.uuid4().hex[:16]}"
     resolved_capsule_dir = (
         Path(capsule_dir).resolve()
@@ -225,7 +238,16 @@ def verify_review_capsule(
                 f"review capsule 文件已改变：{logical_name}"
             )
         result[logical_name] = path.read_text(encoding="utf-8")
-    expected = {"instructions", "prose"}
+    regression = "regression_diff" in result
+    if regression:
+        expected = {
+            "instructions",
+            "regression_diff",
+            "previous_review",
+            "paragraph_index",
+        }
+    else:
+        expected = {"instructions", "prose"}
     if expected_role == "chapter-editor":
         expected.update(
             {
@@ -234,10 +256,11 @@ def verify_review_capsule(
                 "canon",
             }
         )
-        if require_blind_review:
-            expected.add("blind_review")
-        if require_machine_diagnostics:
-            expected.add("machine_diagnostics")
+        if not regression:
+            if require_blind_review:
+                expected.add("blind_review")
+            if require_machine_diagnostics:
+                expected.add("machine_diagnostics")
     if not expected.issubset(result):
         raise ReviewCapsuleError("review capsule 缺少角色必要输入。")
     return result

@@ -1057,7 +1057,7 @@ def _reviews_review_template_md() -> str:
 - editorial_continuity:
 
 ## Findings
-| # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |
+| # | 级别 (MUST/SUGGEST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |
 |---|---|---|---|---|---|---|
 | 1 |  |  |  |  |  |  |
 

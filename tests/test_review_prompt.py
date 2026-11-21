@@ -57,15 +57,20 @@ def test_lean_blind_reader_writes_only_the_compact_result_file():
     assert "宿主正式结果通道" not in prompt.text
     assert "scope=local|structural|blocking" in prompt.text
     assert "只用于成本观测" in prompt.text
+    assert "category=timeline|object|" in prompt.text
+    assert "suggest（SUGGEST 级）" in prompt.text
+    assert "不得判 MUST" in prompt.text
     assert len(prompt.text) <= MAX_REVIEW_PROMPT_CHARS
 
 
-def test_lean_editor_samples_must_scope_without_routing_the_patch():
+def test_lean_editor_scope_is_observed_while_category_gates_revision():
     prompt = render_review_instructions("chapter-editor", lean=True)
 
     assert "scope=local|structural|blocking" in prompt.text
     assert "只用于成本观测" in prompt.text
-    assert "Python 仍按现行章节级集中修订" in prompt.text
+    assert "category=timeline|object|knowledge|hard_anchor|hook" in prompt.text
+    assert "只有这五类确定性硬伤触发修订" in prompt.text
+    assert "suggest（SUGGEST 级）" in prompt.text
     assert "只确认 Blind Reader 指出的问题是否遍布全章" in prompt.text
     assert "lint 抽样" in prompt.text
     assert "不是文学结论" in prompt.text
@@ -107,3 +112,24 @@ def test_review_tasks_are_vendor_neutral():
 def test_review_task_rejects_unknown_role():
     with pytest.raises(ReviewPromptError, match="role"):
         render_review_instructions("lead")
+
+
+def test_lean_regression_and_targeted_modes_replace_full_read():
+    for role in ("blind-reader", "chapter-editor"):
+        regression = render_review_instructions(role, lean=True, mode="regression")
+        assert "回归审" in regression.text
+        assert "未变更部分沿用上轮结论" in regression.text
+        assert len(regression.text) <= MAX_REVIEW_PROMPT_CHARS
+    targeted = render_review_instructions("chapter-editor", lean=True, mode="targeted")
+    assert "定向复核" in targeted.text
+    assert "被改段落" in targeted.text
+    assert len(targeted.text) <= MAX_REVIEW_PROMPT_CHARS
+    # Strict audit always keeps the full admission read.
+    strict = render_review_instructions("chapter-editor", mode="regression")
+    assert "每轮都完整执行五项审查" in strict.text
+
+
+def test_review_mode_rejects_unknown_value():
+    with pytest.raises(ReviewPromptError, match="mode"):
+        render_review_instructions("blind-reader", lean=True, mode="bogus")
+

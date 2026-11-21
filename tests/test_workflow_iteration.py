@@ -237,8 +237,9 @@ def test_local_patch_requires_all_open_must_to_be_local_and_unique():
 
     assert plan is not None
     assert plan[0]["target"] == "乙段有重复解释，需要压缩。"
-    assert plan[0]["before"] == "甲段保留。"
-    assert plan[0]["after"] == "丙段保留。"
+    assert plan[0]["context_before"] == ["甲段保留。"]
+    assert plan[0]["context_after"] == ["丙段保留。"]
+    assert plan[0]["paragraph_number"] == 2
     assert plan_local_patch(
         body,
         (ReviewFinding(**{**findings[0].__dict__, "scope": "structural"}),),

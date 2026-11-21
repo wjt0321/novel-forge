@@ -13,10 +13,9 @@ description: 在 S-Black Novel Forge 中以最小控制面完成通用、厂商�
 
 ```text
 Writer 暂存正文
-  -> Blind Reader
-  -> Chapter Editor
-  ->（有 MUST）Writer 在同一正文集中修订，再跑双审一次
-  ->（双审 pass）Python 自动晋升为 ready
+  -> Blind Reader + Chapter Editor 准入双审（全文）
+  ->（确定性硬伤 MUST）Writer 修订：局部补丁→被改段定向复核；章节级修订→回归双审
+  ->（双审 pass 或作者 accept-draft）Python 晋升为 ready
 ```
 
 不要先探索仓库、读旧会话、调表、计算哈希、补状态、改 capsule 或配置 Harness。Python 创建项目骨架、动作、证据、状态和本地恢复点；Lead 只分发、等待和调用命令。
@@ -31,6 +30,8 @@ python tools/novel-workflow.py --root <绝对根目录> next-action <slug>
 python tools/novel-workflow.py --root <绝对根目录> complete-role <slug> --session-id <宿主真实会话 ID>
 # 自动修订预算耗尽、停在作者决定时，由作者授权续修
 python tools/novel-workflow.py --root <绝对根目录> authorize-revision <slug> --reference <作者决定依据>
+# 文学修订决策时接受当前稿并晋升 ready（不消耗修订预算）
+python tools/novel-workflow.py --root <绝对根目录> accept-draft <slug> --reference <作者决定依据>
 ```
 
 作者需要查看成本时，另运行只读命令：
@@ -68,15 +69,15 @@ python tools/novel-workflow.py --root <绝对根目录> cost-summary <slug> [--c
 
 ### Blind Reader
 
-只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。`uncertain` 不视为通过：pass 必须 `convincing`+`continue`；给 `uncertain` 必须附一句具体 `uncertain_note`（哪段像通用/工整/解释充分），说明为空则结果无效。若判 `synthetic`，必须给逐字证据、`needs_revision` 和恰好一条 `structural` MUST。每条开放 MUST 的原文 evidence 必须与正文逐字匹配，编造引文会被判无效。
+只读 capsule 的正文；只写卡片给定 result_file。给 `pass|needs_revision`、完整 MUST、`human_likeness`、`reader_desire`、情绪余味、下一章追读钩子、短摘要和一条逐字存在的引句。`uncertain` 不视为通过：pass 必须 `convincing`+`continue`；给 `uncertain` 必须附一句具体 `uncertain_note`（哪段像通用/工整/解释充分），说明为空则结果无效。若判 `synthetic`，必须给逐字证据、`needs_revision` 和恰好一条 `structural` MUST。每条开放 MUST 的原文 evidence 必须与正文逐字匹配，编造引文会被判无效。连续性硬伤 MUST 必须标 category=timeline|object|knowledge|hard_anchor|hook，只有这五类触发修订；口径、措辞、指代偏好、人物有意的不整齐写进 suggest（SUGGEST 级），不得判 MUST。
 
 ### Chapter Editor
 
-只读 capsule 的正文、用户硬锚、上一章结尾和压缩 Canon；不读场景包里的表。只写 result_file。独立核对正文是否成立，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理与 lint 抽样提示只是核对线索，不是文学结论，不得据此单独判错。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句；每条开放 MUST 的原文 evidence 必须与正文逐字匹配。不要输出分析矩阵、hard-anchor 表或技术字段。
+只读 capsule 的正文、用户硬锚、上一章结尾和压缩 Canon；不读场景包里的表。只写 result_file。独立核对正文是否成立，只在问题分布广、值得唯一一次修订时确认 Blind Reader 的结构问题。机器纹理与 lint 抽样提示只是核对线索，不是文学结论，不得据此单独判错。给 `pass|needs_revision`、完整 MUST、短摘要和一条逐字存在的引句；每条开放 MUST 的原文 evidence 必须与正文逐字匹配。连续性硬伤 MUST 必须标 category=timeline|object|knowledge|hard_anchor|hook，只有这五类触发修订；口径、措辞、指代偏好、人物有意的不整齐写进 suggest（SUGGEST 级），不得判 MUST。不要输出分析矩阵、hard-anchor 表或技术字段。
 
 ## 自动处理与停止点
 
-- MAY/advisory 不触发 Patch。第一次双审的 MUST 合并后回 Writer 集中修订；普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 1 轮），预算内不打断作者；耗尽后才进入作者决定，决定卡同时显示同一锚点的复发次数。门禁类与高风险决策不受此预算影响。预算耗尽后用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后再跑一次集中修订 + 双审），不是无限 retry。正文硬门失败、表面修订耗尽与 checkpoint 失败也会停在可授权 decision；checkpoint 失败时 authorize-revision 只重试 checkpoint 并保留已晋升草稿。
+- MAY/advisory/SUGGEST 不触发 Patch。第一次双审的确定性硬伤 MUST 合并后回 Writer 修订；普通文学 MUST 由 Python 自带有限预算自动集中修订（`MAX_AUTO_LITERARY_REVISION_ROUNDS`，当前 1 轮），预算内不打断作者；耗尽后才进入作者决定，决定卡同时显示同一锚点的复发次数；同一锚点第 2 次复发熔断转 recurrence_accept_draft。文学决策第一选项是 accept-draft（接受当前稿晋升 ready，不消耗修订预算）；作者续修授权每章上限 1 次，第 2 次必须携带与上次不同的新修改方向。门禁类与高风险决策不受此预算影响，也不提供 accept-draft。预算耗尽后用户选续修时执行官方 `authorize-revision <slug> --reference <依据>`（记录 author 决策后再跑一次集中修订 + 复审），不是无限 retry。正文硬门失败、表面修订耗尽与 checkpoint 失败也会停在可授权 decision；checkpoint 失败时 authorize-revision 只重试 checkpoint 并保留已晋升草稿。
 - Lean 双审并行：Writer 完成后一次签发 Blind Reader 与 Chapter Editor 两张卡（`next-action` 领取，可并行委派、完成顺序不限）；并行完成时用 `complete-role <slug> --role blind-reader|chapter-editor` 指明角色。Editor 无 Blind 结论时独立审稿。
 - 双审通过前，不能有正式章节、Generation 和两份 Review、Guardian Receipt 或 Git checkpoint；晋升前 Python 先按 record_review 同源规则校验双审结论，校验失败不产生任何正式副作用；Python 晋升后才创建它们。
 - `ready` 不等于作者批准，也不等于可以发布；不配置 remote。
@@ -92,7 +93,7 @@ Canon 新信息先写 candidate，再经显式 promotion。每书 Git 仅本地�
 ## 45 号迭代默认规则
 
 - Writer capsule 默认读 `writer-context.md` 最小 P0/P1/P2 包（1500/850/700 CJK，总计不超过 3050）；包内不含表格。P2 只给写法名单或作者勾选的至多两种，全库留在 `memory/style-reference.md`。私人欲望、关系摩擦和感知偏差由程序写进原文件，不新增步骤，也不交给角色改表。初稿/结构 Patch 写 `draft/正文.md`，局部 Patch 只写动作指定的 `replacements.json`；两条 Patch 路径都禁止新增解释性段落，新增因果必须落进动作/停顿/物件后果。
-- 仅当全部开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；Python 精确替换后必须重跑完整硬门和 Blind Reader + Chapter Editor。
+- 仅当全部触发修订的开放 MUST 都是 `local` 且唯一可定位时走局部 Patch；补丁角色只读 input.json（目标段 ±2 段完整上下文 + 全文段落索引，禁止打开 draft/正文.md）。Python 精确替换后重跑完整硬门，默认只做被改段的 Chapter Editor 定向复核；命中章末钩子段、被沿用的审稿引文或段落数变化才升级全文双审。章节级修订后第 2 轮起双审改读 diff + 上一轮结论 + 段落索引（回归审），变更过大回退全文。
 - 同卷固定主要 Writer 模型；切换先执行 `approve-writer-model` 记录作者小样校准。模型、Session、哈希与 runtime 仍不交给创作角色猜。
 - `native-isolated` 与 `managed-relay` 可正式生产；`exploration` 只能保留暂存稿/双审结果，永远不能 formal ready。
 - 高风险章双审通过后仍停在作者确认；硬预算只在追加 Patch/复审前断路并保留全部暂存上下文。任何确认都不等于发布批准，`publication_eligibility=False`。

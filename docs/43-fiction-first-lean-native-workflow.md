@@ -303,3 +303,51 @@ The `uncertain` contract is unified with the code (P0-3), superseding the "uncer
 Review evidence checks extend from the headline quote to every open MUST: `_assert_review_evidence_quote` now runs the same bounded-tolerance `_quote_matches` against each MUST finding's `evidence`, so a fabricated citation invalidates the result and routes to the same repair path as an invalid `evidence_quote`.
 
 Both patch instruction channels carry one new hard constraint — new causality must land in action, pause, or object consequence, and new explanatory paragraphs are forbidden — covering the chapter-level patch (`writer_prompt.py`) and the local-replacement patch (`local-patch/input.json` instruction).
+
+## 2026-11-21 docs/51 review-loop pruning (implemented)
+
+The admission double review stays full-text; everything after it is
+incremental. This section supersedes the "Both reviewers then read the
+complete revised body again" sentence in the Literary workflow section and
+the "revision-class decisions offer only authorize-revision" wording in the
+decision-options paragraph.
+
+- **Deterministic revision gate (S2/S5).** Findings are tiered
+  `MUST / SUGGEST / MAY`. Only open MUSTs carrying
+  `category=timeline|object|knowledge|hard_anchor|hook` (plus `blocking`
+  scope or a Blind Reader `synthetic` verdict) trigger a revision. MUSTs
+  explicitly categorized as wording/caliber/preference (`other`) downgrade
+  to SUGGEST: recorded in Review History and summarized once on the
+  decision/ready card, never auto-revised. A MUST without any category
+  keeps the conservative legacy routing. `scope` remains cost observation.
+- **Incremental patch input (S4).** `local-patch/input.json` carries each
+  target with up to two full context paragraphs per side, its paragraph
+  number, and a compact whole-chapter paragraph index. The action declares
+  `full_body_read_forbidden`; the input file is the only readable project
+  file for the patch role.
+- **Targeted recheck (S3).** After a local replacement passes the
+  whole-body hard gates, Python dispatches one Chapter Editor recheck of
+  the changed paragraphs (`awaiting_targeted_recheck`, regression capsule).
+  It escalates to a full double review only when the change touches the
+  last paragraph (hook region), a paragraph carrying an inherited review
+  evidence quote, or the paragraph count. The inherited Blind Reader
+  conclusion stays valid; its MUSTs whose evidence the patch removed are
+  deterministically closed.
+- **Regression double review (S1).** After a chapter-level revision,
+  round 2+ capsules replace the full prose with the paragraph diff (±2
+  context), the previous-round conclusions with deterministic
+  resolved/unresolved status, and the paragraph index. Changes over 60% of
+  paragraphs or 12,000 diff characters fall back to the full admission
+  read. Strict audit is unchanged.
+- **Recurrence breaker and author budget (S5/S6).** The same anchor
+  recurring twice stops automatic revision at a `recurrence_accept_draft`
+  decision. Literary decisions offer `accept-draft <slug> --reference
+  <依据>` first (promotion still runs every deterministic gate and the
+  review preflight; the acceptance is recorded as evidence bound to the
+  body sha256 and waives only the passing-verdict requirement), then
+  authorize-revision, then stop. Author authorizations are capped at one
+  per chapter; a second is accepted only with a genuinely new direction
+  (a different reference). Gate and checkpoint decisions never offer
+  accept-draft and are not capped. A `needs_revision` review whose MUST
+  rows are all closed no longer blocks ready.
+

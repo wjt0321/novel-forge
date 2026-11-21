@@ -85,6 +85,7 @@ USER_OPTIONS = (
 REVISION_DECISION_KINDS = frozenset(
     {
         "literary_revision_required",
+        "recurrence_accept_draft",
         "local_patch_hard_gate_failed",
         "hard_gate_failed",
         "surface_revision_required",
@@ -92,6 +93,21 @@ REVISION_DECISION_KINDS = frozenset(
     }
 )
 REVISION_OPTIONS = (
+    "D. 授权一次集中修订后重新双审："
+    "authorize-revision <slug> --reference <依据>",
+    "C. 停止任务",
+)
+# docs/51 S5/S6: literary decisions offer accepting the current draft as
+# the first option; gate failures never do (a hard gate cannot be waived).
+ACCEPT_DRAFT_DECISION_KINDS = frozenset(
+    {
+        "literary_revision_required",
+        "recurrence_accept_draft",
+    }
+)
+LITERARY_REVISION_OPTIONS = (
+    "A. 接受当前稿并晋升 ready（不消耗修订预算）："
+    "accept-draft <slug> --reference <依据>",
     "D. 授权一次集中修订后重新双审："
     "authorize-revision <slug> --reference <依据>",
     "C. 停止任务",
@@ -126,6 +142,8 @@ def _decision_options(decision_kind: str) -> tuple[str, ...]:
     """Return author-visible options reachable from the current decision state."""
     if decision_kind == "git_checkpoint_failed":
         return CHECKPOINT_OPTIONS
+    if decision_kind in ACCEPT_DRAFT_DECISION_KINDS:
+        return LITERARY_REVISION_OPTIONS
     if decision_kind in REVISION_DECISION_KINDS:
         return REVISION_OPTIONS
     if decision_kind == "hard_budget_reached":
@@ -356,6 +374,9 @@ class ReviewFinding:
     revision_intent: str
     status: str = "open"
     scope: str = "unclassified"
+    # docs/51 S2: deterministic hard-issue category; empty keeps the
+    # conservative legacy routing, "other" downgrades MUST to SUGGEST.
+    category: str = ""
 
 
 @dataclass(frozen=True)
@@ -2064,7 +2085,7 @@ class NovelWorkflowOrchestrator:
                     "chapter-editor 没有返回上一章正文中的有效连续性引文。"
                 )
         findings = [
-            "| # | 级别 (MUST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |",
+            "| # | 级别 (MUST/SUGGEST/MAY) | 位置 | 原文证据 | 读者效果 | 修订意图 | 状态 (open/closed) |",
             "|---|---|---|---|---|---|---|",
         ]
         for index, item in enumerate(outcome.findings, 1):
@@ -3250,6 +3271,9 @@ def main(argv: list[str] | None = None) -> int:
     authorize_revision = sub.add_parser("authorize-revision")
     authorize_revision.add_argument("slug")
     authorize_revision.add_argument("--reference", required=True)
+    accept_draft = sub.add_parser("accept-draft")
+    accept_draft.add_argument("slug")
+    accept_draft.add_argument("--reference", required=True)
     continue_budget = sub.add_parser("continue-budget")
     continue_budget.add_argument("slug")
     continue_budget.add_argument("--reference", required=True)
@@ -3306,6 +3330,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.user_state != "decision_required" else 2
         if args.operation == "authorize-revision":
             result = relay.authorize_revision(
+                args.slug, decision_reference=args.reference
+            )
+            _print_result(result)
+            return 0 if result.user_state != "decision_required" else 2
+        if args.operation == "accept-draft":
+            result = relay.accept_current_draft(
                 args.slug, decision_reference=args.reference
             )
             _print_result(result)

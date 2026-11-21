@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
 from typing import Any, Iterable
@@ -20,6 +21,30 @@ WRITER_CONTEXT_MODES = frozenset({"minimal", "full"})
 # author. Gate and high-risk failures never take this path. Single tunable for
 # the "no interruption" guarantee; raise it only together with a budget breaker.
 MAX_AUTO_LITERARY_REVISION_ROUNDS = 1
+# docs/51 S2: only deterministic hard-issue categories may drive an
+# automatic revision. Reviewers tag every continuity MUST with one
+# category; wording and preference findings are SUGGEST, never MUST.
+DETERMINISTIC_MUST_CATEGORIES = frozenset(
+    {"timeline", "object", "knowledge", "hard_anchor", "hook"}
+)
+NON_DETERMINISTIC_CATEGORY = "other"
+MUST_CATEGORY_ALIASES = {
+    "timeline": "timeline", "时间线": "timeline", "时间": "timeline",
+    "object": "object", "物件": "object", "物件归属": "object",
+    "位置": "object",
+    "knowledge": "knowledge", "知情": "knowledge",
+    "人物知情": "knowledge",
+    "hard_anchor": "hard_anchor", "硬锚": "hard_anchor",
+    "硬锚漂移": "hard_anchor",
+    "hook": "hook", "钩子": "hook", "章末钩子": "hook",
+    "other": "other", "措辞": "other", "口径": "other",
+    "风格": "other", "指代": "other", "不整齐": "other",
+    "留白": "other", "建议": "other",
+}
+# docs/51 S5: the same anchor recurring twice stops automatic revision
+# and hands the draft to the author; author authorizations are capped.
+MAX_MUST_RECURRENCE_BEFORE_BREAKER = 2
+MAX_AUTHOR_REVISION_AUTHORIZATIONS = 1
 # P2 carries voice fingerprints plus the style reference set; it was 450 while
 # the positive-target slot was an empty placeholder.
 WRITER_CONTEXT_BUDGETS = {"P0": 1500, "P1": 850, "P2": 700}
@@ -493,15 +518,122 @@ def _open_local_must(findings: Iterable[Any]) -> list[Any]:
     ]
 
 
+def split_paragraphs(body: str) -> list[str]:
+    """The one paragraph split shared by patch plans and review diffs."""
+    return [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+
+
+def paragraph_index(body: str, *, first_sentence_chars: int = 12) -> str:
+    """Compact paragraph number + first-sentence head (docs/51 S1/S4).
+
+    Reviewers and patch writers locate unchanged paragraphs on demand
+    instead of re-reading the full chapter. The head fragment is bounded
+    so a whole-chapter index stays inside the incremental input budget.
+    """
+    lines: list[str] = []
+    for number, paragraph in enumerate(split_paragraphs(body), 1):
+        first = re.split(r"(?<=[。！？])", paragraph)[0].strip()
+        lines.append(f"{number}:{first[:first_sentence_chars]}")
+    return "\n".join(lines)
+
+
+def build_regression_diff(
+    base: str,
+    current: str,
+    *,
+    context: int = 2,
+    max_changed_ratio: float = 0.6,
+    max_chars: int = 12000,
+) -> str | None:
+    """Paragraph-level diff fragments with context (docs/51 S1).
+
+    Returns None when the change is too large for a regression review;
+    the caller must then fall back to the full prose admission read.
+    """
+    old = split_paragraphs(base)
+    new = split_paragraphs(current)
+    if not old or not new:
+        return None
+    matcher = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
+    blocks: list[str] = []
+    changed = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        changed += max(i2 - i1, j2 - j1)
+        start = max(0, j1 - context)
+        end = min(len(new), j2 + context)
+        lines = [f"## 变更块 ¶{j1 + 1}-¶{j2}（{tag}）"]
+        for index in range(start, end):
+            marker = "改" if j1 <= index < j2 else "上下文"
+            lines.append(f"¶{index + 1} [{marker}] {new[index]}")
+        if tag in {"replace", "delete"}:
+            for index in range(i1, i2):
+                lines.append(f"原¶{index + 1} [旧] {old[index]}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return None
+    if changed / max(len(old), len(new)) > max_changed_ratio:
+        return None
+    text = "\n\n".join(blocks)
+    if len(text) > max_chars:
+        return None
+    return text
+
+
+def render_previous_review(
+    outcomes: Iterable[tuple[str, Any]],
+    current_prose: str,
+) -> str:
+    """Previous-round conclusions with deterministic resolution status.
+
+    A finding whose verbatim evidence no longer exists in the current
+    body is marked resolved; the regression reviewer confirms the fix
+    instead of re-discovering the whole list (docs/51 S1/R5).
+    """
+    lines = ["# 上一轮双审结论（回归审基线）"]
+    for role, outcome in outcomes:
+        lines.append(f"## {role} verdict={outcome.verdict}")
+        likeness = str(getattr(outcome, "human_likeness", "") or "")
+        if likeness and likeness != "not_applicable":
+            lines.append(
+                f"human_likeness={likeness} "
+                f"reader_desire={getattr(outcome, 'reader_desire', '')}"
+            )
+        findings = getattr(outcome, "findings", ()) or ()
+        if not findings:
+            lines.append("- 无条目")
+        for item in findings:
+            evidence = str(item.evidence or "").strip()
+            if evidence:
+                status = (
+                    "未修复（原文仍在）"
+                    if evidence in current_prose
+                    else "已修复（原文已不在）"
+                )
+            else:
+                status = "无引文"
+            lines.append(
+                f"- [{item.severity}/{item.scope}] {item.location}："
+                f"{item.revision_intent}（{status}）"
+            )
+    return "\n".join(lines)[:4000]
+
+
 def plan_local_patch(
     body: str,
     findings: Iterable[Any],
-) -> list[dict[str, str]] | None:
-    """Return bounded paragraph targets only when every open MUST is local."""
+) -> list[dict[str, Any]] | None:
+    """Return bounded paragraph targets only when every open MUST is local.
+
+    docs/51 S4: each target carries up to two full context paragraphs on
+    each side plus its paragraph number, so the patch role never needs
+    the full draft.
+    """
     must = _open_local_must(findings)
     if not must or any(item.scope != "local" for item in must):
         return None
-    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    paragraphs = split_paragraphs(body)
     plan: list[dict[str, str]] = []
     used: set[str] = set()
     for finding in must:
@@ -521,8 +653,9 @@ def plan_local_patch(
         plan.append(
             {
                 "target": target,
-                "before": paragraphs[index - 1] if index else "",
-                "after": paragraphs[index + 1] if index + 1 < len(paragraphs) else "",
+                "paragraph_number": index + 1,
+                "context_before": paragraphs[max(0, index - 2):index],
+                "context_after": paragraphs[index + 1:index + 3],
                 "location": finding.location,
                 "evidence": evidence,
                 "revision_intent": finding.revision_intent,
@@ -548,6 +681,103 @@ def apply_local_replacements(
         updated = updated.replace(target, replacement, 1)
     return updated
 
+
+def normalize_must_category(value: Any) -> str:
+    """Map a reviewer category label onto the gate enum.
+
+    Empty means the finding predates the category contract (or the
+    reviewer omitted it): the gate then keeps the conservative legacy
+    routing. Unknown labels also stay conservative; only an explicit
+    non-deterministic label downgrades a MUST to SUGGEST.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return MUST_CATEGORY_ALIASES.get(text, "")
+
+
+def gate_must_findings(
+    findings: Iterable[Any],
+    *,
+    force_revision: bool = False,
+) -> tuple[list[Any], list[Any]]:
+    """Split open MUSTs into revision triggers and SUGGEST downgrades.
+
+    A MUST drives revision only when it carries a deterministic
+    category (docs/51 S2), when the role verdict forces it (Blind
+    Reader synthetic), when it is blocking, or when no category was
+    declared at all (conservative legacy routing). An explicitly
+    non-deterministic MUST becomes SUGGEST: recorded for the author,
+    never auto-revised.
+    """
+    triggering: list[Any] = []
+    downgraded: list[Any] = []
+    for item in findings:
+        if item.severity.upper() != "MUST" or item.status.lower() != "open":
+            continue
+        category = str(getattr(item, "category", "") or "")
+        if (
+            force_revision
+            or category in DETERMINISTIC_MUST_CATEGORIES
+            or category == ""
+            or item.scope == "blocking"
+        ):
+            triggering.append(item)
+        else:
+            downgraded.append(replace(item, severity="SUGGEST"))
+    return triggering, downgraded
+
+
+def _normalize_reference(text: str) -> str:
+    return re.sub(r"[\s\u3000\W_]+", "", str(text or "")).lower()
+
+
+def author_revision_budget_error(
+    previous_references: Iterable[str], new_reference: str
+) -> str | None:
+    """docs/51 S5: one author authorization per chapter by default.
+
+    A second authorization is accepted only when it carries a genuinely
+    new direction (a reference different from the first); a repeated
+    "再修一轮" is refused. Gate and checkpoint decisions never take this
+    path.
+    """
+    previous = [str(ref) for ref in previous_references]
+    if len(previous) < MAX_AUTHOR_REVISION_AUTHORIZATIONS:
+        return None
+    if len(previous) == MAX_AUTHOR_REVISION_AUTHORIZATIONS:
+        normalized_new = _normalize_reference(new_reference)
+        if normalized_new and all(
+            normalized_new != _normalize_reference(ref) for ref in previous
+        ):
+            return None
+        return (
+            "本章作者续修授权已用满 1 次；再次授权必须携带与上次不同的新修改方向，"
+            "不接受重复的“再修一轮”。可改用 accept-draft 接受当前稿或停止任务。"
+        )
+    return (
+        "本章作者续修授权已达上限，不再接受新的授权；"
+        "请选择 accept-draft 接受当前稿或停止任务。"
+    )
+
+
+def summarize_suggestions(
+    findings: Iterable[Any], *, max_chars: int = 400
+) -> str:
+    """One bounded author-facing summary of SUGGEST-level findings."""
+    lines: list[str] = []
+    for item in findings:
+        if str(item.severity).upper() != "SUGGEST":
+            continue
+        note = str(
+            item.revision_intent or item.reader_effect or item.location or ""
+        ).strip()
+        if note:
+            lines.append(f"- {note}")
+    if not lines:
+        return ""
+    text = "措辞级建议（不触发自动修订，供作者一次性裁量）：" + "\n".join(lines)
+    return text[:max_chars]
 
 def require_high_risk_confirmation(chapter_risk: str) -> bool:
     if chapter_risk not in CHAPTER_RISK_LEVELS:
@@ -579,6 +809,8 @@ def display_workflow_state(phase: str, *, patch_round: int = 0) -> str:
         return "待局部修订"
     if phase in {"awaiting_writer", "writing", "patching"}:
         return "写作中"
+    if phase == "awaiting_targeted_recheck":
+        return "定向复核"
     if phase in {
         "awaiting_blind_reader",
         "awaiting_chapter_editor",

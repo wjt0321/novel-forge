@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -74,7 +74,16 @@ from .planning_spec import (
 )
 from .workflow_iteration import (
     MAX_AUTO_LITERARY_REVISION_ROUNDS,
+    MAX_MUST_RECURRENCE_BEFORE_BREAKER,
     apply_local_replacements,
+    author_revision_budget_error,
+    gate_must_findings,
+    normalize_must_category,
+    paragraph_index,
+    build_regression_diff,
+    render_previous_review,
+    split_paragraphs,
+    summarize_suggestions,
     evaluate_budget_breaker,
     evaluate_writer_model,
     extract_markdown_sections,
@@ -87,6 +96,7 @@ from .workflow_iteration import (
 from .workflow import (
     NovelWorkflowOrchestrator,
     PlanningOutcome,
+    ACCEPT_DRAFT_DECISION_KINDS,
     REVISION_DECISION_KINDS,
     REVIEW_ANALYSIS_FIELDS,
     ReviewFinding,
@@ -437,6 +447,10 @@ def _lean_result_contract(role: str) -> dict[str, Any]:
     return {
         "format": "json",
         "required": required,
+        "optional": ["suggest"],
+        "tiers": (
+            "MUST=确定性硬伤（标 category）；SUGGEST=措辞级建议；MAY=可选"
+        ),
         "purpose": (
             "盲读结论"
             if role == "blind-reader"
@@ -933,6 +947,8 @@ class NativeWorkflowRelay:
             return "blind-reader"
         if phase == "awaiting_chapter_editor":
             return "chapter-editor"
+        if phase == "awaiting_targeted_recheck":
+            return "chapter-editor"
         if phase == "awaiting_double_review":
             for role in state.get("pending_review_roles", []):
                 if role not in state.get("completed_review_roles", []):
@@ -1110,7 +1126,7 @@ class NativeWorkflowRelay:
         if state.get("phase") in _TERMINAL_PHASES:
             raise WorkflowError(
                 "当前没有可完成的角色动作；请按 status 或 next-action "
-                "列出的可达命令处理（authorize-revision / continue-budget / "
+                "列出的可达命令处理（authorize-revision / accept-draft / continue-budget / "
                 "approve-high-risk / retry / stop）。"
             )
         parallel = state.get("phase") == "awaiting_double_review"
@@ -2499,6 +2515,7 @@ class NativeWorkflowRelay:
                     "message": self._decision_message(state),
                     "options": _decision_options(decision_kind),
                     "must_findings": list(state.get("must_findings", [])),
+                    "suggest_findings": list(state.get("suggest_findings", [])),
                 }
             raise WorkflowError("当前没有等待执行的原生角色动作。")
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -2518,14 +2535,23 @@ class NativeWorkflowRelay:
             decision_kind in REVISION_DECISION_KINDS
             and decision_kind != "git_checkpoint_failed"
             and int(state.get("patch_round") or 0) > 0
+            and "轮集中修订后仍有 MUST" not in message
         ):
             patch_round = int(state.get("patch_round") or 0)
             message += (
                 f"\n第 {patch_round} 轮集中修订后仍有 MUST；"
-                "授权续修将再跑一轮 Writer 与完整双审，"
+                "授权续修将再跑一轮 Writer 与复审，"
                 "不会自动继续。"
             )
             message += NativeWorkflowRelay._recurrence_hint(state)
+        if decision_kind in ACCEPT_DRAFT_DECISION_KINDS:
+            summary = summarize_suggestions(
+                NativeWorkflowRelay._stored_open_findings(
+                    state.get("suggest_findings")
+                )
+            )
+            if summary:
+                message += "\n" + summary
         return message
 
     def status(self, slug: str) -> WorkflowResult:
@@ -2552,6 +2578,10 @@ class NativeWorkflowRelay:
             "awaiting_double_review": (
                 "等待 Blind Reader 与 Chapter Editor 双审（可并行委派）。"
                 "执行 next-action 领取两张角色卡。"
+            ),
+            "awaiting_targeted_recheck": (
+                "等待 Chapter Editor 定向复核被改段。"
+                "执行 next-action 领取角色卡。"
             ),
             "complete": (
                 f"第{int(state.get('chapter') or 0):02d}章完成。"
@@ -2631,6 +2661,7 @@ class NativeWorkflowRelay:
                 "awaiting_blind_reader",
                 "awaiting_chapter_editor",
                 "awaiting_double_review",
+                "awaiting_targeted_recheck",
             }
         ):
             role = "blind-reader"
@@ -2657,6 +2688,7 @@ class NativeWorkflowRelay:
             counts["double-review"] = 0
             state["technical_retry_count"] = 0
             was_parallel = failed_phase == "awaiting_double_review"
+            was_targeted = failed_phase == "awaiting_targeted_recheck"
             if was_parallel:
                 state["phase"] = "awaiting_double_review"
                 issued = [
@@ -2664,6 +2696,10 @@ class NativeWorkflowRelay:
                     if item != role
                 ]
                 state["issued_review_roles"] = issued
+            elif was_targeted:
+                role = "chapter-editor"
+                state["phase"] = "awaiting_targeted_recheck"
+                state["issued_review_roles"] = [];
             else:
                 state["phase"] = f"awaiting_{role.replace('-', '_')}"
             state.pop("decision_kind", None)
@@ -2942,6 +2978,7 @@ class NativeWorkflowRelay:
                 "awaiting_blind_reader",
                 "awaiting_chapter_editor",
                 "awaiting_double_review",
+                "awaiting_targeted_recheck",
             }:
                 result = self._complete_review(slug, state, completion)
             elif phase == "awaiting_writer_planning":
@@ -3093,6 +3130,8 @@ class NativeWorkflowRelay:
             return "chapter-editor"
         if phase == "awaiting_double_review":
             return "double-review"
+        if phase == "awaiting_targeted_recheck":
+            return "chapter-editor"
         if phase in {"awaiting_patch_writer_session", "awaiting_local_patch"}:
             return "patch-writer"
         if phase == "awaiting_writer" and state.get("must_findings"):
@@ -3348,9 +3387,24 @@ class NativeWorkflowRelay:
         state: dict[str, Any],
         role: str,
     ) -> dict[str, Any]:
+        # docs/51 S1/S3: regression or targeted capsules replace the full
+        # prose once a reviewed diff base exists; admission stays full.
+        inputs = None
+        mode = "admission"
+        if not self.strict_audit and not state.get("review_force_full"):
+            inputs = self._regression_inputs(slug, state, role)
+        if inputs is not None:
+            mode = (
+                "targeted"
+                if str(state.get("phase") or "") == "awaiting_targeted_recheck"
+                else "regression"
+            )
+        else:
+            inputs = self._review_inputs(slug, state, role)
         prompt = render_review_instructions(
             role,
             lean=not self.strict_audit,
+            mode=mode,
         ).text
         action_id = f"native-action-{uuid.uuid4().hex[:16]}"
         review_dir = self._diff_dir(
@@ -3363,7 +3417,7 @@ class NativeWorkflowRelay:
             slug,
             role,
             instructions=prompt,
-            inputs=self._review_inputs(slug, state, role),
+            inputs=inputs,
             body_sha256=str(state["body_sha256"]),
             capsule_dir=None if self.strict_audit else review_dir,
         )
@@ -3386,6 +3440,7 @@ class NativeWorkflowRelay:
                 and str(state.get("phase") or "")
                 == "awaiting_double_review"
             ),
+            "review_mode": mode,
             "review_capsule": descriptor,
             "task": (
                 "Read only the sealed review capsule and write the compact "
@@ -3425,6 +3480,8 @@ class NativeWorkflowRelay:
         self,
         slug: str,
         state: dict[str, Any],
+        *,
+        force_full: bool = False,
     ) -> WorkflowResult:
         """Dispatch both reviewers, in parallel in Lean and serially in strict.
 
@@ -3450,6 +3507,7 @@ class NativeWorkflowRelay:
                 "pending_review_roles": ["blind-reader", "chapter-editor"],
                 "completed_review_roles": [],
                 "issued_review_roles": [],
+                "review_force_full": bool(force_full),
             }
         )
         self._reset_active_retry(state, "double-review")
@@ -3501,7 +3559,7 @@ class NativeWorkflowRelay:
         require_blind_review = not (
             not self.strict_audit
             and str(state.get("phase") or "")
-            == "awaiting_double_review"
+            in {"awaiting_double_review", "awaiting_targeted_recheck"}
         )
         descriptor = None
         for candidate in candidates:
@@ -3762,6 +3820,7 @@ class NativeWorkflowRelay:
             "awaiting_blind_reader",
             "awaiting_chapter_editor",
             "awaiting_double_review",
+            "awaiting_targeted_recheck",
         }:
             role = (
                 "blind-reader"
@@ -4520,6 +4579,9 @@ class NativeWorkflowRelay:
         if isinstance(raw, dict):
             entries.extend(("MUST", item) for item in items(raw.get("must")))
             entries.extend(("MAY", item) for item in items(raw.get("may")))
+            entries.extend(
+                ("SUGGEST", item) for item in items(raw.get("suggest"))
+            )
         elif isinstance(raw, (list, tuple)):
             default = (
                 "MAY"
@@ -4530,6 +4592,7 @@ class NativeWorkflowRelay:
             entries.extend((default, item) for item in raw)
         entries.extend(("MUST", item) for item in items(payload.get("must")))
         entries.extend(("MAY", item) for item in items(payload.get("may")))
+        entries.extend(("SUGGEST", item) for item in items(payload.get("suggest")))
         findings: list[ReviewFinding] = []
         for default_severity, item in entries:
             if isinstance(item, dict):
@@ -4561,6 +4624,7 @@ class NativeWorkflowRelay:
                             in {"local", "structural", "blocking"}
                             else "unclassified"
                         ),
+                        category=normalize_must_category(item.get("category")),
                     )
                 )
             else:
@@ -4837,6 +4901,10 @@ class NativeWorkflowRelay:
         for finding in outcome.findings:
             if finding.severity.upper() != "MUST":
                 continue
+            if finding.status.lower() != "open":
+                # Closed findings are resolved history; their quotes
+                # belong to the reviewed body version, not the current.
+                continue
             evidence = finding.evidence.strip()
             if not evidence:
                 if finding.status.lower() == "open":
@@ -4973,30 +5041,44 @@ class NativeWorkflowRelay:
             if item.severity.upper() == "MUST"
             and item.status.lower() == "open"
         ]
-        if blind.verdict != "pass" and not must:
-            must.append("Blind Reader 判定需要修订，请按其审稿总结处理。")
-        if editor.verdict != "ready_for_editor_decision" and not must:
-            must.append("Chapter Editor 判定需要修订，请按其审稿总结处理。")
+        # docs/51 S2: a verdict without deterministic MUST no longer
+        # forces a revision; the gate routes it to the SUGGEST summary.
         return tuple(dict.fromkeys(must))
 
+
     @staticmethod
-    def _combined_open_must_findings(
-        blind: ReviewOutcome,
-        editor: ReviewOutcome,
+    def _dedup_findings(
+        findings: Sequence[ReviewFinding],
     ) -> tuple[ReviewFinding, ...]:
         unique: list[ReviewFinding] = []
         seen: set[tuple[str, str, str]] = set()
-        for item in (*blind.findings, *editor.findings):
-            if (
-                item.severity.upper() != "MUST"
-                or item.status.lower() != "open"
-            ):
-                continue
+        for item in findings:
             key = (item.location, item.evidence, item.revision_intent)
             if key not in seen:
                 seen.add(key)
                 unique.append(item)
         return tuple(unique)
+
+    @staticmethod
+    def _with_downgraded_findings(
+        outcome: ReviewOutcome,
+        downgraded: Sequence[ReviewFinding],
+    ) -> ReviewOutcome:
+        """Record gate-downgraded MUSTs as SUGGEST in Review History."""
+        if not downgraded:
+            return outcome
+        keys = {
+            (item.location, item.evidence, item.revision_intent)
+            for item in downgraded
+        }
+        findings = tuple(
+            replace(item, severity="SUGGEST")
+            if item.severity.upper() == "MUST"
+            and (item.location, item.evidence, item.revision_intent) in keys
+            else item
+            for item in outcome.findings
+        )
+        return replace(outcome, findings=findings)
 
     def _request_local_patch(
         self,
@@ -5013,7 +5095,8 @@ class NativeWorkflowRelay:
         input_path = patch_dir / "input.json"
         result_path = patch_dir / "replacements.json"
         body_path = self._staged_body_path(state)
-        body_sha256 = hashlib.sha256(body_path.read_bytes()).hexdigest()
+        body_bytes = body_path.read_bytes()
+        body_sha256 = hashlib.sha256(body_bytes).hexdigest()
         _atomic_json(
             input_path,
             {
@@ -5025,13 +5108,22 @@ class NativeWorkflowRelay:
                     "body_sha256": body_sha256,
                 },
                 "instruction": (
-                    "只替换给定连续段落；不得改变核心事件、硬锚点或章末目标。"
-                    "每项返回原 target 与 replacement，不输出完整正文。"
+                    "只读这份 input.json，禁止打开 draft/正文.md 或其他文件。"
+                    "只替换给定 target 段落，返回原 target 与 replacement，"
+                    "不输出完整正文；不得改变核心事件、硬锚点或章末目标。"
                     "新增因果必须落进动作、停顿、物件后果，禁止新增解释性段落。"
+                    "context_before/context_after 是被改段前后各至多两段完整上下文；"
+                    "paragraph_index 是全文段落索引，仅供定位，不要逐段通读。"
                 ),
                 "targets": plan,
+                "paragraph_index": paragraph_index(
+                    body_bytes.decode("utf-8-sig"), first_sentence_chars=6
+                ),
             },
         )
+        if not self.strict_audit:
+            self._snapshot_review_base(slug, chapter, body_bytes)
+            self._archive_previous_reviews(state)
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
@@ -5046,6 +5138,10 @@ class NativeWorkflowRelay:
             "lead_may_write_role_output": False,
             "reasoning_effort": "medium",
             "input_file": str(input_path),
+            "read_only_project_files": [
+                input_path.relative_to(self._integrity_root(slug)).as_posix()
+            ],
+            "full_body_read_forbidden": True,
             "result_file": str(result_path),
             "repository_exploration_forbidden": True,
             "allowed_project_writes": [
@@ -5081,6 +5177,204 @@ class NativeWorkflowRelay:
         return WorkflowResult(
             user_state="running",
             message="发现局部问题，正在精确修订。",
+            sequence_id=sequence_id,
+        )
+
+    def _snapshot_review_base(
+        self, slug: str, chapter: int, body_bytes: bytes
+    ) -> None:
+        """Snapshot the reviewed body as the next round's diff base (S1)."""
+        base_dir = self._diff_dir(slug, chapter) / "review-base"
+        self._reset_transient_dir(base_dir)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        (base_dir / "正文.md").write_bytes(body_bytes)
+
+    @staticmethod
+    def _archive_previous_reviews(state: dict[str, Any]) -> None:
+        """Keep the last review round for regression inputs (docs/51 S1)."""
+        for key in (
+            "blind_outcome", "blind_outcome_source", "blind_session",
+            "editor_outcome", "editor_session",
+        ):
+            if key in state:
+                state["previous_" + key] = state.pop(key)
+
+    def _regression_inputs(
+        self,
+        slug: str,
+        state: dict[str, Any],
+        role: str,
+    ) -> dict[str, str] | None:
+        """docs/51 S1: diff + previous conclusions + index instead of prose.
+
+        Returns None for the admission round, when no diff base exists,
+        or when the change is too large for a regression review.
+        """
+        chapter = int(state["chapter"])
+        if int(state.get("patch_round") or 0) < 1:
+            return None
+        base_path = self._diff_dir(slug, chapter) / "review-base" / "正文.md"
+        if not base_path.is_file():
+            return None
+        prose = self._staged_body_path(state).read_text(encoding="utf-8-sig")
+        base = base_path.read_text(encoding="utf-8-sig")
+        if base == prose:
+            return None
+        diff_text = build_regression_diff(base, prose)
+        if diff_text is None:
+            return None
+        outcomes = []
+        for key, label in (
+            ("previous_blind_outcome", "blind-reader"),
+            ("previous_editor_outcome", "chapter-editor"),
+        ):
+            payload = state.get(key)
+            if isinstance(payload, dict):
+                outcomes.append((label, self._stored_outcome(payload)))
+        inputs = {
+            "regression_diff": diff_text,
+            "previous_review": render_previous_review(outcomes, prose),
+            "paragraph_index": paragraph_index(prose),
+        }
+        if role == "chapter-editor":
+            request = self._request_from_state(state)
+            book_dir = self.root / "books" / slug
+            scene_text = (
+                book_dir / f"planning/scene-package-ch{chapter:02d}.md"
+            ).read_text(encoding="utf-8-sig")
+            inputs["scene_package"] = _without_markdown_tables(
+                _strip_previous_chapter_ledger(
+                    extract_markdown_sections(scene_text, PROSE_MODEL_SECTIONS)
+                    or scene_text
+                )
+            )
+            inputs["story_contract"] = self.orchestrator._story_contract(
+                request, chapter
+            )
+            inputs["canon"] = book_memory.canon_context_digest(
+                self.root, slug, chapter, max_chars=1_500
+            )
+            texture_hint = str(analyze_literary_texture(prose).get("hint") or "")
+            advisory_hint = summarize_advisories(lint_text(prose))
+            hint_parts = [
+                part for part in (texture_hint[:160], advisory_hint) if part
+            ]
+            if hint_parts:
+                inputs["machine_diagnostics"] = "\n".join(hint_parts)[:400]
+            if chapter > 1:
+                previous = book_project.find_chapter_file(
+                    book_dir, chapter - 1
+                ).read_text(encoding="utf-8-sig")
+                inputs["previous_chapter_ending"] = previous[
+                    max(0, int(len(previous) * 0.9)) :
+                ]
+        return inputs
+
+    def _local_patch_escalation(
+        self,
+        state: dict[str, Any],
+        before: str,
+        after: str,
+    ) -> bool:
+        """docs/51 S3: deterministic escalation to a full double review.
+
+        A local replacement stays on the cheap targeted-recheck path
+        unless it touches the chapter-end hook region, a paragraph
+        carrying a still-inherited evidence quote, or the paragraph
+        structure itself. Evidence that this patch was issued to fix
+        is expected to change and does not escalate.
+        """
+        old = split_paragraphs(before)
+        new = split_paragraphs(after)
+        if len(old) != len(new):
+            return True
+        matcher = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
+        changed: set[int] = set()
+        for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+            if tag != "equal":
+                changed.update(range(j1, j2))
+        if not changed:
+            return False
+        if len(new) - 1 in changed:
+            return True
+        changed_text = "\n".join(new[index] for index in sorted(changed))
+        patched_evidence = {
+            str(item.get("evidence") or "").strip()
+            for item in state.get("local_patch_plan", [])
+            if isinstance(item, dict)
+        }
+        for key in ("previous_blind_outcome", "previous_editor_outcome"):
+            payload = state.get(key)
+            if not isinstance(payload, dict):
+                continue
+            quotes = [str(payload.get("evidence_quote") or "")]
+            for finding in payload.get("findings", []):
+                if isinstance(finding, dict):
+                    quotes.append(str(finding.get("evidence") or ""))
+            for quote in quotes:
+                quote = quote.strip()
+                if not quote or quote in patched_evidence:
+                    continue
+                if quote in changed_text:
+                    return True
+        return False
+
+    def _start_targeted_recheck(
+        self,
+        slug: str,
+        state: dict[str, Any],
+    ) -> WorkflowResult:
+        """docs/51 S3: one Chapter Editor recheck of the changed paragraphs.
+
+        The Blind Reader conclusion is inherited: escalation rules
+        guarantee its evidence quotes live in unchanged paragraphs, and
+        MUSTs whose evidence the patch removed are deterministically
+        closed before the merged finalize.
+        """
+        request = self._request_from_state(state)
+        chapter = int(state["chapter"])
+        sequence_id = str(state["sequence_id"] or "")
+        prose = self._staged_body_path(state).read_text(encoding="utf-8-sig")
+        blind_payload = state.get("previous_blind_outcome")
+        if isinstance(blind_payload, dict):
+            blind = self._stored_outcome(blind_payload)
+            findings = tuple(
+                replace(item, status="closed")
+                if item.severity.upper() == "MUST"
+                and item.status.lower() == "open"
+                and item.evidence.strip()
+                and not _quote_matches(item.evidence.strip(), prose)[0]
+                else item
+                for item in blind.findings
+            )
+            state["blind_outcome"] = asdict(replace(blind, findings=findings))
+        for key in ("blind_outcome_source", "blind_session"):
+            previous = state.get("previous_" + key)
+            if previous is not None:
+                state[key] = previous
+        state.update(
+            {
+                "phase": "awaiting_targeted_recheck",
+                "pending_review_roles": ["chapter-editor"],
+                "completed_review_roles": ["blind-reader"],
+                "issued_review_roles": [],
+                "review_force_full": False,
+            }
+        )
+        self._reset_active_retry(state, "chapter-editor")
+        editor = self._review_action(slug, state, "chapter-editor")
+        self.orchestrator._save_control(
+            slug,
+            request=request,
+            chapter=chapter,
+            sequence_id=sequence_id,
+            phase="reviewing",
+            retries=0,
+        )
+        self._write_action(slug, state, editor)
+        return WorkflowResult(
+            user_state="running",
+            message="局部修订完成，正在定向复核被改段。",
             sequence_id=sequence_id,
         )
 
@@ -5154,14 +5448,16 @@ class NativeWorkflowRelay:
                 "review_session_instance_ids": [],
             }
         )
-        for key in (
-            "blind_outcome", "blind_outcome_source", "blind_session",
-            "editor_outcome", "editor_session", "local_patch_plan",
-            "local_patch_body_sha256",
-        ):
-            state.pop(key, None)
         self._remember_session(state, session, role="writer", status="completed")
-        return self._start_double_review(slug, state)
+        # docs/51 S3: a local replacement only needs a targeted recheck of
+        # the changed paragraphs unless the change touches the chapter-end
+        # hook, a reviewed evidence quote, or the paragraph structure.
+        escalate = self._local_patch_escalation(state, before, after)
+        for key in ("local_patch_plan", "local_patch_body_sha256"):
+            state.pop(key, None)
+        if escalate:
+            return self._start_double_review(slug, state, force_full=True)
+        return self._start_targeted_recheck(slug, state)
 
     @staticmethod
     def _stored_open_findings(
@@ -5223,6 +5519,9 @@ class NativeWorkflowRelay:
             encoding="utf-8",
         )
         draft_path = self._staged_body_path(state)
+        if not self.strict_audit:
+            self._snapshot_review_base(slug, chapter, draft_path.read_bytes())
+            self._archive_previous_reviews(state)
         action = {
             "schema": NATIVE_ACTION_SCHEMA,
             "action_id": f"native-action-{uuid.uuid4().hex[:16]}",
@@ -5273,9 +5572,6 @@ class NativeWorkflowRelay:
                 "control_run_id": str(writer["session_id"]),
             }
         )
-        state.pop("blind_outcome", None)
-        state.pop("blind_outcome_source", None)
-        state.pop("blind_session", None)
         self._reset_active_retry(state, "patch-writer")
         self.orchestrator._save_control(
             slug,
@@ -5292,6 +5588,28 @@ class NativeWorkflowRelay:
             message="发现问题，正在自动修订。",
             sequence_id=sequence_id,
         )
+
+    def _delivery_summary(
+        self, result: WorkflowResult, state: dict[str, Any]
+    ) -> WorkflowResult:
+        """Append the SUGGEST summary and the docs/51 S6 delivery note."""
+        if result.user_state != "chapter_complete":
+            return result
+        message = result.message
+        summary = summarize_suggestions(
+            self._stored_open_findings(state.get("suggest_findings"))
+        )
+        if summary:
+            message += "\n" + summary
+        rounds = int(state.get("patch_round") or 0)
+        if rounds >= 1:
+            # docs/51 S6: deliver after the bounded revision; any further
+            # polish is an explicit author choice, never an automatic round.
+            message += (
+                f"\n本章经 {rounds} 轮修订后 ready；"
+                + "ready 不等于作者批准。是否再打磨由作者显式决定，不消耗自动修订预算。"
+            )
+        return replace(result, message=message)
 
     def _finalize_staged_chapter(
         self,
@@ -5508,11 +5826,26 @@ class NativeWorkflowRelay:
             return self._retry_finish_after_checkpoint_failure(
                 slug, state, reference
             )
+        if decision_kind in ACCEPT_DRAFT_DECISION_KINDS:
+            budget_error = author_revision_budget_error(
+                state.get("author_revision_references") or [], reference
+            )
+            if budget_error:
+                raise WorkflowError(budget_error)
         must = tuple(
             str(item)
             for item in state.get("must_findings", [])
             if str(item).strip()
         )
+        if not must:
+            # docs/51 S2: a verdict-only decision carries suggestions, not
+            # MUSTs; an explicit author authorization may polish them.
+            must = tuple(
+                self.orchestrator._patch_directive(item)
+                for item in self._stored_open_findings(
+                    state.get("suggest_findings")
+                )
+            )
         if not must:
             raise WorkflowError("续修授权缺少待处理的 MUST。")
         capsule = state.get("capsule")
@@ -5534,12 +5867,93 @@ class NativeWorkflowRelay:
         state["human_decision_reference"] = (
             f"author-revision:ch{int(state['chapter']):02d}"
         )
+        if decision_kind in ACCEPT_DRAFT_DECISION_KINDS:
+            state["author_revision_references"] = [
+                *(state.get("author_revision_references") or []),
+                reference,
+            ]
         _atomic_json(self._state_path(slug), state)
         self._record_author_revision(state, reference, decision_kind, must)
         findings = self._stored_open_findings(state.get("pending_open_must"))
         if findings:
             return self._request_next_revision(slug, state, findings, must)
         return self._request_staged_literary_patch(slug, state, must)
+
+    def accept_current_draft(
+        self, slug: str, *, decision_reference: str
+    ) -> WorkflowResult:
+        """docs/51 S5/S6: accept the current draft instead of another round.
+
+        Only literary revision decisions offer this route; hard gates and
+        checkpoint failures can never be waived. Promotion still runs every
+        deterministic gate and the full review preflight.
+        """
+        if self.strict_audit:
+            raise WorkflowError(
+                "strict-audit 不提供 accept-draft；请走 authorize-revision。"
+            )
+        state = self._load_state(slug)
+        decision_kind = str(state.get("decision_kind") or "")
+        if (
+            state.get("phase") != "decision_required"
+            or decision_kind not in ACCEPT_DRAFT_DECISION_KINDS
+        ):
+            raise WorkflowError("当前没有可接受当前稿的文学修订决策。")
+        reference = str(decision_reference or "").strip()
+        if not reference:
+            raise WorkflowError("接受当前稿必须提供作者决定依据。")
+        if state.get("formal_ready_allowed") is False:
+            raise WorkflowError(
+                "探索模式草稿不能接受为正式 ready；请停止任务。"
+            )
+        editor_session_payload = state.get("editor_session")
+        editor_payload = state.get("editor_outcome")
+        if not isinstance(editor_session_payload, dict) or not isinstance(
+            editor_payload, dict
+        ):
+            raise WorkflowError("接受当前稿缺少已完成双审绑定。")
+        state["author_accepted_draft"] = True
+        state["author_acceptance_reference"] = reference
+        self._record_author_revision(
+            state,
+            reference,
+            decision_kind,
+            tuple(str(item) for item in state.get("must_findings", [])),
+            action="accept_draft",
+        )
+        request = self._request_from_state(state)
+        if (
+            require_high_risk_confirmation(request.chapter_risk)
+            and not state.get("high_risk_approved")
+        ):
+            # Accepting the draft does not waive high-risk confirmation.
+            state["decision_kind"] = "high_risk_author_confirmation"
+            state["decision_message"] = (
+                "已记录接受当前稿；本章属于高风险节点，请作者确认后晋升。"
+            )
+            state["pending_editor_outcome"] = editor_payload
+            state["pending_editor_session"] = editor_session_payload
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return self.orchestrator._decision_result(
+                slug,
+                request,
+                int(state["chapter"]),
+                str(state["sequence_id"]),
+                message="已记录接受当前稿；本章属于高风险节点，请作者确认后晋升。",
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="high_risk_author_confirmation",
+                parent_generation_id=None,
+            )
+        state.pop("decision_kind", None)
+        _atomic_json(self._state_path(slug), state)
+        result = self._finalize_staged_chapter(
+            slug,
+            state,
+            SessionIdentity(**editor_session_payload),
+            self._stored_outcome(editor_payload),
+        )
+        return self._delivery_summary(result, state)
 
     def _retry_finish_after_checkpoint_failure(
         self,
@@ -5592,6 +6006,8 @@ class NativeWorkflowRelay:
         decision_reference: str,
         decision_kind: str,
         must: tuple[str, ...],
+        *,
+        action: str = "revision",
     ) -> None:
         """Persist one author revision decision as a lightweight evidence file."""
         slug = str(state["slug"])
@@ -5604,7 +6020,9 @@ class NativeWorkflowRelay:
             "chapter": int(state["chapter"]),
             "sequence_id": str(state.get("sequence_id") or ""),
             "decision_kind": decision_kind,
+            "decision_action": action,
             "decision_reference": decision_reference,
+            "body_sha256": str(state.get("body_sha256") or ""),
             "must_findings": list(must),
             "created_at": datetime.now(UTC).isoformat(),
             "author_approval": False,
@@ -5838,7 +6256,80 @@ class NativeWorkflowRelay:
             "blind-reader",
             blind,
         )
-        open_must = self._combined_open_must_findings(blind, outcome)
+        # docs/51 S2: deterministic gate. Only hard-issue MUSTs drive a
+        # revision; wording-level MUSTs downgrade to SUGGEST and are
+        # recorded for the author instead of consuming a revision round.
+        blind_trigger, blind_suggest = gate_must_findings(
+            blind.findings,
+            force_revision=blind.human_likeness == "synthetic",
+        )
+        editor_trigger, editor_suggest = gate_must_findings(outcome.findings)
+        open_must = self._dedup_findings((*blind_trigger, *editor_trigger))
+        suggestions = self._dedup_findings(
+            (
+                *(
+                    item
+                    for item in blind.findings
+                    if item.severity.upper() == "SUGGEST"
+                ),
+                *(
+                    item
+                    for item in outcome.findings
+                    if item.severity.upper() == "SUGGEST"
+                ),
+                *blind_suggest,
+                *editor_suggest,
+            )
+        )
+        blind = self._with_downgraded_findings(blind, blind_suggest)
+        outcome = self._with_downgraded_findings(outcome, editor_suggest)
+        state["blind_outcome"] = asdict(blind)
+        state["editor_outcome"] = asdict(outcome)
+        state["suggest_findings"] = [asdict(item) for item in suggestions]
+        blind_has_musts = any(
+            item.severity.upper() == "MUST" for item in blind.findings
+        )
+        if blind.verdict != "pass" and not blind_trigger and not blind_has_musts:
+            state["suggest_findings"].append(
+                asdict(
+                    ReviewFinding(
+                        severity="SUGGEST",
+                        location="全文",
+                        evidence="",
+                        reader_effect="Blind Reader 判定需要修订，但未给出确定性硬伤。",
+                        revision_intent=(
+                            "Blind Reader 判定需要修订，但未给出确定性硬伤，按建议级处理。"
+                        ),
+                        status="open",
+                        scope="unclassified",
+                        category="other",
+                    )
+                )
+            )
+        editor_has_musts = any(
+            item.severity.upper() == "MUST" for item in outcome.findings
+        )
+        if (
+            outcome.verdict != "ready_for_editor_decision"
+            and not editor_trigger
+            and not editor_has_musts
+        ):
+            state["suggest_findings"].append(
+                asdict(
+                    ReviewFinding(
+                        severity="SUGGEST",
+                        location="全文",
+                        evidence="",
+                        reader_effect="Chapter Editor 判定需要修订，但未给出确定性硬伤。",
+                        revision_intent=(
+                            "Chapter Editor 判定需要修订，但未给出确定性硬伤，按建议级处理。"
+                        ),
+                        status="open",
+                        scope="unclassified",
+                        category="other",
+                    )
+                )
+            )
         must = self._combined_must_findings(blind, outcome)
         self._record_must_recurrence(state, open_must)
         if must:
@@ -5855,30 +6346,52 @@ class NativeWorkflowRelay:
                     slug, state, open_must, must
                 )
             if patch_round >= 1:
+                recurrence = state.get("must_recurrence")
+                recurrence = recurrence if isinstance(recurrence, dict) else {}
+                repeated = any(
+                    int(recurrence.get(self._must_anchor(item)) or 0)
+                    >= MAX_MUST_RECURRENCE_BEFORE_BREAKER
+                    for item in open_must
+                )
+                decision_kind = (
+                    "recurrence_accept_draft"
+                    if repeated
+                    else "literary_revision_required"
+                )
+                message = (
+                    (
+                        f"同一锚点问题第 {MAX_MUST_RECURRENCE_BEFORE_BREAKER} 次复发，"
+                        "自动修订已熔断；建议 accept-draft 接受当前稿，"
+                        "或由作者携带新的修改方向显式授权续修。"
+                    )
+                    if repeated
+                    else (
+                        f"自动修订预算（{MAX_AUTO_LITERARY_REVISION_ROUNDS} 轮）已用尽，"
+                        f"第 {patch_round} 轮集中修订后仍有 MUST；"
+                        "可 accept-draft 接受当前稿，或 authorize-revision "
+                        "携新方向再跑一轮 Writer 与复审。"
+                    )
+                )
                 result = self.orchestrator._decision_result(
                     slug,
                     request,
                     chapter,
                     sequence_id,
-                    message=(
-                        f"自动修订预算（{MAX_AUTO_LITERARY_REVISION_ROUNDS} 轮）已用尽，"
-                        f"第 {patch_round} 轮集中修订后仍有 MUST；"
-                        "authorize-revision 将再跑一轮 Writer 与完整双审。"
-                    ),
+                    message=message,
                     retries=int(state.get("technical_retry_count") or 0),
-                    decision_kind="literary_revision_required",
+                    decision_kind=decision_kind,
                     must_findings=must,
                     parent_generation_id=None,
                 )
                 state["phase"] = "decision_required"
-                state["decision_kind"] = "literary_revision_required"
+                state["decision_kind"] = decision_kind
                 state["must_findings"] = list(must)
                 # Keep the structured findings so an author-authorized round
                 # can still take the cheap local-patch route.
                 state["pending_open_must"] = [
                     asdict(item) for item in open_must
                 ]
-                state["decision_message"] = "自动修订后仍有问题，请选择下一步。"
+                state["decision_message"] = message
                 _atomic_json(self._state_path(slug), state)
                 self._action_path(slug).unlink(missing_ok=True)
                 return result
@@ -5940,6 +6453,53 @@ class NativeWorkflowRelay:
                 decision_kind="exploration_only",
                 parent_generation_id=None,
             )
+        blind_musts = [
+            item for item in blind.findings if item.severity.upper() == "MUST"
+        ]
+        editor_musts = [
+            item for item in outcome.findings if item.severity.upper() == "MUST"
+        ]
+        blind_verdict_blocks = blind.verdict != "pass" and not (
+            blind_musts
+            and all(item.status.lower() != "open" for item in blind_musts)
+        )
+        editor_verdict_blocks = (
+            outcome.verdict != "ready_for_editor_decision"
+            and not (
+                editor_musts
+                and all(item.status.lower() != "open" for item in editor_musts)
+            )
+        )
+        if blind_verdict_blocks or editor_verdict_blocks:
+            # docs/51 S2: no deterministic MUST survived the gate, but a
+            # reviewer still demands revision. No automatic round is spent;
+            # the author decides once (accept the draft or polish explicitly).
+            message = (
+                "双审未给出确定性硬伤，但判定需要修订；"
+                "措辞级建议已汇总，请作者裁量后决定。"
+            )
+            state.update(
+                {
+                    "phase": "decision_required",
+                    "decision_kind": "literary_revision_required",
+                    "must_findings": [],
+                    "pending_open_must": [],
+                    "decision_message": message,
+                }
+            )
+            _atomic_json(self._state_path(slug), state)
+            self._action_path(slug).unlink(missing_ok=True)
+            return self.orchestrator._decision_result(
+                slug,
+                request,
+                chapter,
+                sequence_id,
+                message=message,
+                retries=int(state.get("technical_retry_count") or 0),
+                decision_kind="literary_revision_required",
+                must_findings=(),
+                parent_generation_id=None,
+            )
         if (
             require_high_risk_confirmation(request.chapter_risk)
             and not state.get("high_risk_approved")
@@ -5965,9 +6525,10 @@ class NativeWorkflowRelay:
                 decision_kind="high_risk_author_confirmation",
                 parent_generation_id=None,
             )
-        return self._finalize_staged_chapter(
+        result = self._finalize_staged_chapter(
             slug, state, session, outcome
         )
+        return self._delivery_summary(result, state)
 
     def _complete_review(
         self,

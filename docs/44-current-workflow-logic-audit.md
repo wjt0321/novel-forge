@@ -42,6 +42,10 @@ Blind Reader 只提交：
 - `summary`
 - 一条 `evidence_quote`
 
+两个角色可另交 `suggest`（SUGGEST 档）；连续性硬伤 MUST 必须标
+category=timeline|object|knowledge|hard_anchor|hook，只有这五类（及 blocking、
+Blind synthetic）触发修订；措辞级 MUST 降为 SUGGEST，只记录并汇总给作者。
+
 Chapter Editor 只提交 `verdict`、`must`、`summary` 和 `evidence_quote`。通用
 `verdict=pass` 由 Python 规范化为内部编辑通过状态。`analysis`、hard-anchor 矩阵、
 Session、Runtime、Guardian、哈希和 Git 均不是 Lean 创作角色的表单。
@@ -65,9 +69,14 @@ Session、Runtime、Guardian、哈希和 Git 均不是 Lean 创作角色的表�
 Editor 都从零开始计算运输重试。文学结论的第二版仍有 MUST 时进入用户决定，不用
 技术重试伪装文学收敛。
 
-| 第二版仍有 MUST 后作者选择续修 | `authorize-revision <slug> --reference <依据>` 记录 author 决策并恢复一次集中修订 + 完整双审 | 伪造 receipt 或无限自动回炉 |
+| 第二版仍有 MUST 后作者选择续修 | `authorize-revision <slug> --reference <依据>` 记录 author 决策并恢复一次集中修订 + 复审（局部补丁走定向复核，章节级修订走回归审）；每章授权上限 1 次，第 2 次必须携带新方向 | 伪造 receipt 或无限自动回炉 |
+| 同一锚点 MUST 第 2 次复发 | 熔断转 `recurrence_accept_draft` 决策，accept-draft 为第一选项 | 继续自动返工烧预算 |
+| 作者接受当前稿 | `accept-draft <slug> --reference <依据>` 记录绑定正文 sha256 的接受证据，仍跑全部硬门与晋升前校验，仅豁免双审 pass verdict 要求 | 豁免正文硬门，或当作发布批准 |
+| 措辞级 MUST（category=other） | 降为 SUGGEST 写入 Review History，决策/ready 卡一次性汇总 | 触发自动修订 |
+| 局部补丁未命中钩子段/审稿引文/段落结构 | 单角色定向复核被改段（`awaiting_targeted_recheck`），继承 Blind 结论并闭合已消解 MUST | 全文双审 |
+| 修订轮双审 | 第 2 轮起按 diff+上一轮结论+段落索引回归审；变更超 60% 段落或 12000 字回退全文 | 每轮全量重读 |
 | 作者选择重新生成（retry） | Lean 下显式 author 决策通过 `require_body_history=False` 授权第三版，写 authorization 记录 | 自动重试无 author 签名时绕过两个正文版本的门槛 |
-| decision 等待期误调 `complete-role` | 报错并列出当前决策的可达命令（authorize-revision / continue-budget / approve-high-risk / retry / stop） | 用技术表单补交掩盖未决决策 |
+| decision 等待期误调 `complete-role` | 报错并列出当前决策的可达命令（authorize-revision / accept-draft / continue-budget / approve-high-risk / retry / stop） | 用技术表单补交掩盖未决决策 |
 | 审稿引文逐字不匹配 | 去空白/标点规范化或前缀窗口逐字差异 ≤ 15 匹配；失败给出首个不匹配位置 | 无理由重跑审稿角色 |
 | 并行双审某一角色失败 | 按 `failed_review_role` 从 issued/completed 重新排队该角色并重签发角色卡（不写主卡避免跨角色快照误报）；消费后清除该字段 | 重跑另一已完成角色或整章 |
 | 并行角色结果文件缺失/非法 | 自动重签该角色（recover），不卡死在 `awaiting_double_review` | 停在无下一步的中间态 |
@@ -169,6 +178,10 @@ Lean 不使用全仓快照。它同时维护两个小边界：
 - **2026-08-21（六）文档收敛**：46-blockers/47/49/46-token-diet 四个已完成
   一次性文档归档删除（结论并入 archive/history.md）；全书尺度特性用法收进
   literary-quality-reference。
+- **2026-11-21 docs/51 审稿循环剪枝**：准入审只做一次；确定性硬伤闸门 +
+  SUGGEST 分档；局部补丁增量输入（±2 段上下文 + 段落索引，禁读全文）+ 定向
+  复核（钩子/引文/结构升级）；第 2 轮起回归审；复发熔断 + accept-draft +
+  作者授权每章 1 次上限。回归见 tests/test_review_loop_pruning.py。
 
 ## 当前 token 预算单源速查
 

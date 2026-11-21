@@ -14,8 +14,8 @@ S-Black Novel Forge documentation is intentionally split into a small current se
 | Future-direction note: AI cosplay interactive narrative | `48-cosplay-narrative-future.md` |
 
 Completed one-time proposals and retrospectives (46 blockers, 47 iteration,
-49 code review, token-diet plan) are archived in `archive/history.md`; their
-originals remain in Git history.
+49 code review, token-diet plan, 51 review-loop pruning) are archived in
+`archive/history.md`; their originals remain in Git history.
 
 Daily chapter work should normally stop after these documents. Do not read historical milestones before executing `next-action`.
 
@@ -64,3 +64,13 @@ Detailed superseded prose remains available through Git history. The archive is 
 On 2026-07-31 the documentation tree was reduced from 115 files / 10,184 non-empty lines to 15 files / 1,553 non-empty lines (87.0% fewer files and 84.8% fewer lines). Most of the former sprawl came from 42 sequential milestone documents, 18 completed design/implementation plans, and paired Markdown/JSON experiment reports. They were consolidated because the repository already identifies 43/44/45 as the current truth and Git preserves exact historical versions.
 
 On 2026-08-21 four completed one-time documents (`46-workflow-iteration-blockers-liangu.md`, `47-workflow-iteration-proposal.md`, `49-workflow-code-review-proposal.md`, `46-token-diet-and-book-scale-plan.md`) were archived into `archive/history.md` and removed; `44-current-workflow-logic-audit.md` compressed its dated changelog sections to durable conclusions only. Author-facing usage for the book-scale quality features moved to `literary-quality-reference.md`.
+
+On 2026-11-21 `51-review-loop-pruning-proposal.md` was implemented (S1–S6:
+deterministic revision gate, SUGGEST tier, incremental patch input, targeted
+recheck, regression review, recurrence breaker, accept-draft, author
+authorization cap) and archived into `archive/history.md`. The original
+was an untracked working document; its measured cost account is preserved
+in the archive summary. Behavior is documented in 43 (2026-11-21 section),
+44 (recovery matrix + changelog), 45 (implementation record), AGENTS.md and
+both Skills; regression tests live in `tests/test_review_loop_pruning.py`.
+

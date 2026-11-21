@@ -64,9 +64,9 @@ PYTHONPATH=. python tools/novel-workflow.py --root <仓库根绝对路径> cost-
 2. `next-action` 默认只返回一张人类可执行的角色卡。每轮只完成卡上的一个角色，并用宿主
    官方 wait/join/result 等到 `completed`、`failed` 或 `timed_out`；
 3. Writer 只写暂存正文；Blind Reader 与 Chapter Editor 分别提交各自的简短审稿结果；
-4. `complete-role` 交回控制面。第一次 MUST 若全部为可唯一定位的 `local` 问题，则只返回 replacement fragments 由 Python 精确替换；否则集中修订一次。局部替换或整章修订后都重新跑完整硬门和双审；第二版仍有 MUST 就停在用户
-   决定处，绝不无限循环。作者续修只走官方命令
-   `authorize-revision <slug> --reference <依据>`（记录 author 决策后恢复一次集中修订 + 完整双审），不越权改状态或调内部函数。双审通过后 Python 才自动晋升章节，并提示下一章或完成状态。
+4. `complete-role` 交回控制面。只有确定性硬伤 MUST（category=timeline|object|knowledge|hard_anchor|hook）触发修订，措辞级降为 SUGGEST 只汇总给作者。触发修订的 MUST 若全部为可唯一定位的 `local` 问题，只返回 replacement fragments 由 Python 精确替换（补丁角色只读增量输入）；否则集中修订一次。修订后都重跑全章硬门：局部补丁默认只做被改段定向复核，命中章末钩子、被沿用审稿引文或段落结构才升级全文双审；第 2 轮起双审改读 diff+上一轮结论的回归审。第二版仍有 MUST 就停在用户决定处，绝不无限循环；同一锚点第 2 次复发熔断。决策卡第一选项是
+   `accept-draft <slug> --reference <依据>`（接受当前稿晋升 ready）；作者续修只走官方命令
+   `authorize-revision <slug> --reference <依据>`（每章上限 1 次，第 2 次必须携带新方向），不越权改状态或调内部函数。双审通过（或作者接受）后 Python 才晋升章节，并提示下一章或完成状态。
 
 没有命令 Backend 时，`start` 仍会签发宿主原生会话动作。Agent 不得先探索工作流源码、
 自行改用 `init-novel-project`、直接写 `books/` 或降级为探索稿。默认 `lean_native` 下，

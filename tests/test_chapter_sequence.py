@@ -214,8 +214,9 @@ def test_writer_handoff_hides_editor_only_scene_reasoning(tmp_path: Path):
     assert "只完成本章正文" in handoff
     assert "当前章证据、当前章审稿与 ready 闭环" not in handoff
     assert "证据、审稿、状态与 ready 由编排器和独立角色处理" in handoff
-    assert "用好奇和事后补救冒充主动选择" in handoff
-    assert "把规划、审稿、因果清单或主题翻译成说明段" in handoff
+    # micro-rules v6 wording; the pre-v6 agency phrase was retired in 682de19.
+    assert "让具体私人代价落在身体、物件和位置上" in handoff
+    assert "把规划、审稿或主题翻译成说明段" in handoff
 
 
 def test_claim_requires_new_native_session_and_advance_requires_ready(

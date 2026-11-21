@@ -438,3 +438,16 @@ Blind Reader 和 Chapter Editor 仍须一次列全 MUST；但每条 MUST 增加�
 4. **strict 续修入口（P3）**：`orchestrator.authorize_revision` 提供 strict 对称入口。
 5. **正文保留（用户指出）**：`draft/正文.md` 晋升前永不清除；guardian 允许 capsule 保留既有正文；技术重试不丢正文。
 6. **防篡改加固**：角色卡 SHA-256 记录 + 动作 ID 一致性校验；控制面自管路径（state.json、native-relay、observations）排除快照对比但角色卡篡改仍被检测。
+
+## 2026-11-21 docs/51 审稿循环剪枝实施结果
+
+本轮按 docs/51 对审稿循环剪枝（实测成本账与根因见原提案，已归档 archive/history.md），取代阶段 3 / 提案 C2 的"局部 patch 后仍复审完整新正文"要求与"修订类决策只提供 authorize-revision"的决策表表述：
+
+1. **修订闸门（S2/S5）**：结论分档 MUST/SUGGEST/MAY；只有 category=timeline|object|knowledge|hard_anchor|hook 的确定性硬伤 MUST（及 blocking、Blind synthetic）触发修订；口径、措辞、指代偏好、人物有意的不整齐判 SUGGEST，只记录并一次性汇总给作者。未标 category 的 MUST 保守按硬伤处理（旧契约兼容）。scope 仍只用于成本观测。
+2. **补丁增量输入（S4）**：input.json 提供目标段 ±2 段完整上下文 + 段落号 + 全文紧凑段落索引（典型章 ≤4KB）；动作声明 full_body_read_forbidden，补丁角色只读 input.json，禁止打开 draft/正文.md。
+3. **定向复核（S3）**：局部替换通过全章硬门后，默认单角色 Chapter Editor 复核被改段（awaiting_targeted_recheck）；仅当命中章末钩子段、被沿用的审稿引文或段落数变化时升级全文双审。Blind 结论继承，被补丁移除原文的 MUST 确定性闭合；MUST 全部闭合的 needs_revision 不再挡 ready。
+4. **回归审（S1）**：章节级修订后第 2 轮起，双审 capsule 改为段落 diff（±2 上下文）+ 上一轮结论（带确定性已修复/未修复标记）+ 段落索引；变更超 60% 段落或 12000 字回退全文。首轮准入双审与 strict-audit 不变。
+5. **熔断与停点前移（S5/S6）**：同一锚点第 2 次复发转 recurrence_accept_draft；文学决策卡第一选项 accept-draft（记录绑定正文 sha256 的接受证据，仅豁免双审 pass verdict 要求，硬门与晋升前校验不变）；作者续修授权每章上限 1 次，第 2 次必须携带与上次不同的新方向；门禁类决策不可 accept。
+
+验收：tests/test_review_loop_pruning.py（闸门分档、熔断、accept-draft、授权上限、增量输入 ≤4KB、定向复核、回归审）；旧"局部补丁后全量复审"回归改写为钩子区升级用例。已知取舍：回归轮不重新发现未变更段落里的新跨段矛盾，由准入审、升级条件与作者裁量兜底（docs/50 P0-1 的担忧，docs/51 显式接受该成本取舍）。
+

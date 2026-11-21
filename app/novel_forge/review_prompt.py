@@ -54,18 +54,51 @@ def render_review_instructions(
     role: str,
     *,
     lean: bool = False,
+    mode: str = "admission",
 ) -> RolePrompt:
-    """Compile one complete literary review task."""
+    """Compile one complete literary review task.
+
+    docs/51 S1/S3: lean reviews after the admission round run in
+    ``regression`` (diff-based double review) or ``targeted`` (single-role
+    recheck of changed paragraphs) mode. Strict audit always reads full.
+    """
+    if mode not in {"admission", "regression", "targeted"}:
+        raise ReviewPromptError(f"unknown review mode: {mode}")
+    if not lean:
+        mode = "admission"
+    quote_rule = (
+        "从胶囊提供的变更块或上下文中直接复制完整原句"
+        if mode != "admission"
+        else "打开正文文件直接复制完整原句"
+    )
     if role == "blind-reader":
         micro_rules = render_literary_micro_rules(role)
+        if not lean:
+            reading_rule = "每轮都从头完整阅读，不得只检查上轮问题。"
+        elif mode == "admission":
+            reading_rule = "本轮是准入审：完整阅读当前正文全文。"
+        else:
+            reading_rule = (
+                "本轮是回归审：只读变更块、上一轮结论与段落索引。"
+                "重点审变更是否引入新问题、上一轮 MUST 是否已消解；"
+                "未变更部分沿用上轮结论，除非你发现上轮结论本身错了。不要要求全文。"
+            )
+        br_scope = (
+            "只读当前正文，不读取规划、Canon、机器报告、旧审稿或未来章"
+            if mode == "admission"
+            else "只读胶囊内的变更块、上一轮结论与段落索引，不读取规划、Canon、机器报告或未来章"
+        )
         delivery = (
             "只把简短 JSON 结论写入动作指定的 result_file：verdict、must、"
-            "human_likeness、reader_desire、emotional_residue、"
+            "suggest、human_likeness、reader_desire、emotional_residue、"
             "next_chapter_pull、summary、evidence_quote 和 uncertain_note。"
             "每条 MUST 用紧凑对象"
-            "标注 scope=local|structural|blocking，并保留位置、原文和理由；该分类"
-            "只用于成本观测，不决定修订路径。evidence_quote 必须逐字来自当前"
-            "正文：打开正文文件直接复制完整原句，不要凭记忆改写或截断；若找不到，"
+            "标注 scope=local|structural|blocking，并保留位置、原文和理由；scope"
+            "只用于成本观测。连续性硬伤 MUST 必须标 category=timeline|object|"
+            "knowledge|hard_anchor|hook，只有这五类触发修订。口径、措辞、指代偏好、"
+            "人物有意的不整齐、留白一律写进 suggest（SUGGEST 级），不得判 MUST。"
+            "evidence_quote 必须逐字来自当前"
+            f"正文：{quote_rule}，不要凭记忆改写或截断；若找不到，"
             "改用正文中确实存在的另一句。物件位置/归属/数量矛盾类 MUST，若能给出"
             "正文中唯一原文片段，标 scope=local 并以该片段为 evidence；需跨多段"
             "协调才标 structural。不要填写技术终态、哈希、Session、Runtime、"
@@ -79,8 +112,8 @@ def render_review_instructions(
         return _prompt(
             role,
             f"""
-你是独立 Blind Reader，只读当前正文，不读取规划、Canon、机器报告、旧审稿或未来章。
-每轮都从头完整阅读，不得只检查上轮问题。禁止要求补写或修改任何表。
+你是独立 Blind Reader，{br_scope}。
+{reading_rule}禁止要求补写或修改任何表。
 
 短规则：
 {micro_rules}
@@ -104,25 +137,41 @@ def render_review_instructions(
     if role == "chapter-editor":
         micro_rules = render_literary_micro_rules(role)
         if lean:
+            ce_reading = (
+                "完整阅读当前暂存正文。"
+                if mode == "admission"
+                else (
+                    "本轮是定向复核：只审被改段落及其上下文是否引入新问题、"
+                    "上一轮 MUST 是否已消解；未变更部分沿用上轮结论。"
+                    if mode == "targeted"
+                    else (
+                        "本轮是回归审：只读变更块、上一轮结论与段落索引，"
+                        "重点审变更是否引入新问题、上一轮 MUST 是否已消解；"
+                        "未变更部分沿用上轮结论，除非你发现上轮结论本身错了。"
+                    )
+                )
+            )
             return _prompt(
                 role,
                 f"""
-你是独立 Chapter Editor。完整阅读当前暂存正文。场景包只用来核对用户给定的人物、冲突和
+你是独立 Chapter Editor。{ce_reading}场景包只用来核对用户给定的人物、冲突和
 钩子有没有写丢，不用来核对表是否填满。不得直接修改正文，也不得把规划表翻译成审稿表。
 
 短规则：
 {micro_rules}
 
-先看正文是否读得下去。连续性矛盾（时间、数量、物件位置、谁知道什么）可以列全。
+先看正文是否读得下去。连续性矛盾（时间、数量、物件位置、谁知道什么）可以列全，
+每条 MUST 标 category=timeline|object|knowledge|hard_anchor|hook，只有这五类确定性硬伤触发修订。
 文学纹理上只确认 Blind Reader 指出的问题是否遍布全章。架构味道最多一条 structural MUST：
 旁白点题、因果没有断口、情绪只剩身体感觉、结尾是想通并和解。
 不值得这一次修订就直接 pass。机器纹理与 lint 抽样不是文学结论，不得据此单独判错。
 若存在不改就会破坏人物选择、逻辑、可读性或核心钩子的问题，返回 `verdict=needs_revision`。
 每条 MUST 标注 scope=local|structural|blocking，并保留位置、原文和理由；
-该分类只用于成本观测，Python 仍按现行章节级集中修订。evidence_quote 必须逐字来自当前正文：打开
-正文文件直接复制完整原句，不要凭记忆改写或截断。物件位置/归属/数量矛盾类 MUST，若能给出正文中
-唯一原文片段，标 scope=local 并以该片段为 evidence；需跨多段协调才标 structural。风格偏好不要放进
-MUST。本章成立则直接 `verdict=pass`，另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写
+scope 只用于成本观测。evidence_quote 必须逐字来自当前正文：{quote_rule}，
+不要凭记忆改写或截断。物件位置/归属/数量矛盾类 MUST，若能给出正文中
+唯一原文片段，标 scope=local 并以该片段为 evidence；需跨多段协调才标 structural。口径、措辞、
+指代偏好、人物有意的不整齐、留白一律写进 suggest（SUGGEST 级），不得判 MUST。
+本章成立则直接 `verdict=pass`，另写简短 `summary` 和一条正文原句 `evidence_quote`。不填写
 hard anchor、分析维度、哈希、状态、Session、Runtime、Guardian 或 Git 表格。
 """,
             )
